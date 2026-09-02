@@ -1,0 +1,280 @@
+package io.quarkiverse.qraven.hardcoded;
+
+import io.quarkiverse.qraven.hardcoded.runtime.BuildRuntime;
+
+import javax.tools.JavaCompiler;
+import javax.tools.ToolProvider;
+import java.io.File;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.nio.file.FileSystem;
+import java.nio.file.FileSystems;
+import java.nio.file.FileVisitResult;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.BasicFileAttributes;
+import java.util.List;
+import java.util.jar.Attributes;
+import java.util.jar.JarEntry;
+import java.util.jar.JarOutputStream;
+import java.util.jar.Manifest;
+import java.util.stream.Collectors;
+
+public class BuildFileGenerator {
+
+    private final Path projectRoot;
+    private final Path outputDir;
+    private final int threads;
+
+    public BuildFileGenerator(Path projectRoot, Path outputDir, int threads) {
+        this.projectRoot = projectRoot;
+        this.outputDir = outputDir;
+        this.threads = threads;
+    }
+
+    public void generate(List<ModuleInfo> modules) throws IOException {
+        Path srcDir = outputDir.resolve("src");
+        Files.createDirectories(srcDir);
+
+        for (ModuleInfo module : modules) {
+            String className = sanitizeClassName(module.getArtifactId());
+            Path sourceFile = srcDir.resolve("Build_" + className + ".java");
+            Files.writeString(sourceFile, generateModuleClass(module, className));
+            System.out.println("  Generated Build_" + className + ".java");
+        }
+
+        Path mainFile = srcDir.resolve("Build.java");
+        Files.writeString(mainFile, generateMainClass(modules));
+        System.out.println("  Generated Build.java");
+    }
+
+    private String generateModuleClass(ModuleInfo module, String className) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("import io.quarkiverse.qraven.hardcoded.runtime.ModuleBuild;\n");
+        sb.append("import io.quarkiverse.qraven.hardcoded.runtime.BuildRuntime;\n");
+        sb.append("import java.nio.file.Path;\n");
+        sb.append("import java.util.List;\n\n");
+
+        sb.append("public class Build_").append(className).append(" extends ModuleBuild {\n\n");
+
+        sb.append("    public Build_").append(className).append("(BuildRuntime runtime) { super(runtime); }\n\n");
+
+        sb.append("    @Override public String groupId() { return ").append(quote(module.getGroupId())).append("; }\n");
+        sb.append("    @Override public String artifactId() { return ").append(quote(module.getArtifactId())).append("; }\n");
+        sb.append("    @Override public String version() { return ").append(quote(module.getVersion())).append("; }\n");
+        sb.append("    @Override public String packaging() { return ").append(quote(module.getPackaging())).append("; }\n");
+        sb.append("    @Override public Path baseDir() { return Path.of(").append(quote(module.getBaseDir().toString())).append("); }\n");
+        sb.append("    @Override public boolean hasJavaSources() { return ").append(module.isHasJavaSources()).append("; }\n");
+        sb.append("    @Override public boolean hasResources() { return ").append(module.isHasResources()).append("; }\n\n");
+
+        sb.append("    @Override\n");
+        sb.append("    public List<String> compileClasspath() {\n");
+        sb.append("        return List.of(\n");
+        sb.append(formatStringList(module.getCompileClasspath(), "            "));
+        sb.append("        );\n");
+        sb.append("    }\n\n");
+
+        sb.append("    @Override\n");
+        sb.append("    public List<String> annotationProcessorPaths() {\n");
+        sb.append("        return List.of(\n");
+        sb.append(formatStringList(module.getAnnotationProcessorPaths(), "            "));
+        sb.append("        );\n");
+        sb.append("    }\n\n");
+
+        sb.append("    @Override\n");
+        sb.append("    public List<String> compilerArgs() {\n");
+        sb.append("        return List.of(\n");
+        sb.append(formatStringList(module.getCompilerArgs(), "            "));
+        sb.append("        );\n");
+        sb.append("    }\n\n");
+
+        sb.append("    @Override\n");
+        sb.append("    public List<String> moduleDependencyIds() {\n");
+        sb.append("        return List.of(\n");
+        sb.append(formatStringList(module.getReactorDependencies(), "            "));
+        sb.append("        );\n");
+        sb.append("    }\n");
+
+        sb.append("}\n");
+        return sb.toString();
+    }
+
+    private String generateMainClass(List<ModuleInfo> modules) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("import io.quarkiverse.qraven.hardcoded.runtime.*;\n");
+        sb.append("import java.util.*;\n\n");
+
+        sb.append("public class Build {\n");
+        sb.append("    public static void main(String[] args) {\n");
+        sb.append("        java.nio.file.Path projectRoot = java.nio.file.Path.of(\".\").toAbsolutePath().normalize();\n");
+        sb.append("        int threads = Runtime.getRuntime().availableProcessors();\n\n");
+
+        sb.append("        for (int i = 0; i < args.length; i++) {\n");
+        sb.append("            if ((\"--threads\".equals(args[i]) || \"-t\".equals(args[i])) && i + 1 < args.length) {\n");
+        sb.append("                threads = Integer.parseInt(args[++i]);\n");
+        sb.append("            } else if ((\"--project\".equals(args[i]) || \"-p\".equals(args[i])) && i + 1 < args.length) {\n");
+        sb.append("                projectRoot = java.nio.file.Path.of(args[++i]).toAbsolutePath().normalize();\n");
+        sb.append("            }\n");
+        sb.append("        }\n\n");
+
+        sb.append("        BuildRuntime runtime = new BuildRuntime(projectRoot);\n");
+        sb.append("        List<ModuleBuild> modules = new ArrayList<>();\n");
+
+        for (ModuleInfo module : modules) {
+            String className = sanitizeClassName(module.getArtifactId());
+            sb.append("        modules.add(new Build_").append(className).append("(runtime));\n");
+        }
+
+        sb.append("\n        new BuildOrchestrator(threads).buildAll(modules);\n");
+        sb.append("    }\n");
+        sb.append("}\n");
+        return sb.toString();
+    }
+
+    public void compileAndPackage() throws IOException {
+        Path srcDir = outputDir.resolve("src");
+        Path classesDir = outputDir.resolve("classes");
+        Path buildJar = outputDir.resolve("build.jar");
+        Files.createDirectories(classesDir);
+
+        Path runtimeJar = findRuntimeJar();
+        System.out.println("Using runtime JAR: " + runtimeJar);
+
+        List<Path> sourceFiles;
+        try (var stream = Files.walk(srcDir)) {
+            sourceFiles = stream
+                    .filter(p -> p.toString().endsWith(".java"))
+                    .toList();
+        }
+
+        System.out.println("Compiling " + sourceFiles.size() + " generated source files...");
+
+        JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
+        if (compiler == null) {
+            throw new RuntimeException("No Java compiler available");
+        }
+
+        var diagnostics = new javax.tools.DiagnosticCollector<javax.tools.JavaFileObject>();
+        try (var fileManager = compiler.getStandardFileManager(diagnostics, null, null)) {
+            var compilationUnits = fileManager.getJavaFileObjectsFromPaths(sourceFiles);
+
+            List<String> options = List.of(
+                    "-d", classesDir.toString(),
+                    "-classpath", runtimeJar.toString()
+            );
+
+            var task = compiler.getTask(null, fileManager, diagnostics, options, null, compilationUnits);
+            if (!task.call()) {
+                StringBuilder sb = new StringBuilder("Compilation of generated sources failed:\n");
+                diagnostics.getDiagnostics().forEach(d -> sb.append("  ").append(d).append("\n"));
+                throw new RuntimeException(sb.toString());
+            }
+        }
+
+        System.out.println("Packaging build.jar...");
+        createBuildJar(classesDir, runtimeJar, buildJar);
+        System.out.println("Created: " + buildJar);
+    }
+
+    private void createBuildJar(Path classesDir, Path runtimeJar, Path buildJar) throws IOException {
+        Manifest manifest = new Manifest();
+        manifest.getMainAttributes().put(Attributes.Name.MANIFEST_VERSION, "1.0");
+        manifest.getMainAttributes().put(Attributes.Name.MAIN_CLASS, "Build");
+
+        try (OutputStream fos = Files.newOutputStream(buildJar);
+             JarOutputStream jos = new JarOutputStream(fos, manifest)) {
+
+            // Add generated compiled classes
+            addDirectoryToJar(classesDir, classesDir, jos);
+
+            // Add runtime classes from our JAR
+            addRuntimeClassesToJar(runtimeJar, jos);
+        }
+    }
+
+    private void addDirectoryToJar(Path baseDir, Path root, JarOutputStream jos) throws IOException {
+        Files.walkFileTree(baseDir, new SimpleFileVisitor<>() {
+            @Override
+            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                String entryName = root.relativize(file).toString().replace('\\', '/');
+                if (entryName.equals("META-INF/MANIFEST.MF")) {
+                    return FileVisitResult.CONTINUE;
+                }
+                jos.putNextEntry(new JarEntry(entryName));
+                Files.copy(file, jos);
+                jos.closeEntry();
+                return FileVisitResult.CONTINUE;
+            }
+        });
+    }
+
+    private void addRuntimeClassesToJar(Path runtimeJar, JarOutputStream jos) throws IOException {
+        if (Files.isDirectory(runtimeJar)) {
+            // Running from exploded classes (development mode)
+            Path runtimePkg = runtimeJar.resolve("io/quarkiverse/qraven/hardcoded/runtime");
+            if (Files.isDirectory(runtimePkg)) {
+                Files.walkFileTree(runtimePkg, new SimpleFileVisitor<>() {
+                    @Override
+                    public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                        String entryName = runtimeJar.relativize(file).toString().replace('\\', '/');
+                        jos.putNextEntry(new JarEntry(entryName));
+                        Files.copy(file, jos);
+                        jos.closeEntry();
+                        return FileVisitResult.CONTINUE;
+                    }
+                });
+            }
+        } else {
+            // Running from a JAR
+            URI jarUri = URI.create("jar:" + runtimeJar.toUri());
+            try (FileSystem zipFs = FileSystems.newFileSystem(jarUri, java.util.Map.of())) {
+                Path runtimePkg = zipFs.getPath("io/quarkiverse/qraven/hardcoded/runtime");
+                if (Files.isDirectory(runtimePkg)) {
+                    Files.walkFileTree(runtimePkg, new SimpleFileVisitor<>() {
+                        @Override
+                        public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                            String entryName = file.toString();
+                            if (entryName.startsWith("/")) {
+                                entryName = entryName.substring(1);
+                            }
+                            jos.putNextEntry(new JarEntry(entryName));
+                            Files.copy(file, jos);
+                            jos.closeEntry();
+                            return FileVisitResult.CONTINUE;
+                        }
+                    });
+                }
+            }
+        }
+    }
+
+    private Path findRuntimeJar() {
+        try {
+            URI location = BuildRuntime.class.getProtectionDomain().getCodeSource().getLocation().toURI();
+            return Path.of(location);
+        } catch (URISyntaxException e) {
+            throw new RuntimeException("Cannot determine runtime JAR location", e);
+        }
+    }
+
+    private String formatStringList(List<String> items, String indent) {
+        if (items.isEmpty()) {
+            return "";
+        }
+        return items.stream()
+                .map(s -> indent + quote(s))
+                .collect(Collectors.joining(",\n", "", "\n"));
+    }
+
+    private String quote(String s) {
+        return "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+    }
+
+    private String sanitizeClassName(String artifactId) {
+        return artifactId.replace('-', '_').replace('.', '_');
+    }
+}

@@ -1,0 +1,171 @@
+Qraven Build Performance Benchmarks
+=====================================
+
+Project under test: quarkus-renarde (20 modules, ~140-290 deps per module)
+Machine: 1 CPU, 31GB RAM, Linux (Fedora)
+Thread count: 1 (single-threaded builds for fair comparison)
+
+All times are wall-clock, measured with multiple runs to reduce variance.
+Dependency resolution (Aether) is done ahead of time and excluded from
+qraven build times.
+
+Build Modes Compared
+--------------------
+
+  Mode                              Time      Notes
+  --------------------------------  --------  -----------------------------------------
+  mvn clean install -DskipTests     ~28s      Includes 9s docs + 7s integration test
+                                              module we skip; effective ~20s for the
+                                              modules qraven builds. Excludes Aether
+                                              resolution (~23s) since qraven does that
+                                              ahead of time.
+
+  qraven JVM (JDK 25)              ~15s      java -jar build.jar
+  qraven JVM + AOT cache (JDK 25)  ~11s      java -XX:AOTCache=build.aot -jar build.jar
+  qraven native (GraalVM 21)        ~2.5s    ./build-native (36MB binary)
+  qraven native + warmup            ~1.4s    ./build-native with classpath pre-loading
+
+How Each Mode Was Measured
+--------------------------
+
+mvn:
+  $ mvn clean install -DskipTests
+  Measured total time from mvn output. Run 3 times, middle value reported.
+
+qraven JVM baseline (JDK 25, no AOT):
+  $ /usr/lib/jvm/java-25/bin/java -jar target/qraven/build.jar
+  Three runs: 15730ms, 15092ms, 14753ms. Median: ~15s.
+
+qraven JVM + AOT cache (JDK 25, JEP 483 + JEP 515):
+  Training (one-time):
+    $ java -XX:AOTCacheOutput=target/qraven/build.aot -jar target/qraven/build.jar
+    Produces a 33MB .aot file containing pre-loaded/linked classes and
+    JIT method profiles.
+  Production:
+    $ java -XX:AOTCache=target/qraven/build.aot -jar target/qraven/build.jar
+  Three runs: 10865ms, 11222ms, 11632ms. Median: ~11s.
+  ~30% faster than baseline JVM. Improvement comes from skipping class
+  loading/verification and having JIT profiles ready at startup.
+
+qraven native (GraalVM CE 21, no classpath warmup):
+  Build (one-time, ~13 min):
+    $ native-image -jar build.jar build-native \
+        -H:+UnlockExperimentalVMOptions \
+        -H:IncludeResourceBundles=com.sun.tools.javac.resources.compiler,\
+          com.sun.tools.javac.resources.javac,\
+          com.sun.tools.javac.resources.ct,\
+          com.sun.tools.javac.resources.launcher
+    Produces a 36MB standalone binary. Embeds the entire JDK compiler.
+  Production:
+    $ JAVA_HOME=/path/to/jdk ./build-native
+    Requires JAVA_HOME pointing to a JDK with lib/ct.sym (for --release).
+  Three runs: 2582ms, 2540ms, 2500ms. Median: ~2.5s.
+  ~83% faster than baseline JVM. Zero JVM startup, pre-compiled native
+  code, no JIT warmup.
+
+qraven native + classpath warmup:
+  Same binary as above. Warmup pre-loads all 415 classpath JARs into
+  OS page cache before compilation starts.
+  Warmup: ~210ms. Build: ~1170ms. Total: ~1380ms.
+  Three runs: 1376ms, 1382ms, 1355ms. Median: ~1.4s.
+  44% faster than native without warmup, 20x faster than mvn.
+
+  How warmup works:
+  At startup, a temporary StandardJavaFileManager opens all unique
+  classpath JARs by calling:
+    fm.setLocation(StandardLocation.CLASS_PATH, allJars);
+    fm.list(StandardLocation.CLASS_PATH, "", ..., false);
+  This forces javac's internal getContainer() to open each JAR as a
+  ZipFileSystem and walk its directory tree to build the package index.
+  When the temporary file manager is closed, the ZipFileSystems are
+  released, but the JAR file data stays in the OS page cache. When
+  per-thread file managers later open the same JARs, the file I/O
+  is served from RAM, and ZIP central directory parsing is faster
+  because the data is already in CPU cache.
+
+Key Technical Details
+---------------------
+
+Native image requires --release N (not -source/-target) in javac options.
+Reason: GraalVM native images can't use the JRT filesystem to read
+platform classes from lib/modules. The --release flag makes javac use
+ct.sym (a plain ZIP) instead, which works in native images.
+
+The build.jar uses javax.tools.JavaCompiler API with per-thread
+StandardJavaFileManager instances (not thread-safe, so one per thread).
+The file manager caches JAR indexes (ZIP central directories) across
+compilations within the same thread.
+
+JVM AOT (JDK 25, Project Leyden):
+Uses JEP 483 (AOT Class Loading & Linking) and JEP 515 (AOT Method
+Profiling). Does NOT pre-initialize objects or snapshot the heap like
+GraalVM native-image. It caches loaded/linked class metadata and JIT
+method profiles. The cache is tied to the exact JDK version, OS, CPU
+architecture, and classpath used during training.
+
+Where Time Goes
+--------------------------
+
+JVM mode: javac compilation is ~88% of total build time. The first
+module takes longest (~10s) due to javac warmup (JIT compiling javac
+itself). Subsequent modules are much faster (50-500ms each) once javac
+is warm and JAR indexes are cached.
+
+Native mode: no JVM startup or JIT warmup. The main costs are:
+  - Classpath warmup: ~210ms (opening 415 JARs, building package indexes)
+  - First module compilation: ~200ms (ct.sym loading + actual compilation)
+  - Subsequent modules: 35-130ms each (pure compilation)
+
+The native binary eliminates both JVM startup and javac warmup, making
+JAR index loading and actual compilation the dominant costs.
+
+Optimization Attempts (native mode)
+------------------------------------
+
+1. --initialize-at-build-time for JDKPlatformProvider
+   Tested: --initialize-at-build-time=com.sun.tools.javac.platform.JDKPlatformProvider,
+           com.sun.tools.javac.jvm.Target
+   Result: REJECTED. Builds successfully but bakes in build-time JDK's ct.sym
+   state. When JAVA_HOME points to a different JDK version at runtime, the
+   class file versions in ct.sym may not match the embedded javac's expected
+   versions (e.g., JDK 25 ct.sym has version 69.0 but GraalVM 21 javac
+   expects max 65.0). The savings from pre-populating SUPPORTED_JAVA_PLATFORM_VERSIONS
+   are negligible (<1ms).
+
+2. ct.sym page cache warmup
+   Added: Open ct.sym as ZipFileSystem during warmup, walk directory entries,
+   then close. This primes the OS page cache for subsequent ct.sym opens by
+   javac's --release processing.
+   Result: ADOPTED. Adds ~15ms to warmup. Each getTask() call with --release
+   still reopens ct.sym (creating a new ZipFileSystem), but the central
+   directory data is already in page cache, making the open faster.
+   Measured getTask per module: 15-40ms (first module: 46-66ms).
+   Total getTask overhead across 15 modules: ~350ms.
+
+3. Platform cache (extract ct.sym .sig files to temp dir as .class)
+   Tested: Extract 5570 .sig files from ct.sym for release 17, rename to .class,
+   write to temp directory. Set SYSTEM_MODULES directly on file manager,
+   bypassing --release entirely.
+   Result: REJECTED. Extraction takes ~2000ms (I/O-bound: 5570 files, 61 modules).
+   This exceeds the ~350ms getTask savings. Only viable for projects with 100+
+   compilable modules where the getTask savings outweigh the extraction cost.
+
+4. ForwardingJavaFileManager wrapping for .sig files
+   Investigated: Keep ct.sym ZipFileSystem open (no extraction), wrap the
+   standard file manager with .sig→.class translation.
+   Result: NOT IMPLEMENTED. ForwardingStandardJavaFileManager doesn't exist
+   in JDK 21, and javac internally casts file managers to StandardJavaFileManager.
+   A manual wrapper implementing StandardJavaFileManager is complex (~15 delegate
+   methods). Would save ~350ms per build but adds fragile internal-API dependency.
+
+5. ZipFileSystem survival across native-image build
+   Investigated in Quarkus codebase: GraalVM explicitly resets
+   ZipFileSystemProvider.filesystems via @RecomputeFieldValue(kind=NewInstance).
+   This prevents any ZipFileSystem from surviving native-image build into the
+   runtime image heap. Quarkus also marks filesystem providers for runtime-init.
+   Result: NOT POSSIBLE. By design, ZipFileSystem instances cannot be baked
+   into native images.
+
+Key insight: the ct.sym per-compilation overhead (~25ms/module × 15 modules = ~375ms)
+is ~15% of the native build time (~2.5s at base clock). The simplest optimization
+(page cache warmup, 15ms cost) gives the best cost/benefit ratio.
