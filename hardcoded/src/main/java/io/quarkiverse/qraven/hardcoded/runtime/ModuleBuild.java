@@ -1,21 +1,60 @@
 package io.quarkiverse.qraven.hardcoded.runtime;
 
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public abstract class ModuleBuild {
+
+    private static final String HOME = System.getProperty("user.home");
 
     protected final BuildRuntime runtime;
     private volatile CompletableFuture<Void> buildFuture;
     private List<ModuleBuild> dependencies = List.of();
+    private ProgressDisplay progress;
+    private ConcurrentHashMap<Long, Integer> threadIndices;
+    private AtomicInteger threadIndexCounter;
+    private int maxThreadIndex;
+    private List<String> resolvedClasspath;
+    private List<String> resolvedAnnotationProcessorPaths;
 
     protected ModuleBuild(BuildRuntime runtime) {
         this.runtime = runtime;
+    }
+
+    static String resolvePath(String path) {
+        if (path.startsWith("$HOME/")) {
+            return HOME + path.substring(5);
+        }
+        return path;
+    }
+
+    static List<String> resolvePaths(List<String> paths) {
+        return paths.stream().map(ModuleBuild::resolvePath).toList();
+    }
+
+    public List<String> resolvedClasspath() {
+        if (resolvedClasspath == null) {
+            resolvedClasspath = resolvePaths(compileClasspath());
+        }
+        return resolvedClasspath;
+    }
+
+    public List<String> resolvedAnnotationProcessorPaths() {
+        if (resolvedAnnotationProcessorPaths == null) {
+            resolvedAnnotationProcessorPaths = resolvePaths(annotationProcessorPaths());
+        }
+        return resolvedAnnotationProcessorPaths;
     }
 
     public abstract String groupId();
@@ -24,7 +63,10 @@ public abstract class ModuleBuild {
     public abstract String packaging();
     public abstract Path baseDir();
     public abstract boolean hasJavaSources();
-    public abstract boolean hasResources();
+    public abstract String[][] resourceDirs();
+    public abstract Map<String, String> filterProperties();
+    public abstract boolean needsJandexIndex();
+    public abstract Map<String, String> manifestEntries();
     public abstract List<String> compileClasspath();
     public abstract List<String> annotationProcessorPaths();
     public abstract List<String> compilerArgs();
@@ -38,6 +80,20 @@ public abstract class ModuleBuild {
         return dependencies;
     }
 
+    public void setProgress(ProgressDisplay progress, ConcurrentHashMap<Long, Integer> threadIndices,
+                           AtomicInteger threadIndexCounter, int maxThreadIndex) {
+        this.progress = progress;
+        this.threadIndices = threadIndices;
+        this.threadIndexCounter = threadIndexCounter;
+        this.maxThreadIndex = maxThreadIndex;
+    }
+
+    private volatile boolean buildSucceeded = false;
+
+    public boolean didSucceed() {
+        return buildSucceeded;
+    }
+
     public synchronized CompletableFuture<Void> buildAsync(ExecutorService executor) {
         if (buildFuture != null) {
             return buildFuture;
@@ -46,41 +102,97 @@ public abstract class ModuleBuild {
                 .map(dep -> dep.buildAsync(executor))
                 .toArray(CompletableFuture[]::new);
         buildFuture = CompletableFuture.allOf(depFutures)
-                .thenRunAsync(this::doBuild, executor);
+                .handleAsync((v, ex) -> { doBuild(); return null; }, executor);
         return buildFuture;
+    }
+
+    private int getThreadIndex() {
+        if (threadIndices == null) return 0;
+        return threadIndices.computeIfAbsent(Thread.currentThread().getId(),
+                k -> threadIndexCounter.getAndIncrement() % maxThreadIndex);
+    }
+
+    private int countSources() {
+        Path src = sourceDir();
+        if (!Files.isDirectory(src)) return 0;
+        try (var stream = Files.walk(src)) {
+            return (int) stream
+                    .filter(p -> p.toString().endsWith(".java"))
+                    .filter(p -> !p.getFileName().toString().equals("module-info.java"))
+                    .count();
+        } catch (IOException e) {
+            return 0;
+        }
     }
 
     protected void doBuild() {
         long start = System.currentTimeMillis();
-        System.out.println("[" + artifactId() + "] Building...");
+
+        List<String> failedDeps = new ArrayList<>();
+        for (ModuleBuild dep : dependencies) {
+            if (!dep.didSucceed()) {
+                failedDeps.add(dep.artifactId());
+            }
+        }
+
+        int threadIdx = getThreadIndex();
+
+        if (!failedDeps.isEmpty() && progress != null) {
+            progress.moduleStarted(threadIdx, artifactId(), "skipped", 0);
+            progress.moduleCompleted(threadIdx, false);
+            return;
+        }
 
         try {
             if ("pom".equals(packaging())) {
+                if (progress != null) progress.moduleStarted(threadIdx, artifactId(), "pom", 0);
                 runtime.install(null, pomFile(), groupId(), artifactId(), version(), packaging());
             } else {
                 runtime.clean(targetDir());
 
-                List<String> fullClasspath = new ArrayList<>(compileClasspath());
+                List<String> fullClasspath = new ArrayList<>(resolvedClasspath());
                 Set<String> added = new HashSet<>();
                 addReactorJars(this, fullClasspath, added);
 
-                if (hasResources()) {
-                    runtime.copyResources(resourceDir(), classesDir());
+                if (progress != null) progress.moduleStarted(threadIdx, artifactId(), "resources", 0);
+                for (String[] rd : resourceDirs()) {
+                    Path dir = runtime.getProjectRoot().resolve(baseDir()).resolve(rd[0]);
+                    boolean filtering = "true".equals(rd[1]);
+                    if (filtering) {
+                        runtime.copyResourcesFiltered(dir, classesDir(), filterProperties());
+                    } else {
+                        runtime.copyResources(dir, classesDir());
+                    }
                 }
 
                 if (hasJavaSources()) {
+                    int sourceCount = countSources();
+                    if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "compile", sourceCount);
                     runtime.compile(sourceDir(), classesDir(), fullClasspath,
-                            annotationProcessorPaths(), compilerArgs());
+                            resolvedAnnotationProcessorPaths(), compilerArgs());
                 }
 
-                runtime.createJar(classesDir(), jarFile());
+                if (needsJandexIndex()) {
+                    if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "jandex", 0);
+                    runtime.generateJandexIndex(classesDir());
+                }
+
+                if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "jar", 0);
+                runtime.createJar(classesDir(), jarFile(), manifestEntries());
+
+                if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "install", 0);
                 runtime.install(jarFile(), pomFile(), groupId(), artifactId(), version(), packaging());
             }
 
+            buildSucceeded = true;
+            if (progress != null) {
+                progress.moduleCompleted(threadIdx, true);
+            }
+        } catch (Throwable e) {
             long elapsed = System.currentTimeMillis() - start;
-            System.out.println("[" + artifactId() + "] Done in " + elapsed + "ms");
-        } catch (Exception e) {
-            long elapsed = System.currentTimeMillis() - start;
+            if (progress != null) {
+                progress.moduleCompleted(threadIdx, false);
+            }
             System.err.println("[" + artifactId() + "] FAILED after " + elapsed + "ms: " + e.getMessage());
             throw new RuntimeException("Build failed for " + artifactId(), e);
         }
@@ -91,8 +203,15 @@ public abstract class ModuleBuild {
             if (!visited.add(dep.artifactId())) {
                 continue;
             }
-            if (!"pom".equals(dep.packaging())) {
+            if (dep.didSucceed() && !"pom".equals(dep.packaging())) {
                 classpath.add(dep.jarFile().toString());
+            }
+            if (dep.didSucceed()) {
+                for (String cp : dep.resolvedClasspath()) {
+                    if (!classpath.contains(cp)) {
+                        classpath.add(cp);
+                    }
+                }
             }
             addReactorJars(dep, classpath, visited);
         }
@@ -118,7 +237,15 @@ public abstract class ModuleBuild {
         return runtime.getProjectRoot().resolve(baseDir()).resolve("src/main/java");
     }
 
-    public Path resourceDir() {
-        return runtime.getProjectRoot().resolve(baseDir()).resolve("src/main/resources");
+    protected static Map<String, String> parseProps(String packed) {
+        if (packed == null || packed.isEmpty()) return Map.of();
+        Map<String, String> map = new HashMap<>();
+        for (String line : packed.split("\n")) {
+            int eq = line.indexOf('=');
+            if (eq > 0) {
+                map.put(line.substring(0, eq), line.substring(eq + 1));
+            }
+        }
+        return map;
     }
 }

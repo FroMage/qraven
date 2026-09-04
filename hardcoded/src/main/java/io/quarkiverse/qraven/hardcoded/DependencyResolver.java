@@ -52,7 +52,9 @@ public class DependencyResolver {
 
         this.remoteRepos = List.of(
                 new RemoteRepository.Builder("central", "default",
-                        "https://repo.maven.apache.org/maven2/").build()
+                        "https://repo.maven.apache.org/maven2/").build(),
+                new RemoteRepository.Builder("gradle", "default",
+                        "https://repo.gradle.org/gradle/libs-releases/").build()
         );
     }
 

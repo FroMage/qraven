@@ -3,6 +3,7 @@ package io.quarkiverse.qraven.hardcoded;
 import org.apache.maven.model.Dependency;
 import org.apache.maven.model.Model;
 import org.apache.maven.model.Plugin;
+import org.apache.maven.model.Resource;
 import org.apache.maven.model.building.DefaultModelBuilderFactory;
 import org.apache.maven.model.building.DefaultModelBuildingRequest;
 import org.apache.maven.model.building.ModelBuilder;
@@ -42,9 +43,32 @@ public class PomParser {
         discoverModules(projectRoot.resolve("pom.xml"), projectRoot, modules, effectiveModels);
 
         Set<String> reactorGAs = new LinkedHashSet<>();
+        Map<String, String> gaToArtifactId = new LinkedHashMap<>();
         for (ModuleInfo m : modules) {
-            reactorGAs.add(m.getGroupId() + ":" + m.getArtifactId());
+            String ga = m.getGroupId() + ":" + m.getArtifactId();
+            reactorGAs.add(ga);
+            gaToArtifactId.put(ga, m.getArtifactId());
         }
+
+        Map<String, List<String>> skippedModuleReactorDeps = new LinkedHashMap<>();
+        for (ModuleInfo m : modules) {
+            if (shouldSkipModule(m, effectiveModels)) {
+                Model model = effectiveModels.get(m.getGroupId() + ":" + m.getArtifactId());
+                if (model != null && model.getDependencies() != null) {
+                    List<String> deps = new ArrayList<>();
+                    for (Dependency dep : model.getDependencies()) {
+                        String scope = dep.getScope() != null ? dep.getScope() : "compile";
+                        String ga = dep.getGroupId() + ":" + dep.getArtifactId();
+                        if (("compile".equals(scope) || "provided".equals(scope)) && reactorGAs.contains(ga)) {
+                            deps.add(gaToArtifactId.get(ga));
+                        }
+                    }
+                    skippedModuleReactorDeps.put(m.getArtifactId(), deps);
+                }
+            }
+        }
+
+        modules.removeIf(m -> shouldSkipModule(m, effectiveModels));
 
         for (ModuleInfo info : modules) {
             Model model = effectiveModels.get(info.getGroupId() + ":" + info.getArtifactId());
@@ -57,9 +81,47 @@ public class PomParser {
             }
 
             resolveDependencies(model, info, reactorGAs);
+
+            List<String> extraDeps = new ArrayList<>();
+            for (String depId : new ArrayList<>(info.getReactorDependencies())) {
+                if (skippedModuleReactorDeps.containsKey(depId)) {
+                    for (String transitiveDep : skippedModuleReactorDeps.get(depId)) {
+                        if (!info.getReactorDependencies().contains(transitiveDep)
+                                && !extraDeps.contains(transitiveDep)
+                                && !skippedModuleReactorDeps.containsKey(transitiveDep)) {
+                            extraDeps.add(transitiveDep);
+                        }
+                    }
+                    info.getReactorDependencies().remove(depId);
+                }
+            }
+            info.getReactorDependencies().addAll(extraDeps);
         }
 
         return modules;
+    }
+
+    private boolean shouldSkipModule(ModuleInfo info, Map<String, Model> effectiveModels) {
+        if ("maven-plugin".equals(info.getPackaging())) {
+            System.out.println("  Skipping maven-plugin module: " + info.getArtifactId());
+            return true;
+        }
+
+        Model model = effectiveModels.get(info.getGroupId() + ":" + info.getArtifactId());
+        if (model == null || model.getBuild() == null) return false;
+
+        for (Plugin plugin : model.getBuild().getPlugins()) {
+            if ("kotlin-maven-plugin".equals(plugin.getArtifactId())) {
+                System.out.println("  Skipping Kotlin module: " + info.getArtifactId());
+                return true;
+            }
+            if ("protobuf-maven-plugin".equals(plugin.getArtifactId())) {
+                System.out.println("  Skipping protobuf/gRPC module: " + info.getArtifactId());
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private void discoverModules(Path pomFile, Path baseDir, List<ModuleInfo> modules,
@@ -118,11 +180,91 @@ public class PomParser {
         info.setPomFile(baseDir.resolve("pom.xml").toAbsolutePath());
 
         Path srcMain = baseDir.resolve("src/main/java");
-        Path resMain = baseDir.resolve("src/main/resources");
         info.setHasJavaSources(Files.isDirectory(srcMain) && hasJavaFiles(srcMain));
-        info.setHasResources(Files.isDirectory(resMain));
+
+        extractResourceDirs(model, baseDir, info);
+        extractFilterProperties(model, info);
+        detectJandexPlugin(model, info);
+        extractManifestEntries(model, info);
 
         return info;
+    }
+
+    private void extractResourceDirs(Model model, Path baseDir, ModuleInfo info) {
+        List<ModuleInfo.ResourceDir> resourceDirs = new ArrayList<>();
+
+        if (model.getBuild() != null && model.getBuild().getResources() != null
+                && !model.getBuild().getResources().isEmpty()) {
+            for (Resource resource : model.getBuild().getResources()) {
+                String dir = resource.getDirectory();
+                Path dirPath = Path.of(dir);
+                if (dirPath.isAbsolute()) {
+                    dirPath = baseDir.toAbsolutePath().relativize(dirPath);
+                }
+                if (Files.isDirectory(baseDir.resolve(dirPath))) {
+                    resourceDirs.add(new ModuleInfo.ResourceDir(
+                            dirPath.toString(), resource.isFiltering()));
+                }
+            }
+        } else {
+            Path resMain = baseDir.resolve("src/main/resources");
+            if (Files.isDirectory(resMain)) {
+                resourceDirs.add(new ModuleInfo.ResourceDir("src/main/resources", false));
+            }
+        }
+
+        info.setResourceDirs(resourceDirs);
+    }
+
+    private void extractFilterProperties(Model model, ModuleInfo info) {
+        boolean hasFiltering = info.getResourceDirs().stream().anyMatch(ModuleInfo.ResourceDir::filtering);
+        if (!hasFiltering) return;
+
+        Map<String, String> props = new LinkedHashMap<>();
+        props.put("project.groupId", info.getGroupId());
+        props.put("project.artifactId", info.getArtifactId());
+        props.put("project.version", info.getVersion());
+        if (model.getName() != null) props.put("project.name", model.getName());
+        if (model.getDescription() != null) props.put("project.description", model.getDescription());
+
+        Properties modelProps = model.getProperties();
+        if (modelProps != null) {
+            for (String key : modelProps.stringPropertyNames()) {
+                props.put(key, modelProps.getProperty(key));
+            }
+        }
+
+        info.setFilterProperties(props);
+    }
+
+    private void detectJandexPlugin(Model model, ModuleInfo info) {
+        if (model.getBuild() == null) return;
+        for (Plugin plugin : model.getBuild().getPlugins()) {
+            if ("jandex-maven-plugin".equals(plugin.getArtifactId())) {
+                info.setNeedsJandexIndex(true);
+                return;
+            }
+        }
+    }
+
+    private void extractManifestEntries(Model model, ModuleInfo info) {
+        if (model.getBuild() == null) return;
+        for (Plugin plugin : model.getBuild().getPlugins()) {
+            if (!"maven-jar-plugin".equals(plugin.getArtifactId())) continue;
+            Xpp3Dom config = (Xpp3Dom) plugin.getConfiguration();
+            if (config == null) continue;
+            Xpp3Dom archive = config.getChild("archive");
+            if (archive == null) continue;
+            Xpp3Dom entries = archive.getChild("manifestEntries");
+            if (entries == null) continue;
+            Map<String, String> manifestEntries = new LinkedHashMap<>();
+            for (Xpp3Dom entry : entries.getChildren()) {
+                if (entry.getValue() != null) {
+                    manifestEntries.put(entry.getName(), entry.getValue());
+                }
+            }
+            info.setManifestEntries(manifestEntries);
+        }
     }
 
     private boolean hasJavaFiles(Path dir) {
@@ -140,14 +282,12 @@ public class PomParser {
         List<Dependency> managedDeps = model.getDependencyManagement() != null
                 ? model.getDependencyManagement().getDependencies() : List.of();
 
-        // Check pluginManagement first (inherited defaults)
         if (model.getBuild() != null && model.getBuild().getPluginManagement() != null) {
             extractCompilerConfigFromPlugins(
                     model.getBuild().getPluginManagement().getPlugins(),
                     compilerArgs, annotationProcessorPaths, managedDeps);
         }
 
-        // Then overlay with explicit plugins (may add annotation processors)
         List<String> explicitArgs = new ArrayList<>();
         List<String> explicitAPPaths = new ArrayList<>();
         if (model.getBuild() != null) {
@@ -262,28 +402,50 @@ public class PomParser {
             return;
         }
 
-        for (Dependency dep : model.getDependencies()) {
-            String scope = dep.getScope() != null ? dep.getScope() : "compile";
-            if ("compile".equals(scope) || "provided".equals(scope)) {
-                String ga = dep.getGroupId() + ":" + dep.getArtifactId();
-                if (reactorGAs.contains(ga)) {
-                    info.getReactorDependencies().add(dep.getArtifactId());
+        Map<String, String> managedVersions = new LinkedHashMap<>();
+        if (model.getDependencyManagement() != null && model.getDependencyManagement().getDependencies() != null) {
+            for (Dependency md : model.getDependencyManagement().getDependencies()) {
+                if (md.getVersion() != null && !md.getVersion().isBlank()) {
+                    managedVersions.put(md.getGroupId() + ":" + md.getArtifactId(), md.getVersion());
                 }
             }
+        }
+
+        List<Dependency> externalDeps = new ArrayList<>();
+        for (Dependency dep : model.getDependencies()) {
+            String scope = dep.getScope() != null ? dep.getScope() : "compile";
+            String ga = dep.getGroupId() + ":" + dep.getArtifactId();
+            if (("compile".equals(scope) || "provided".equals(scope)) && reactorGAs.contains(ga)) {
+                info.getReactorDependencies().add(dep.getArtifactId());
+                continue;
+            }
+            if (!"test".equals(scope) && !reactorGAs.contains(ga)) {
+                String version = dep.getVersion();
+                if (version == null || version.isBlank()) {
+                    version = managedVersions.get(ga);
+                }
+                if (version != null && !version.isBlank()) {
+                    if (dep.getVersion() == null || dep.getVersion().isBlank()) {
+                        dep.setVersion(version);
+                    }
+                    externalDeps.add(dep);
+                }
+            }
+        }
+
+        if (externalDeps.isEmpty()) {
+            return;
         }
 
         List<Dependency> managedDeps = model.getDependencyManagement() != null
                 ? model.getDependencyManagement().getDependencies() : List.of();
 
         List<DependencyResolver.ResolvedArtifact> resolved =
-                resolver.resolveCompileClasspath(model.getDependencies(), managedDeps);
+                resolver.resolveCompileClasspath(externalDeps, managedDeps);
 
         List<String> externalClasspath = new ArrayList<>();
         for (DependencyResolver.ResolvedArtifact art : resolved) {
-            String ga = art.groupId() + ":" + art.artifactId();
-            if (!reactorGAs.contains(ga)) {
-                externalClasspath.add(art.filePath());
-            }
+            externalClasspath.add(art.filePath());
         }
         info.setCompileClasspath(externalClasspath);
     }

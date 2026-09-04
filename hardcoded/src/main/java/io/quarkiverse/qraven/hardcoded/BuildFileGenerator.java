@@ -18,6 +18,7 @@ import java.nio.file.SimpleFileVisitor;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.List;
+import java.util.Map;
 import java.util.jar.Attributes;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
@@ -57,7 +58,8 @@ public class BuildFileGenerator {
         sb.append("import io.quarkiverse.qraven.hardcoded.runtime.ModuleBuild;\n");
         sb.append("import io.quarkiverse.qraven.hardcoded.runtime.BuildRuntime;\n");
         sb.append("import java.nio.file.Path;\n");
-        sb.append("import java.util.List;\n\n");
+        sb.append("import java.util.List;\n");
+        sb.append("import java.util.Map;\n\n");
 
         sb.append("public class Build_").append(className).append(" extends ModuleBuild {\n\n");
 
@@ -69,19 +71,74 @@ public class BuildFileGenerator {
         sb.append("    @Override public String packaging() { return ").append(quote(module.getPackaging())).append("; }\n");
         sb.append("    @Override public Path baseDir() { return Path.of(").append(quote(module.getBaseDir().toString())).append("); }\n");
         sb.append("    @Override public boolean hasJavaSources() { return ").append(module.isHasJavaSources()).append("; }\n");
-        sb.append("    @Override public boolean hasResources() { return ").append(module.isHasResources()).append("; }\n\n");
+        sb.append("    @Override public boolean needsJandexIndex() { return ").append(module.isNeedsJandexIndex()).append("; }\n\n");
+
+        // resourceDirs
+        sb.append("    @Override\n");
+        sb.append("    public String[][] resourceDirs() {\n");
+        List<ModuleInfo.ResourceDir> rds = module.getResourceDirs();
+        if (rds.isEmpty()) {
+            sb.append("        return new String[0][];\n");
+        } else {
+            sb.append("        return new String[][] {\n");
+            for (int i = 0; i < rds.size(); i++) {
+                ModuleInfo.ResourceDir rd = rds.get(i);
+                sb.append("            {").append(quote(rd.directory())).append(", ")
+                        .append(quote(String.valueOf(rd.filtering()))).append("}");
+                if (i < rds.size() - 1) sb.append(",");
+                sb.append("\n");
+            }
+            sb.append("        };\n");
+        }
+        sb.append("    }\n\n");
+
+        // filterProperties
+        Map<String, String> props = module.getFilterProperties();
+        if (props.isEmpty()) {
+            sb.append("    @Override\n");
+            sb.append("    public Map<String, String> filterProperties() { return Map.of(); }\n\n");
+        } else {
+            sb.append("    private static final String FILTER_PROPS = \"\"\"\n");
+            for (Map.Entry<String, String> entry : props.entrySet()) {
+                sb.append("            ").append(escapeTextBlock(entry.getKey()))
+                        .append("=").append(escapeTextBlock(entry.getValue())).append("\n");
+            }
+            sb.append("            \"\"\";\n\n");
+            sb.append("    @Override\n");
+            sb.append("    public Map<String, String> filterProperties() { return parseProps(FILTER_PROPS); }\n\n");
+        }
+
+        // manifestEntries
+        sb.append("    @Override\n");
+        sb.append("    public Map<String, String> manifestEntries() {\n");
+        Map<String, String> manifest = module.getManifestEntries();
+        if (manifest.isEmpty()) {
+            sb.append("        return Map.of();\n");
+        } else {
+            sb.append("        return Map.of(\n");
+            List<Map.Entry<String, String>> mentries = List.copyOf(manifest.entrySet());
+            for (int i = 0; i < mentries.size(); i++) {
+                Map.Entry<String, String> entry = mentries.get(i);
+                sb.append("            ").append(quote(entry.getKey())).append(", ")
+                        .append(quote(entry.getValue()));
+                if (i < mentries.size() - 1) sb.append(",");
+                sb.append("\n");
+            }
+            sb.append("        );\n");
+        }
+        sb.append("    }\n\n");
 
         sb.append("    @Override\n");
         sb.append("    public List<String> compileClasspath() {\n");
         sb.append("        return List.of(\n");
-        sb.append(formatStringList(module.getCompileClasspath(), "            "));
+        sb.append(formatStringList(makePortable(module.getCompileClasspath()), "            "));
         sb.append("        );\n");
         sb.append("    }\n\n");
 
         sb.append("    @Override\n");
         sb.append("    public List<String> annotationProcessorPaths() {\n");
         sb.append("        return List.of(\n");
-        sb.append(formatStringList(module.getAnnotationProcessorPaths(), "            "));
+        sb.append(formatStringList(makePortable(module.getAnnotationProcessorPaths()), "            "));
         sb.append("        );\n");
         sb.append("    }\n\n");
 
@@ -144,6 +201,8 @@ public class BuildFileGenerator {
         Path runtimeJar = findRuntimeJar();
         System.out.println("Using runtime JAR: " + runtimeJar);
 
+        String jandexJar = findJandexJar(runtimeJar);
+
         List<Path> sourceFiles;
         try (var stream = Files.walk(srcDir)) {
             sourceFiles = stream
@@ -158,13 +217,18 @@ public class BuildFileGenerator {
             throw new RuntimeException("No Java compiler available");
         }
 
+        String classpath = runtimeJar.toString();
+        if (jandexJar != null) {
+            classpath += File.pathSeparator + jandexJar;
+        }
+
         var diagnostics = new javax.tools.DiagnosticCollector<javax.tools.JavaFileObject>();
         try (var fileManager = compiler.getStandardFileManager(diagnostics, null, null)) {
             var compilationUnits = fileManager.getJavaFileObjectsFromPaths(sourceFiles);
 
             List<String> options = List.of(
                     "-d", classesDir.toString(),
-                    "-classpath", runtimeJar.toString()
+                    "-classpath", classpath
             );
 
             var task = compiler.getTask(null, fileManager, diagnostics, options, null, compilationUnits);
@@ -176,11 +240,34 @@ public class BuildFileGenerator {
         }
 
         System.out.println("Packaging build.jar...");
-        createBuildJar(classesDir, runtimeJar, buildJar);
+        createBuildJar(classesDir, runtimeJar, jandexJar, buildJar);
         System.out.println("Created: " + buildJar);
     }
 
-    private void createBuildJar(Path classesDir, Path runtimeJar, Path buildJar) throws IOException {
+    private String findJandexJar(Path runtimeJar) {
+        if (Files.isDirectory(runtimeJar)) {
+            Path jandex = Path.of(System.getProperty("user.home"), ".m2", "repository",
+                    "io", "smallrye", "jandex");
+            if (Files.isDirectory(jandex)) {
+                try (var versions = Files.list(jandex)) {
+                    return versions.filter(Files::isDirectory)
+                            .findFirst()
+                            .map(v -> {
+                                String ver = v.getFileName().toString();
+                                Path jar = v.resolve("jandex-" + ver + ".jar");
+                                return Files.exists(jar) ? jar.toString() : null;
+                            })
+                            .orElse(null);
+                } catch (IOException e) {
+                    return null;
+                }
+            }
+            return null;
+        }
+        return null;
+    }
+
+    private void createBuildJar(Path classesDir, Path runtimeJar, String jandexJar, Path buildJar) throws IOException {
         Manifest manifest = new Manifest();
         manifest.getMainAttributes().put(Attributes.Name.MANIFEST_VERSION, "1.0");
         manifest.getMainAttributes().put(Attributes.Name.MAIN_CLASS, "Build");
@@ -193,6 +280,32 @@ public class BuildFileGenerator {
 
             // Add runtime classes from our JAR
             addRuntimeClassesToJar(runtimeJar, jos);
+
+            // Add jandex classes if not already included
+            if (jandexJar != null) {
+                addJarClassesToJar(Path.of(jandexJar), jos);
+            }
+        }
+    }
+
+    private void addJarClassesToJar(Path jarPath, JarOutputStream jos) throws IOException {
+        try (java.util.jar.JarFile jf = new java.util.jar.JarFile(jarPath.toFile())) {
+            var entries = jf.entries();
+            while (entries.hasMoreElements()) {
+                var entry = entries.nextElement();
+                String name = entry.getName();
+                if (name.endsWith(".class") && !entry.isDirectory()) {
+                    try {
+                        jos.putNextEntry(new JarEntry(name));
+                        try (var is = jf.getInputStream(entry)) {
+                            is.transferTo(jos);
+                        }
+                        jos.closeEntry();
+                    } catch (java.util.zip.ZipException e) {
+                        // duplicate entry — skip
+                    }
+                }
+            }
         }
     }
 
@@ -229,25 +342,33 @@ public class BuildFileGenerator {
                 });
             }
         } else {
-            // Running from a JAR
+            // Running from a JAR - copy all classes (includes shaded Jandex)
             URI jarUri = URI.create("jar:" + runtimeJar.toUri());
             try (FileSystem zipFs = FileSystems.newFileSystem(jarUri, java.util.Map.of())) {
-                Path runtimePkg = zipFs.getPath("io/quarkiverse/qraven/hardcoded/runtime");
-                if (Files.isDirectory(runtimePkg)) {
-                    Files.walkFileTree(runtimePkg, new SimpleFileVisitor<>() {
-                        @Override
-                        public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
-                            String entryName = file.toString();
-                            if (entryName.startsWith("/")) {
-                                entryName = entryName.substring(1);
-                            }
+                Path root = zipFs.getPath("/");
+                Files.walkFileTree(root, new SimpleFileVisitor<>() {
+                    @Override
+                    public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                        String entryName = file.toString();
+                        if (entryName.startsWith("/")) {
+                            entryName = entryName.substring(1);
+                        }
+                        if (!entryName.endsWith(".class")) {
+                            return FileVisitResult.CONTINUE;
+                        }
+                        if (entryName.startsWith("META-INF/")) {
+                            return FileVisitResult.CONTINUE;
+                        }
+                        try {
                             jos.putNextEntry(new JarEntry(entryName));
                             Files.copy(file, jos);
                             jos.closeEntry();
-                            return FileVisitResult.CONTINUE;
+                        } catch (java.util.zip.ZipException e) {
+                            // duplicate entry - skip
                         }
-                    });
-                }
+                        return FileVisitResult.CONTINUE;
+                    }
+                });
             }
         }
     }
@@ -271,7 +392,18 @@ public class BuildFileGenerator {
     }
 
     private String quote(String s) {
-        return "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+        return "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r") + "\"";
+    }
+
+    private String escapeTextBlock(String s) {
+        return s.replace("\\", "\\\\").replace("\n", "\\n").replace("\r", "");
+    }
+
+    private List<String> makePortable(List<String> paths) {
+        String home = System.getProperty("user.home");
+        return paths.stream()
+                .map(p -> p.startsWith(home + "/") ? "$HOME" + p.substring(home.length()) : p)
+                .toList();
     }
 
     private String sanitizeClassName(String artifactId) {

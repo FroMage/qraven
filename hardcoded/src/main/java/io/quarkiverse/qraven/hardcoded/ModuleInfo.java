@@ -2,7 +2,9 @@ package io.quarkiverse.qraven.hardcoded;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 public class ModuleInfo {
 
@@ -17,7 +19,12 @@ public class ModuleInfo {
     private List<String> compilerArgs = new ArrayList<>();
     private List<String> reactorDependencies = new ArrayList<>();
     private boolean hasJavaSources;
-    private boolean hasResources;
+    private List<ResourceDir> resourceDirs = new ArrayList<>();
+    private Map<String, String> filterProperties = new LinkedHashMap<>();
+    private boolean needsJandexIndex;
+    private Map<String, String> manifestEntries = new LinkedHashMap<>();
+
+    public record ResourceDir(String directory, boolean filtering) {}
 
     public String getGroupId() { return groupId; }
     public void setGroupId(String groupId) { this.groupId = groupId; }
@@ -52,8 +59,17 @@ public class ModuleInfo {
     public boolean isHasJavaSources() { return hasJavaSources; }
     public void setHasJavaSources(boolean hasJavaSources) { this.hasJavaSources = hasJavaSources; }
 
-    public boolean isHasResources() { return hasResources; }
-    public void setHasResources(boolean hasResources) { this.hasResources = hasResources; }
+    public List<ResourceDir> getResourceDirs() { return resourceDirs; }
+    public void setResourceDirs(List<ResourceDir> resourceDirs) { this.resourceDirs = resourceDirs; }
+
+    public Map<String, String> getFilterProperties() { return filterProperties; }
+    public void setFilterProperties(Map<String, String> filterProperties) { this.filterProperties = filterProperties; }
+
+    public boolean isNeedsJandexIndex() { return needsJandexIndex; }
+    public void setNeedsJandexIndex(boolean needsJandexIndex) { this.needsJandexIndex = needsJandexIndex; }
+
+    public Map<String, String> getManifestEntries() { return manifestEntries; }
+    public void setManifestEntries(Map<String, String> manifestEntries) { this.manifestEntries = manifestEntries; }
 
     @Override
     public String toString() {

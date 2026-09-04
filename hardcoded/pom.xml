@@ -37,6 +37,11 @@
             <artifactId>maven-resolver-transport-http</artifactId>
             <version>${resolver.version}</version>
         </dependency>
+        <dependency>
+            <groupId>io.smallrye</groupId>
+            <artifactId>jandex</artifactId>
+            <version>3.5.3</version>
+        </dependency>
     </dependencies>
 
     <build>
