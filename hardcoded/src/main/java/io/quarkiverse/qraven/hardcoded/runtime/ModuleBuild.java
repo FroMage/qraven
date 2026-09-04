@@ -89,9 +89,14 @@ public abstract class ModuleBuild {
     }
 
     private volatile boolean buildSucceeded = false;
+    private volatile String failureMessage;
 
     public boolean didSucceed() {
         return buildSucceeded;
+    }
+
+    public String getFailureMessage() {
+        return failureMessage;
     }
 
     public synchronized CompletableFuture<Void> buildAsync(ExecutorService executor) {
@@ -190,10 +195,10 @@ public abstract class ModuleBuild {
             }
         } catch (Throwable e) {
             long elapsed = System.currentTimeMillis() - start;
+            failureMessage = "[" + artifactId() + "] FAILED after " + elapsed + "ms: " + e.getMessage();
             if (progress != null) {
                 progress.moduleCompleted(threadIdx, false);
             }
-            System.err.println("[" + artifactId() + "] FAILED after " + elapsed + "ms: " + e.getMessage());
             throw new RuntimeException("Build failed for " + artifactId(), e);
         }
     }

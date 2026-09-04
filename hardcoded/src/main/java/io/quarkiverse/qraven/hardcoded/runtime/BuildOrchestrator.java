@@ -106,6 +106,12 @@ public class BuildOrchestrator {
                 + directFailures.size() + " failed, " + cascadeFailures.size() + " skipped (cascade)");
         if (!directFailures.isEmpty()) {
             System.err.println("Direct failures: " + String.join(", ", directFailures));
+            System.err.println();
+            for (ModuleBuild m : modules) {
+                if (m.getFailureMessage() != null) {
+                    System.err.println(m.getFailureMessage());
+                }
+            }
         }
         if (!cascadeFailures.isEmpty()) {
             System.err.println("Cascade failures (" + cascadeFailures.size() + "): "
