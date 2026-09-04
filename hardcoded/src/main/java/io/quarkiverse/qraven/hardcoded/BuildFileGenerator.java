@@ -37,20 +37,36 @@ public class BuildFileGenerator {
         this.threads = threads;
     }
 
+    public interface ProgressListener {
+        void update(String detail, int current, int total);
+    }
+
+    private ProgressListener progressListener;
+
+    public void setProgressListener(ProgressListener listener) {
+        this.progressListener = listener;
+    }
+
     public void generate(List<ModuleInfo> modules) throws IOException {
         Path srcDir = outputDir.resolve("src");
         Files.createDirectories(srcDir);
 
-        for (ModuleInfo module : modules) {
+        int total = modules.size() + 1;
+        for (int i = 0; i < modules.size(); i++) {
+            ModuleInfo module = modules.get(i);
             String className = sanitizeClassName(module.getArtifactId());
             Path sourceFile = srcDir.resolve("Build_" + className + ".java");
             Files.writeString(sourceFile, generateModuleClass(module, className));
-            System.out.println("  Generated Build_" + className + ".java");
+            if (progressListener != null) {
+                progressListener.update(module.getArtifactId(), i + 1, total);
+            }
         }
 
         Path mainFile = srcDir.resolve("Build.java");
         Files.writeString(mainFile, generateMainClass(modules));
-        System.out.println("  Generated Build.java");
+        if (progressListener != null) {
+            progressListener.update("Build.java", total, total);
+        }
     }
 
     private String generateModuleClass(ModuleInfo module, String className) {
@@ -199,7 +215,6 @@ public class BuildFileGenerator {
         Files.createDirectories(classesDir);
 
         Path runtimeJar = findRuntimeJar();
-        System.out.println("Using runtime JAR: " + runtimeJar);
 
         String jandexJar = findJandexJar(runtimeJar);
 
@@ -209,8 +224,6 @@ public class BuildFileGenerator {
                     .filter(p -> p.toString().endsWith(".java"))
                     .toList();
         }
-
-        System.out.println("Compiling " + sourceFiles.size() + " generated source files...");
 
         JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
         if (compiler == null) {
@@ -240,9 +253,7 @@ public class BuildFileGenerator {
             }
         }
 
-        System.out.println("Packaging build.jar...");
         createBuildJar(classesDir, runtimeJar, jandexJar, buildJar);
-        System.out.println("Created: " + buildJar);
     }
 
     private String findJandexJar(Path runtimeJar) {

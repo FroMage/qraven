@@ -24,16 +24,31 @@ import java.util.Set;
 
 public class PomParser {
 
+    public interface ProgressListener {
+        void update(String phase, String detail, int current, int total);
+    }
+
     private final Path projectRoot;
     private final DependencyResolver resolver;
     private final ModelBuilder modelBuilder;
     private final Path localRepoDir;
+    private ProgressListener progressListener;
 
     public PomParser(Path projectRoot, DependencyResolver resolver) {
         this.projectRoot = projectRoot;
         this.resolver = resolver;
         this.modelBuilder = new DefaultModelBuilderFactory().newInstance();
         this.localRepoDir = resolver.getLocalRepoPath();
+    }
+
+    public void setProgressListener(ProgressListener listener) {
+        this.progressListener = listener;
+    }
+
+    private void progress(String phase, String detail, int current, int total) {
+        if (progressListener != null) {
+            progressListener.update(phase, detail, current, total);
+        }
     }
 
     public List<ModuleInfo> parseProject() {
@@ -70,16 +85,20 @@ public class PomParser {
 
         modules.removeIf(m -> shouldSkipModule(m, effectiveModels));
 
+        int resolveIdx = 0;
         for (ModuleInfo info : modules) {
+            resolveIdx++;
             Model model = effectiveModels.get(info.getGroupId() + ":" + info.getArtifactId());
             if (model == null) continue;
 
             extractCompilerConfig(model, info);
 
             if ("pom".equals(info.getPackaging())) {
+                progress("resolve", info.getArtifactId(), resolveIdx, modules.size());
                 continue;
             }
 
+            progress("resolve", info.getArtifactId(), resolveIdx, modules.size());
             resolveDependencies(model, info, reactorGAs);
 
             List<String> extraDeps = new ArrayList<>();
@@ -135,6 +154,7 @@ public class PomParser {
         ModuleInfo info = toModuleInfo(model, baseDir);
         modules.add(info);
         effectiveModels.put(info.getGroupId() + ":" + info.getArtifactId(), model);
+        progress("scan", info.getArtifactId(), modules.size(), 0);
 
         for (String moduleName : model.getModules()) {
             Path moduleDir = baseDir.resolve(moduleName);

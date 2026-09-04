@@ -27,6 +27,8 @@ import java.util.List;
 
 public class QravenCli {
 
+    private static final String ERASE_LINE = "\r\u001b[2K";
+
     public static void main(String[] args) throws Exception {
         Path projectDir = Path.of(".").toAbsolutePath().normalize();
         int threads = Runtime.getRuntime().availableProcessors();
@@ -49,8 +51,7 @@ public class QravenCli {
             outputDir = projectDir.resolve("target/qraven");
         }
 
-        System.out.println("Qraven Hardcoded Build Generator");
-        System.out.println("================================");
+        System.out.println("Qraven Build Generator");
         System.out.println("Project:  " + projectDir);
         System.out.println("Threads:  " + threads);
         System.out.println("Output:   " + outputDir);
@@ -60,43 +61,47 @@ public class QravenCli {
         System.out.println();
 
         long totalStart = System.currentTimeMillis();
-
-        System.out.println("Step 1: Parsing POM files and resolving dependencies...");
         long stepStart = System.currentTimeMillis();
 
         DependencyResolver resolver = new DependencyResolver();
         PomParser parser = new PomParser(projectDir, resolver);
+        parser.setProgressListener((phase, detail, current, total) -> {
+            String msg = switch (phase) {
+                case "scan" -> "Scanning modules... " + current + " found (" + detail + ")";
+                case "resolve" -> "Resolving " + current + "/" + total + " (" + detail + ")";
+                default -> phase + ": " + detail;
+            };
+            System.err.print(ERASE_LINE + "  " + msg);
+        });
         List<ModuleInfo> modules = parser.parseProject();
+        System.err.print(ERASE_LINE);
 
-        System.out.println("Found " + modules.size() + " modules in " +
+        System.out.println("Parsed " + modules.size() + " modules in " +
                 (System.currentTimeMillis() - stepStart) + "ms");
-        for (ModuleInfo m : modules) {
-            System.out.println("  " + m + " (" + m.getCompileClasspath().size() + " deps, " +
-                    m.getReactorDependencies().size() + " reactor deps)");
-        }
-        System.out.println();
 
-        System.out.println("Step 2: Generating build files...");
         stepStart = System.currentTimeMillis();
 
         BuildFileGenerator generator = new BuildFileGenerator(projectDir, outputDir, threads);
+        generator.setProgressListener((detail, current, total) ->
+                System.err.print(ERASE_LINE + "  Generating " + current + "/" + total + " (" + detail + ")"));
         generator.generate(modules);
+        System.err.print(ERASE_LINE);
 
-        System.out.println("Generated in " + (System.currentTimeMillis() - stepStart) + "ms");
-        System.out.println();
+        System.out.println("Generated " + (modules.size() + 1) + " source files in " +
+                (System.currentTimeMillis() - stepStart) + "ms");
 
-        System.out.println("Step 3: Compiling and packaging build.jar...");
         stepStart = System.currentTimeMillis();
+        System.err.print("  Compiling and packaging build.jar...");
 
         generator.compileAndPackage();
 
-        System.out.println("Packaged in " + (System.currentTimeMillis() - stepStart) + "ms");
+        System.err.print(ERASE_LINE);
+        System.out.println("Packaged build.jar in " + (System.currentTimeMillis() - stepStart) + "ms");
         System.out.println();
 
         Path buildJar = outputDir.resolve("build.jar");
 
         if (buildNative) {
-            System.out.println("Step 4: Compiling native image...");
             stepStart = System.currentTimeMillis();
 
             Path nativeImageBin = resolveNativeImage(graalvmHome);
@@ -111,7 +116,7 @@ public class QravenCli {
         }
 
         long totalElapsed = System.currentTimeMillis() - totalStart;
-        System.out.println("Total generation time: " + totalElapsed + "ms");
+        System.out.println("Total time: " + totalElapsed + "ms");
         System.out.println();
         if (buildNative) {
             System.out.println("To build the project, run:");
@@ -168,7 +173,6 @@ public class QravenCli {
             Path bin = Path.of(envJavaHome, "bin", "native-image");
             if (Files.isExecutable(bin)) return bin;
         }
-        Path pathBin = Path.of("native-image");
         try {
             Process p = new ProcessBuilder("which", "native-image").start();
             if (p.waitFor() == 0) {
