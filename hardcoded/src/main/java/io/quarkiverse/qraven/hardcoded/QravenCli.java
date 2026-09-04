@@ -36,6 +36,7 @@ public class QravenCli {
 
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
+                case "--help", "-h" -> { printHelp(); return; }
                 case "--project", "-p" -> projectDir = Path.of(args[++i]).toAbsolutePath().normalize();
                 case "--threads", "-t" -> threads = Integer.parseInt(args[++i]);
                 case "--output", "-o" -> outputDir = Path.of(args[++i]).toAbsolutePath().normalize();
@@ -119,6 +120,36 @@ public class QravenCli {
             System.out.println("To build the project, run:");
             System.out.println("  java -jar " + buildJar);
         }
+    }
+
+    private static void printHelp() {
+        System.out.println("""
+                qraven - Fast build tool for Maven projects
+
+                Parses pom.xml files, resolves dependencies, and generates a self-contained
+                build.jar that compiles all modules using the javac API. The build.jar can
+                optionally be compiled to a native binary via GraalVM for maximum speed.
+
+                Usage: qraven [options]
+
+                Options:
+                  -h, --help                Show this help message and exit
+                  -p, --project <path>      Project root directory (default: current directory)
+                  -t, --threads <n>         Thread count for parallel compilation (default: available CPUs)
+                  -o, --output <path>       Output directory for build.jar (default: <project>/target/qraven)
+                      --native              Compile build.jar to a native binary after generation
+                      --graalvm-home <path>  GraalVM installation path for native-image
+                                            (also checks GRAALVM_HOME, JAVA_HOME, and PATH)
+
+                Examples:
+                  qraven                                    Generate build.jar for current directory
+                  qraven -p /path/to/project -t 8           Use 8 threads
+                  qraven --native --graalvm-home /opt/graalvm  Generate and compile to native binary
+
+                Running the generated build:
+                  java -jar target/qraven/build.jar          JVM mode
+                  JAVA_HOME=/path/to/jdk target/qraven/build  Native mode (JAVA_HOME must match build JDK)
+                """);
     }
 
     private static Path resolveNativeImage(String graalvmHome) {
