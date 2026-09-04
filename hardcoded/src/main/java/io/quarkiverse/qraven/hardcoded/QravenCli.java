@@ -1,3 +1,21 @@
+///usr/bin/env jbang "$0" "$@" ; exit $?
+//JAVA 17+
+//JAVAC_OPTIONS --release 17
+//DEPS org.apache.maven:maven-resolver-provider:3.9.6
+//DEPS org.apache.maven.resolver:maven-resolver-connector-basic:1.9.18
+//DEPS org.apache.maven.resolver:maven-resolver-transport-file:1.9.18
+//DEPS org.apache.maven.resolver:maven-resolver-transport-http:1.9.18
+//DEPS io.smallrye:jandex:3.5.3
+//SOURCES BuildFileGenerator.java
+//SOURCES DependencyResolver.java
+//SOURCES LocalRepoModelResolver.java
+//SOURCES ModuleInfo.java
+//SOURCES PomParser.java
+//SOURCES runtime/BuildOrchestrator.java
+//SOURCES runtime/BuildRuntime.java
+//SOURCES runtime/ModuleBuild.java
+//SOURCES runtime/ProgressDisplay.java
+
 package io.quarkiverse.qraven.hardcoded;
 
 import java.io.BufferedReader;

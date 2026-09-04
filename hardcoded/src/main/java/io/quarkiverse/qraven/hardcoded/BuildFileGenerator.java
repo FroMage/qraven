@@ -228,7 +228,8 @@ public class BuildFileGenerator {
 
             List<String> options = List.of(
                     "-d", classesDir.toString(),
-                    "-classpath", classpath
+                    "-classpath", classpath,
+                    "--release", "17"
             );
 
             var task = compiler.getTask(null, fileManager, diagnostics, options, null, compilationUnits);

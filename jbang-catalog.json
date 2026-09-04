@@ -1,0 +1,8 @@
+{
+  "aliases": {
+    "qraven": {
+      "script-ref": "hardcoded/src/main/java/io/quarkiverse/qraven/hardcoded/QravenCli.java",
+      "description": "Fast build tool that generates self-contained build.jar from Maven pom.xml files"
+    }
+  }
+}

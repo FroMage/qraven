@@ -14,7 +14,21 @@ A fast build tool that reads Maven `pom.xml` files and generates a self-containe
 - Maven 3.9+
 - GraalVM JDK 21+ (for native image compilation, optional)
 
-## Building qraven
+## Installation (JBang)
+
+```bash
+jbang app install --name qraven qraven@quarkiverse/qraven
+```
+
+Or from a local clone:
+
+```bash
+jbang app install --name qraven qraven@/path/to/qraven
+```
+
+No build step needed -- JBang compiles and caches on first run.
+
+## Building from source (Maven)
 
 ```bash
 cd qraven
@@ -25,6 +39,12 @@ mvn install -DskipTests
 
 ### Step 1: Generate build.jar for your project
 
+**With JBang:**
+```bash
+qraven --project /path/to/your/maven/project
+```
+
+**With Maven (from source):**
 ```bash
 cd qraven
 mvn -pl hardcoded exec:java \
@@ -38,6 +58,8 @@ Options:
 - `--project <path>` or `-p <path>` -- project root (default: current dir)
 - `--threads <n>` or `-t <n>` -- thread count (default: available processors)
 - `--output <path>` or `-o <path>` -- output directory (default: `<project>/target/qraven`)
+- `--native` -- compile build.jar to a native binary after generation
+- `--graalvm-home <path>` -- GraalVM installation path (for `--native`)
 
 ### Step 2: Run the build
 
