@@ -156,7 +156,7 @@ public class PomParser {
             request.setTwoPhaseBuilding(false);
             request.setSystemProperties(System.getProperties());
             request.setUserProperties(new Properties());
-            request.setModelResolver(new LocalRepoModelResolver(localRepoDir));
+            request.setModelResolver(new LocalRepoModelResolver(localRepoDir, resolver));
 
             ModelBuildingResult result = modelBuilder.build(request);
             return result.getEffectiveModel();

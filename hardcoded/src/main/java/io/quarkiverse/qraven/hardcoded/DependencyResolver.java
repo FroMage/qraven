@@ -3,6 +3,7 @@ package io.quarkiverse.qraven.hardcoded;
 import org.apache.maven.repository.internal.MavenRepositorySystemUtils;
 import org.eclipse.aether.DefaultRepositorySystemSession;
 import org.eclipse.aether.RepositorySystem;
+import org.eclipse.aether.artifact.Artifact;
 import org.eclipse.aether.artifact.DefaultArtifact;
 import org.eclipse.aether.collection.CollectRequest;
 import org.eclipse.aether.connector.basic.BasicRepositoryConnectorFactory;
@@ -11,6 +12,8 @@ import org.eclipse.aether.graph.Exclusion;
 import org.eclipse.aether.impl.DefaultServiceLocator;
 import org.eclipse.aether.repository.LocalRepository;
 import org.eclipse.aether.repository.RemoteRepository;
+import org.eclipse.aether.resolution.ArtifactRequest;
+import org.eclipse.aether.resolution.ArtifactResolutionException;
 import org.eclipse.aether.resolution.ArtifactResult;
 import org.eclipse.aether.resolution.DependencyRequest;
 import org.eclipse.aether.resolution.DependencyResolutionException;
@@ -151,6 +154,20 @@ public class DependencyResolver {
             }
             return List.of();
         }
+    }
+
+    public Path resolvePom(String groupId, String artifactId, String version) {
+        Artifact artifact = new DefaultArtifact(groupId, artifactId, "pom", version);
+        ArtifactRequest request = new ArtifactRequest(artifact, remoteRepos, null);
+        try {
+            ArtifactResult result = repoSystem.resolveArtifact(session, request);
+            if (result.isResolved()) {
+                return result.getArtifact().getFile().toPath();
+            }
+        } catch (ArtifactResolutionException e) {
+            // fall through
+        }
+        return null;
     }
 
     public String resolveArtifactPath(String groupId, String artifactId, String version) {

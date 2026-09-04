@@ -15,9 +15,11 @@ import java.nio.file.Path;
 public class LocalRepoModelResolver implements ModelResolver {
 
     private final Path localRepoDir;
+    private final DependencyResolver resolver;
 
-    public LocalRepoModelResolver(Path localRepoDir) {
+    public LocalRepoModelResolver(Path localRepoDir, DependencyResolver resolver) {
         this.localRepoDir = localRepoDir;
+        this.resolver = resolver;
     }
 
     @Override
@@ -30,6 +32,12 @@ public class LocalRepoModelResolver implements ModelResolver {
                 .resolve(artifactId + "-" + version + ".pom");
         if (Files.exists(pomPath)) {
             return new FileModelSource(pomPath.toFile());
+        }
+        if (resolver != null) {
+            Path downloaded = resolver.resolvePom(groupId, artifactId, version);
+            if (downloaded != null) {
+                return new FileModelSource(downloaded.toFile());
+            }
         }
         throw new UnresolvableModelException(
                 "Cannot find " + groupId + ":" + artifactId + ":" + version + " in " + localRepoDir,
@@ -56,6 +64,6 @@ public class LocalRepoModelResolver implements ModelResolver {
 
     @Override
     public ModelResolver newCopy() {
-        return new LocalRepoModelResolver(localRepoDir);
+        return new LocalRepoModelResolver(localRepoDir, resolver);
     }
 }
