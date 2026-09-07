@@ -19,10 +19,14 @@ public class ModuleInfo {
     private List<String> compilerArgs = new ArrayList<>();
     private List<String> reactorDependencies = new ArrayList<>();
     private boolean hasJavaSources;
+    private boolean hasKotlinSources;
     private List<ResourceDir> resourceDirs = new ArrayList<>();
     private Map<String, String> filterProperties = new LinkedHashMap<>();
     private boolean needsJandexIndex;
     private Map<String, String> manifestEntries = new LinkedHashMap<>();
+    private boolean hasProtobufSources;
+    private boolean protobufUsesGrpc;
+    private boolean protobufUsesMutiny;
 
     public record ResourceDir(String directory, boolean filtering) {}
 
@@ -59,6 +63,9 @@ public class ModuleInfo {
     public boolean isHasJavaSources() { return hasJavaSources; }
     public void setHasJavaSources(boolean hasJavaSources) { this.hasJavaSources = hasJavaSources; }
 
+    public boolean isHasKotlinSources() { return hasKotlinSources; }
+    public void setHasKotlinSources(boolean hasKotlinSources) { this.hasKotlinSources = hasKotlinSources; }
+
     public List<ResourceDir> getResourceDirs() { return resourceDirs; }
     public void setResourceDirs(List<ResourceDir> resourceDirs) { this.resourceDirs = resourceDirs; }
 
@@ -70,6 +77,15 @@ public class ModuleInfo {
 
     public Map<String, String> getManifestEntries() { return manifestEntries; }
     public void setManifestEntries(Map<String, String> manifestEntries) { this.manifestEntries = manifestEntries; }
+
+    public boolean isHasProtobufSources() { return hasProtobufSources; }
+    public void setHasProtobufSources(boolean hasProtobufSources) { this.hasProtobufSources = hasProtobufSources; }
+
+    public boolean isProtobufUsesGrpc() { return protobufUsesGrpc; }
+    public void setProtobufUsesGrpc(boolean protobufUsesGrpc) { this.protobufUsesGrpc = protobufUsesGrpc; }
+
+    public boolean isProtobufUsesMutiny() { return protobufUsesMutiny; }
+    public void setProtobufUsesMutiny(boolean protobufUsesMutiny) { this.protobufUsesMutiny = protobufUsesMutiny; }
 
     @Override
     public String toString() {

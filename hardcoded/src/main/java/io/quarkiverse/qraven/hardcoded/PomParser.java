@@ -3,6 +3,7 @@ package io.quarkiverse.qraven.hardcoded;
 import org.apache.maven.model.Dependency;
 import org.apache.maven.model.Model;
 import org.apache.maven.model.Plugin;
+import org.apache.maven.model.PluginExecution;
 import org.apache.maven.model.Resource;
 import org.apache.maven.model.building.DefaultModelBuilderFactory;
 import org.apache.maven.model.building.DefaultModelBuildingRequest;
@@ -12,6 +13,7 @@ import org.apache.maven.model.building.ModelBuildingRequest;
 import org.apache.maven.model.building.ModelBuildingResult;
 import org.codehaus.plexus.util.xml.Xpp3Dom;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -129,17 +131,6 @@ public class PomParser {
         Model model = effectiveModels.get(info.getGroupId() + ":" + info.getArtifactId());
         if (model == null || model.getBuild() == null) return false;
 
-        for (Plugin plugin : model.getBuild().getPlugins()) {
-            if ("kotlin-maven-plugin".equals(plugin.getArtifactId())) {
-                System.out.println("  Skipping Kotlin module: " + info.getArtifactId());
-                return true;
-            }
-            if ("protobuf-maven-plugin".equals(plugin.getArtifactId())) {
-                System.out.println("  Skipping protobuf/gRPC module: " + info.getArtifactId());
-                return true;
-            }
-        }
-
         return false;
     }
 
@@ -202,9 +193,13 @@ public class PomParser {
         Path srcMain = baseDir.resolve("src/main/java");
         info.setHasJavaSources(Files.isDirectory(srcMain) && hasJavaFiles(srcMain));
 
+        Path kotlinSrcMain = baseDir.resolve("src/main/kotlin");
+        info.setHasKotlinSources(Files.isDirectory(kotlinSrcMain) && hasKotlinFiles(kotlinSrcMain));
+
         extractResourceDirs(model, baseDir, info);
         extractFilterProperties(model, info);
         detectJandexPlugin(model, info);
+        detectProtobufPlugin(model, baseDir, info);
         extractManifestEntries(model, info);
 
         return info;
@@ -267,6 +262,54 @@ public class PomParser {
         }
     }
 
+    private void detectProtobufPlugin(Model model, Path baseDir, ModuleInfo info) {
+        if (model.getBuild() == null) return;
+        for (Plugin plugin : model.getBuild().getPlugins()) {
+            if (!"protobuf-maven-plugin".equals(plugin.getArtifactId())) continue;
+
+            boolean hasMainCompile = false;
+            boolean hasCustom = false;
+            for (PluginExecution exec : plugin.getExecutions()) {
+                for (String goal : exec.getGoals()) {
+                    if ("compile".equals(goal)) hasMainCompile = true;
+                    if ("compile-custom".equals(goal)) hasCustom = true;
+                }
+            }
+
+            if (!hasMainCompile) return;
+
+            Path protoDir = baseDir.resolve("src/main/proto");
+            if (!Files.isDirectory(protoDir)) return;
+            try (var stream = Files.walk(protoDir)) {
+                if (stream.noneMatch(p -> p.toString().endsWith(".proto"))) return;
+            } catch (IOException e) {
+                return;
+            }
+
+            info.setHasProtobufSources(true);
+
+            Xpp3Dom config = (Xpp3Dom) plugin.getConfiguration();
+            if (config != null) {
+                Xpp3Dom pluginArtifact = config.getChild("pluginArtifact");
+                if (pluginArtifact != null && pluginArtifact.getValue() != null
+                        && pluginArtifact.getValue().contains("grpc-java")) {
+                    info.setProtobufUsesGrpc(hasCustom);
+                }
+                Xpp3Dom protocPlugins = config.getChild("protocPlugins");
+                if (protocPlugins != null && hasCustom) {
+                    for (Xpp3Dom protocPlugin : protocPlugins.getChildren("protocPlugin")) {
+                        Xpp3Dom mainClass = protocPlugin.getChild("mainClass");
+                        if (mainClass != null && mainClass.getValue() != null
+                                && mainClass.getValue().contains("MutinyGrpcGenerator")) {
+                            info.setProtobufUsesMutiny(true);
+                        }
+                    }
+                }
+            }
+            return;
+        }
+    }
+
     private void extractManifestEntries(Model model, ModuleInfo info) {
         if (model.getBuild() == null) return;
         for (Plugin plugin : model.getBuild().getPlugins()) {
@@ -290,6 +333,14 @@ public class PomParser {
     private boolean hasJavaFiles(Path dir) {
         try (var stream = Files.walk(dir)) {
             return stream.anyMatch(p -> p.toString().endsWith(".java"));
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private boolean hasKotlinFiles(Path dir) {
+        try (var stream = Files.walk(dir)) {
+            return stream.anyMatch(p -> p.toString().endsWith(".kt"));
         } catch (Exception e) {
             return false;
         }

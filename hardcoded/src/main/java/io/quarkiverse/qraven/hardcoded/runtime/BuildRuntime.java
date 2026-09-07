@@ -7,10 +7,12 @@ import javax.tools.JavaFileObject;
 import javax.tools.StandardJavaFileManager;
 import javax.tools.ToolProvider;
 import javax.tools.StandardLocation;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.PrintStream;
 import java.nio.file.DirectoryStream;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
@@ -294,19 +296,27 @@ public class BuildRuntime {
     }
 
     public void compile(Path sourceDir, Path outputDir, List<String> classpath,
-                        List<String> annotationProcessorPaths, List<String> compilerArgs) {
-        if (!Files.isDirectory(sourceDir)) {
-            return;
+                        List<String> annotationProcessorPaths, List<String> compilerArgs,
+                        Path... extraSourceDirs) {
+        List<Path> sourceFiles = new ArrayList<>();
+        if (Files.isDirectory(sourceDir)) {
+            try (var stream = Files.walk(sourceDir)) {
+                stream.filter(p -> p.toString().endsWith(".java"))
+                        .filter(p -> !p.getFileName().toString().equals("module-info.java"))
+                        .forEach(sourceFiles::add);
+            } catch (IOException e) {
+                throw new RuntimeException("Failed to list sources in " + sourceDir, e);
+            }
         }
-
-        List<Path> sourceFiles;
-        try (var stream = Files.walk(sourceDir)) {
-            sourceFiles = stream
-                    .filter(p -> p.toString().endsWith(".java"))
-                    .filter(p -> !p.getFileName().toString().equals("module-info.java"))
-                    .toList();
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to list sources in " + sourceDir, e);
+        for (Path extra : extraSourceDirs) {
+            if (Files.isDirectory(extra)) {
+                try (var stream = Files.walk(extra)) {
+                    stream.filter(p -> p.toString().endsWith(".java"))
+                            .forEach(sourceFiles::add);
+                } catch (IOException e) {
+                    throw new RuntimeException("Failed to list sources in " + extra, e);
+                }
+            }
         }
 
         if (sourceFiles.isEmpty()) {
@@ -383,6 +393,196 @@ public class BuildRuntime {
                 }
             }
             throw new RuntimeException(sb.toString());
+        }
+    }
+
+    private volatile org.jetbrains.kotlin.cli.jvm.K2JVMCompiler kotlinCompiler;
+
+    public void warmupKotlin() {
+        long start = System.currentTimeMillis();
+        kotlinCompiler = new org.jetbrains.kotlin.cli.jvm.K2JVMCompiler();
+        long elapsed = System.currentTimeMillis() - start;
+        System.out.println("Kotlin compiler warmup: " + elapsed + "ms");
+    }
+
+    public void compileKotlin(Path kotlinSourceDir, Path javaSourceDir, Path outputDir, List<String> classpath) {
+        if (!Files.isDirectory(kotlinSourceDir)) return;
+
+        List<Path> kotlinFiles;
+        try (var stream = Files.walk(kotlinSourceDir)) {
+            kotlinFiles = stream.filter(p -> p.toString().endsWith(".kt")).toList();
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to list Kotlin sources in " + kotlinSourceDir, e);
+        }
+        if (kotlinFiles.isEmpty()) return;
+
+        try {
+            Files.createDirectories(outputDir);
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to create output dir " + outputDir, e);
+        }
+
+        org.jetbrains.kotlin.cli.jvm.K2JVMCompiler compiler =
+                kotlinCompiler != null ? kotlinCompiler : new org.jetbrains.kotlin.cli.jvm.K2JVMCompiler();
+
+        List<String> args = new ArrayList<>();
+        args.add("-d");
+        args.add(outputDir.toString());
+        args.add("-no-stdlib");
+        args.add("-jvm-target");
+        args.add("21");
+
+        String cp = String.join(File.pathSeparator, classpath);
+        if (!cp.isEmpty()) {
+            args.add("-classpath");
+            args.add(cp);
+        }
+
+        if (Files.isDirectory(javaSourceDir)) {
+            args.add("-Xjava-source-roots=" + javaSourceDir);
+        }
+
+        for (Path ktFile : kotlinFiles) {
+            args.add(ktFile.toString());
+        }
+
+        ByteArrayOutputStream errBuf = new ByteArrayOutputStream();
+        PrintStream errStream = new PrintStream(errBuf);
+        org.jetbrains.kotlin.cli.common.ExitCode exitCode =
+                compiler.exec(errStream, args.toArray(new String[0]));
+        if (exitCode != org.jetbrains.kotlin.cli.common.ExitCode.OK) {
+            throw new RuntimeException("Kotlin compilation failed:\n" + errBuf);
+        }
+    }
+
+    private String protocPath;
+    private String grpcJavaPluginPath;
+    private volatile Path mutinyPluginScript;
+
+    public void setProtocPath(String path) { this.protocPath = path; }
+    public void setGrpcJavaPluginPath(String path) { this.grpcJavaPluginPath = path; }
+
+    public void compileProtobuf(Path protoSourceDir, Path outputDir,
+                                boolean useGrpc, boolean useMutiny, List<String> classpath) {
+        if (protocPath == null) {
+            throw new RuntimeException("protoc binary path not set — cannot compile .proto files");
+        }
+
+        List<Path> protoFiles;
+        try (var stream = Files.walk(protoSourceDir)) {
+            protoFiles = stream.filter(p -> p.toString().endsWith(".proto")).toList();
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to list .proto files in " + protoSourceDir, e);
+        }
+        if (protoFiles.isEmpty()) return;
+
+        Path javaOut = outputDir.resolve("java");
+        try {
+            Files.createDirectories(javaOut);
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to create protobuf output dir " + javaOut, e);
+        }
+
+        new File(protocPath).setExecutable(true);
+
+        List<String> cmd = new ArrayList<>();
+        cmd.add(protocPath);
+        cmd.add("--java_out=" + javaOut);
+        cmd.add("-I" + protoSourceDir);
+
+        if (useGrpc && grpcJavaPluginPath != null) {
+            new File(grpcJavaPluginPath).setExecutable(true);
+            Path grpcOut = outputDir.resolve("grpc-java");
+            try { Files.createDirectories(grpcOut); } catch (IOException e) {
+                throw new RuntimeException("Failed to create grpc output dir", e);
+            }
+            cmd.add("--plugin=protoc-gen-grpc-java=" + grpcJavaPluginPath);
+            cmd.add("--grpc-java_out=" + grpcOut);
+        }
+
+        if (useMutiny) {
+            Path mutinyOut = outputDir.resolve("quarkus-grpc");
+            try { Files.createDirectories(mutinyOut); } catch (IOException e) {
+                throw new RuntimeException("Failed to create mutiny output dir", e);
+            }
+            Path script = getOrCreateMutinyPluginScript(classpath);
+            if (script != null) {
+                cmd.add("--plugin=protoc-gen-quarkus-grpc=" + script);
+                cmd.add("--quarkus-grpc_out=" + mutinyOut);
+            }
+        }
+
+        for (Path protoFile : protoFiles) {
+            cmd.add(protoFile.toString());
+        }
+
+        try {
+            ProcessBuilder pb = new ProcessBuilder(cmd);
+            pb.redirectErrorStream(true);
+            Process process = pb.start();
+            String output = new String(process.getInputStream().readAllBytes());
+            int exitCode = process.waitFor();
+            if (exitCode != 0) {
+                throw new RuntimeException("protoc failed (exit " + exitCode + "):\n" + output);
+            }
+        } catch (IOException | InterruptedException e) {
+            throw new RuntimeException("Failed to run protoc", e);
+        }
+    }
+
+    private Path getOrCreateMutinyPluginScript(List<String> classpath) {
+        if (mutinyPluginScript != null) return mutinyPluginScript;
+        synchronized (this) {
+            if (mutinyPluginScript != null) return mutinyPluginScript;
+
+            Path m2 = Path.of(System.getProperty("user.home"), ".m2", "repository");
+            Path pluginBase = m2.resolve("io/quarkus/quarkus-grpc-protoc-plugin");
+            if (!Files.isDirectory(pluginBase)) return null;
+
+            try (var versions = Files.list(pluginBase)) {
+                Path versionDir = versions.filter(Files::isDirectory).findFirst().orElse(null);
+                if (versionDir == null) return null;
+                String ver = versionDir.getFileName().toString();
+                Path pluginJar = versionDir.resolve("quarkus-grpc-protoc-plugin-" + ver + ".jar");
+                if (!Files.exists(pluginJar)) return null;
+
+                List<String> pluginCp = new ArrayList<>();
+                pluginCp.add(pluginJar.toString());
+
+                Path jprotocBase = m2.resolve("com/salesforce/servicelibs/jprotoc");
+                if (Files.isDirectory(jprotocBase)) {
+                    try (var jVers = Files.list(jprotocBase)) {
+                        jVers.filter(Files::isDirectory).findFirst().ifPresent(jv -> {
+                            String jver = jv.getFileName().toString();
+                            Path jjar = jv.resolve("jprotoc-" + jver + ".jar");
+                            if (Files.exists(jjar)) pluginCp.add(jjar.toString());
+                        });
+                    }
+                }
+
+                for (String cp : classpath) {
+                    if (cp.contains("protobuf-java") && !cp.contains("util")) {
+                        pluginCp.add(cp);
+                    }
+                    if (cp.contains("smallrye-common-annotation")) {
+                        pluginCp.add(cp);
+                    }
+                    if (cp.contains("guava")) {
+                        pluginCp.add(cp);
+                    }
+                }
+
+                Path script = Files.createTempFile("protoc-gen-quarkus-grpc", ".sh");
+                script.toFile().deleteOnExit();
+                Files.writeString(script,
+                        "#!/bin/sh\nexec java -cp " + String.join(":", pluginCp)
+                                + " io.quarkus.grpc.protoc.plugin.MutinyGrpcGenerator\n");
+                script.toFile().setExecutable(true);
+                mutinyPluginScript = script;
+                return script;
+            } catch (IOException e) {
+                return null;
+            }
         }
     }
 

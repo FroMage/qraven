@@ -30,6 +30,10 @@ public class BuildFileGenerator {
     private final Path projectRoot;
     private final Path outputDir;
     private final int threads;
+    private boolean hasKotlinModules;
+    private boolean hasProtobufModules;
+    private String protocPath;
+    private String grpcJavaPluginPath;
 
     public BuildFileGenerator(Path projectRoot, Path outputDir, int threads) {
         this.projectRoot = projectRoot;
@@ -50,6 +54,12 @@ public class BuildFileGenerator {
     public void generate(List<ModuleInfo> modules) throws IOException {
         Path srcDir = outputDir.resolve("src");
         Files.createDirectories(srcDir);
+
+        hasKotlinModules = modules.stream().anyMatch(ModuleInfo::isHasKotlinSources);
+        hasProtobufModules = modules.stream().anyMatch(ModuleInfo::isHasProtobufSources);
+        if (hasProtobufModules) {
+            resolveProtocPaths(modules);
+        }
 
         int total = modules.size() + 1;
         for (int i = 0; i < modules.size(); i++) {
@@ -87,6 +97,10 @@ public class BuildFileGenerator {
         sb.append("    @Override public String packaging() { return ").append(quote(module.getPackaging())).append("; }\n");
         sb.append("    @Override public Path baseDir() { return Path.of(").append(quote(module.getBaseDir().toString())).append("); }\n");
         sb.append("    @Override public boolean hasJavaSources() { return ").append(module.isHasJavaSources()).append("; }\n");
+        sb.append("    @Override public boolean hasKotlinSources() { return ").append(module.isHasKotlinSources()).append("; }\n");
+        sb.append("    @Override public boolean hasProtobufSources() { return ").append(module.isHasProtobufSources()).append("; }\n");
+        sb.append("    @Override public boolean protobufUsesGrpc() { return ").append(module.isProtobufUsesGrpc()).append("; }\n");
+        sb.append("    @Override public boolean protobufUsesMutiny() { return ").append(module.isProtobufUsesMutiny()).append("; }\n");
         sb.append("    @Override public boolean needsJandexIndex() { return ").append(module.isNeedsJandexIndex()).append("; }\n\n");
 
         // resourceDirs
@@ -184,17 +198,29 @@ public class BuildFileGenerator {
         sb.append("public class Build {\n");
         sb.append("    public static void main(String[] args) {\n");
         sb.append("        java.nio.file.Path projectRoot = java.nio.file.Path.of(\".\").toAbsolutePath().normalize();\n");
-        sb.append("        int threads = Runtime.getRuntime().availableProcessors();\n\n");
+        sb.append("        int threads = Runtime.getRuntime().availableProcessors();\n");
+        sb.append("        String projects = null;\n");
+        sb.append("        boolean alsoMake = false;\n\n");
 
         sb.append("        for (int i = 0; i < args.length; i++) {\n");
         sb.append("            if ((\"--threads\".equals(args[i]) || \"-t\".equals(args[i])) && i + 1 < args.length) {\n");
         sb.append("                threads = Integer.parseInt(args[++i]);\n");
         sb.append("            } else if ((\"--project\".equals(args[i]) || \"-p\".equals(args[i])) && i + 1 < args.length) {\n");
         sb.append("                projectRoot = java.nio.file.Path.of(args[++i]).toAbsolutePath().normalize();\n");
+        sb.append("            } else if ((\"--projects\".equals(args[i]) || \"-pl\".equals(args[i])) && i + 1 < args.length) {\n");
+        sb.append("                projects = args[++i];\n");
+        sb.append("            } else if (\"--also-make\".equals(args[i]) || \"-am\".equals(args[i])) {\n");
+        sb.append("                alsoMake = true;\n");
         sb.append("            }\n");
         sb.append("        }\n\n");
 
         sb.append("        BuildRuntime runtime = new BuildRuntime(projectRoot);\n");
+        if (protocPath != null) {
+            sb.append("        runtime.setProtocPath(").append(quote(protocPath)).append(");\n");
+        }
+        if (grpcJavaPluginPath != null) {
+            sb.append("        runtime.setGrpcJavaPluginPath(").append(quote(grpcJavaPluginPath)).append(");\n");
+        }
         sb.append("        List<ModuleBuild> modules = new ArrayList<>();\n");
 
         for (ModuleInfo module : modules) {
@@ -202,7 +228,7 @@ public class BuildFileGenerator {
             sb.append("        modules.add(new Build_").append(className).append("(runtime));\n");
         }
 
-        sb.append("\n        new BuildOrchestrator(threads).buildAll(modules);\n");
+        sb.append("\n        new BuildOrchestrator(threads).buildAll(modules, projects, alsoMake);\n");
         sb.append("    }\n");
         sb.append("}\n");
         return sb.toString();
@@ -253,7 +279,134 @@ public class BuildFileGenerator {
             }
         }
 
-        createBuildJar(classesDir, runtimeJar, jandexJar, buildJar);
+        List<Path> kotlinJars = hasKotlinModules ? findKotlinCompilerJars() : List.of();
+        createBuildJar(classesDir, runtimeJar, jandexJar, kotlinJars, buildJar);
+    }
+
+    private List<Path> findKotlinCompilerJars() {
+        java.util.Set<Path> seen = new java.util.LinkedHashSet<>();
+
+        String[] classNames = {
+                "org.jetbrains.kotlin.cli.jvm.K2JVMCompiler",
+                "kotlin.jvm.functions.Function0",
+                "kotlinx.coroutines.CoroutineScope",
+                "org.jetbrains.annotations.NotNull",
+        };
+        for (String className : classNames) {
+            try {
+                Class<?> cls = Class.forName(className);
+                URI location = cls.getProtectionDomain().getCodeSource().getLocation().toURI();
+                Path jar = Path.of(location);
+                if (Files.exists(jar) && !Files.isDirectory(jar)) {
+                    seen.add(jar);
+                }
+            } catch (Exception e) {
+                // class not on classpath — try fallback below
+            }
+        }
+
+        if (seen.isEmpty()) {
+            Path m2 = Path.of(System.getProperty("user.home"), ".m2", "repository");
+            Path kotlinBase = m2.resolve("org/jetbrains/kotlin");
+            Path compilerDir = kotlinBase.resolve("kotlin-compiler");
+            String version = findFirstVersionDir(compilerDir, "kotlin-compiler");
+            if (version != null) {
+                String[] artifacts = {
+                        "kotlin-compiler", "kotlin-stdlib", "kotlin-stdlib-jdk7", "kotlin-stdlib-jdk8",
+                        "kotlin-reflect", "kotlin-script-runtime", "kotlin-build-tools-api"
+                };
+                for (String artifact : artifacts) {
+                    Path jar = kotlinBase.resolve(artifact).resolve(version).resolve(artifact + "-" + version + ".jar");
+                    if (Files.exists(jar)) seen.add(jar);
+                }
+                addFirstVersionJar(seen, m2.resolve("org/jetbrains/kotlinx/kotlinx-coroutines-core-jvm"),
+                        "kotlinx-coroutines-core-jvm");
+                addFirstVersionJar(seen, m2.resolve("org/jetbrains/annotations"), "annotations");
+            }
+        }
+
+        return new java.util.ArrayList<>(seen);
+    }
+
+    private String findFirstVersionDir(Path artifactDir, String artifactName) {
+        if (!Files.isDirectory(artifactDir)) return null;
+        try (var versions = Files.list(artifactDir)) {
+            return versions.filter(Files::isDirectory)
+                    .filter(v -> Files.exists(v.resolve(artifactName + "-" + v.getFileName() + ".jar")))
+                    .map(v -> v.getFileName().toString())
+                    .findFirst().orElse(null);
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
+    private void addFirstVersionJar(java.util.Set<Path> jars, Path artifactDir, String artifactName) {
+        String ver = findFirstVersionDir(artifactDir, artifactName);
+        if (ver != null) {
+            Path jar = artifactDir.resolve(ver).resolve(artifactName + "-" + ver + ".jar");
+            if (Files.exists(jar)) jars.add(jar);
+        }
+    }
+
+    private void resolveProtocPaths(List<ModuleInfo> modules) {
+        String osName = System.getProperty("os.name", "").toLowerCase();
+        String osArch = System.getProperty("os.arch", "");
+        String os;
+        if (osName.contains("linux")) os = "linux";
+        else if (osName.contains("mac") || osName.contains("darwin")) os = "osx";
+        else if (osName.contains("win")) os = "windows";
+        else os = osName;
+        String arch;
+        if ("amd64".equals(osArch) || "x86_64".equals(osArch)) arch = "x86_64";
+        else if ("aarch64".equals(osArch)) arch = "aarch_64";
+        else arch = osArch;
+        String classifier = os + "-" + arch;
+
+        Path m2 = Path.of(System.getProperty("user.home"), ".m2", "repository");
+
+        Path protocBase = m2.resolve("com/google/protobuf/protoc");
+        if (Files.isDirectory(protocBase)) {
+            try (var versions = Files.list(protocBase)) {
+                protocPath = versions.filter(Files::isDirectory)
+                        .map(v -> {
+                            String ver = v.getFileName().toString();
+                            Path exe = v.resolve("protoc-" + ver + "-" + classifier + ".exe");
+                            return Files.exists(exe) ? exe.toString() : null;
+                        })
+                        .filter(p -> p != null)
+                        .findFirst().orElse(null);
+            } catch (IOException e) {
+                // ignore
+            }
+        }
+
+        boolean needsGrpc = modules.stream().anyMatch(ModuleInfo::isProtobufUsesGrpc);
+        if (needsGrpc) {
+            Path grpcBase = m2.resolve("io/grpc/protoc-gen-grpc-java");
+            if (Files.isDirectory(grpcBase)) {
+                try (var versions = Files.list(grpcBase)) {
+                    grpcJavaPluginPath = versions.filter(Files::isDirectory)
+                            .map(v -> {
+                                String ver = v.getFileName().toString();
+                                Path exe = v.resolve("protoc-gen-grpc-java-" + ver + "-" + classifier + ".exe");
+                                return Files.exists(exe) ? exe.toString() : null;
+                            })
+                            .filter(p -> p != null)
+                            .findFirst().orElse(null);
+                } catch (IOException e) {
+                    // ignore
+                }
+            }
+        }
+
+        if (protocPath != null) {
+            System.out.println("Resolved protoc: " + protocPath);
+        } else {
+            System.err.println("WARNING: protoc binary not found in ~/.m2/repository");
+        }
+        if (needsGrpc && grpcJavaPluginPath != null) {
+            System.out.println("Resolved protoc-gen-grpc-java: " + grpcJavaPluginPath);
+        }
     }
 
     private String findJandexJar(Path runtimeJar) {
@@ -289,7 +442,8 @@ public class BuildFileGenerator {
         return null;
     }
 
-    private void createBuildJar(Path classesDir, Path runtimeJar, String jandexJar, Path buildJar) throws IOException {
+    private void createBuildJar(Path classesDir, Path runtimeJar, String jandexJar,
+                               List<Path> kotlinJars, Path buildJar) throws IOException {
         Manifest manifest = new Manifest();
         manifest.getMainAttributes().put(Attributes.Name.MANIFEST_VERSION, "1.0");
         manifest.getMainAttributes().put(Attributes.Name.MAIN_CLASS, "Build");
@@ -307,6 +461,10 @@ public class BuildFileGenerator {
             if (jandexJar != null) {
                 addJarClassesToJar(Path.of(jandexJar), jos);
             }
+
+            for (Path kotlinJar : kotlinJars) {
+                addJarClassesToJar(kotlinJar, jos);
+            }
         }
     }
 
@@ -316,16 +474,17 @@ public class BuildFileGenerator {
             while (entries.hasMoreElements()) {
                 var entry = entries.nextElement();
                 String name = entry.getName();
-                if (name.endsWith(".class") && !entry.isDirectory()) {
-                    try {
-                        jos.putNextEntry(new JarEntry(name));
-                        try (var is = jf.getInputStream(entry)) {
-                            is.transferTo(jos);
-                        }
-                        jos.closeEntry();
-                    } catch (java.util.zip.ZipException e) {
-                        // duplicate entry — skip
+                if (entry.isDirectory() || name.equals("META-INF/MANIFEST.MF")) {
+                    continue;
+                }
+                try {
+                    jos.putNextEntry(new JarEntry(name));
+                    try (var is = jf.getInputStream(entry)) {
+                        is.transferTo(jos);
                     }
+                    jos.closeEntry();
+                } catch (java.util.zip.ZipException e) {
+                    // duplicate entry — skip
                 }
             }
         }

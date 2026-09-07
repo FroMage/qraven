@@ -25,7 +25,7 @@ public class BuildOrchestrator {
         this.threadCount = threadCount;
     }
 
-    public void buildAll(List<ModuleBuild> modules) {
+    public void buildAll(List<ModuleBuild> modules, String projectsFilter, boolean alsoMake) {
         Map<String, ModuleBuild> byId = new LinkedHashMap<>();
         for (ModuleBuild m : modules) {
             byId.put(m.artifactId(), m);
@@ -37,6 +37,10 @@ public class BuildOrchestrator {
                     .filter(Objects::nonNull)
                     .toList();
             m.setDependencies(deps);
+        }
+
+        if (projectsFilter != null) {
+            modules = filterProjects(modules, byId, projectsFilter, alsoMake);
         }
 
         Set<String> allJars = new LinkedHashSet<>();
@@ -57,6 +61,9 @@ public class BuildOrchestrator {
 
         if (!modules.isEmpty()) {
             modules.get(0).runtime.warmupClasspath(allJars);
+            if (modules.stream().anyMatch(ModuleBuild::hasKotlinSources)) {
+                modules.get(0).runtime.warmupKotlin();
+            }
         }
 
         ProgressDisplay progress = new ProgressDisplay(modules.size(), threadCount);
@@ -143,5 +150,62 @@ public class BuildOrchestrator {
             System.err.println("Cascade failures (" + cascadeFailures.size() + "): "
                     + String.join(", ", cascadeFailures));
         }
+    }
+
+    private List<ModuleBuild> filterProjects(List<ModuleBuild> allModules,
+                                              Map<String, ModuleBuild> byId, String filter,
+                                              boolean alsoMake) {
+        Set<String> selectors = new LinkedHashSet<>();
+        for (String s : filter.split(",")) {
+            selectors.add(s.trim());
+        }
+
+        Set<String> selected = new LinkedHashSet<>();
+        for (ModuleBuild m : allModules) {
+            for (String sel : selectors) {
+                if (sel.contains(":")) {
+                    if ((m.groupId() + ":" + m.artifactId()).equals(sel)) {
+                        selected.add(m.artifactId());
+                    }
+                } else if (sel.equals(m.artifactId())) {
+                    selected.add(m.artifactId());
+                } else if (m.baseDir().toString().equals(sel)
+                        || m.baseDir().toString().endsWith("/" + sel)) {
+                    selected.add(m.artifactId());
+                }
+            }
+        }
+
+        Set<String> needed = new LinkedHashSet<>(selected);
+        if (alsoMake) {
+            boolean changed = true;
+            while (changed) {
+                changed = false;
+                for (String id : new ArrayList<>(needed)) {
+                    ModuleBuild m = byId.get(id);
+                    if (m == null) continue;
+                    for (ModuleBuild dep : m.getDependencies()) {
+                        if (needed.add(dep.artifactId())) {
+                            changed = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        List<ModuleBuild> filtered = new ArrayList<>();
+        for (ModuleBuild m : allModules) {
+            if (needed.contains(m.artifactId())) {
+                filtered.add(m);
+            }
+        }
+
+        if (alsoMake) {
+            System.out.println("Filtered to " + filtered.size() + " modules (" +
+                    selected.size() + " selected + " + (filtered.size() - selected.size()) + " dependencies)");
+        } else {
+            System.out.println("Filtered to " + filtered.size() + " modules");
+        }
+        return filtered;
     }
 }

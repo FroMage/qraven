@@ -6,6 +6,7 @@
 //DEPS org.apache.maven.resolver:maven-resolver-transport-file:1.9.18
 //DEPS org.apache.maven.resolver:maven-resolver-transport-http:1.9.18
 //DEPS io.smallrye:jandex:3.5.3
+//DEPS org.jetbrains.kotlin:kotlin-compiler:2.4.10
 //SOURCES BuildFileGenerator.java
 //SOURCES DependencyResolver.java
 //SOURCES LocalRepoModelResolver.java

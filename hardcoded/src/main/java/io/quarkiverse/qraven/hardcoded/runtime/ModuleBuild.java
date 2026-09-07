@@ -63,6 +63,10 @@ public abstract class ModuleBuild {
     public abstract String packaging();
     public abstract Path baseDir();
     public abstract boolean hasJavaSources();
+    public abstract boolean hasKotlinSources();
+    public abstract boolean hasProtobufSources();
+    public abstract boolean protobufUsesGrpc();
+    public abstract boolean protobufUsesMutiny();
     public abstract String[][] resourceDirs();
     public abstract Map<String, String> filterProperties();
     public abstract boolean needsJandexIndex();
@@ -170,11 +174,34 @@ public abstract class ModuleBuild {
                     }
                 }
 
-                if (hasJavaSources()) {
+                Path generatedProtoDir = null;
+                if (hasProtobufSources()) {
+                    if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "protobuf", 0);
+                    generatedProtoDir = generatedProtobufDir();
+                    runtime.compileProtobuf(protoSourceDir(), generatedProtoDir,
+                            protobufUsesGrpc(), protobufUsesMutiny(), fullClasspath);
+                }
+
+                if (hasKotlinSources()) {
+                    if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "kotlin", 0);
+                    runtime.compileKotlin(kotlinSourceDir(), sourceDir(), classesDir(), fullClasspath);
+                    fullClasspath.add(0, classesDir().toString());
+                }
+
+                if (hasJavaSources() || generatedProtoDir != null) {
                     int sourceCount = countSources();
                     if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "compile", sourceCount);
-                    runtime.compile(sourceDir(), classesDir(), fullClasspath,
-                            resolvedAnnotationProcessorPaths(), compilerArgs());
+                    if (generatedProtoDir != null) {
+                        Path javaOut = generatedProtoDir.resolve("java");
+                        Path grpcOut = generatedProtoDir.resolve("grpc-java");
+                        Path mutinyOut = generatedProtoDir.resolve("quarkus-grpc");
+                        runtime.compile(sourceDir(), classesDir(), fullClasspath,
+                                resolvedAnnotationProcessorPaths(), compilerArgs(),
+                                javaOut, grpcOut, mutinyOut);
+                    } else {
+                        runtime.compile(sourceDir(), classesDir(), fullClasspath,
+                                resolvedAnnotationProcessorPaths(), compilerArgs());
+                    }
                 }
 
                 if (needsJandexIndex()) {
@@ -240,6 +267,18 @@ public abstract class ModuleBuild {
 
     public Path sourceDir() {
         return runtime.getProjectRoot().resolve(baseDir()).resolve("src/main/java");
+    }
+
+    public Path kotlinSourceDir() {
+        return runtime.getProjectRoot().resolve(baseDir()).resolve("src/main/kotlin");
+    }
+
+    public Path protoSourceDir() {
+        return runtime.getProjectRoot().resolve(baseDir()).resolve("src/main/proto");
+    }
+
+    public Path generatedProtobufDir() {
+        return targetDir().resolve("generated-sources/protobuf");
     }
 
     protected static Map<String, String> parseProps(String packed) {
