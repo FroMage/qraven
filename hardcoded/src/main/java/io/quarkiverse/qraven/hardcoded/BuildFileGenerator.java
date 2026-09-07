@@ -257,24 +257,34 @@ public class BuildFileGenerator {
     }
 
     private String findJandexJar(Path runtimeJar) {
-        if (Files.isDirectory(runtimeJar)) {
-            Path jandex = Path.of(System.getProperty("user.home"), ".m2", "repository",
-                    "io", "smallrye", "jandex");
-            if (Files.isDirectory(jandex)) {
-                try (var versions = Files.list(jandex)) {
-                    return versions.filter(Files::isDirectory)
-                            .findFirst()
-                            .map(v -> {
-                                String ver = v.getFileName().toString();
-                                Path jar = v.resolve("jandex-" + ver + ".jar");
-                                return Files.exists(jar) ? jar.toString() : null;
-                            })
-                            .orElse(null);
-                } catch (IOException e) {
-                    return null;
-                }
-            }
+        if (!Files.isDirectory(runtimeJar)) {
             return null;
+        }
+        try {
+            URI jandexLocation = org.jboss.jandex.Indexer.class.getProtectionDomain()
+                    .getCodeSource().getLocation().toURI();
+            Path jandexPath = Path.of(jandexLocation);
+            if (Files.exists(jandexPath) && !Files.isDirectory(jandexPath)) {
+                return jandexPath.toString();
+            }
+        } catch (Exception e) {
+            // fall through to manual search
+        }
+        Path jandex = Path.of(System.getProperty("user.home"), ".m2", "repository",
+                "io", "smallrye", "jandex");
+        if (Files.isDirectory(jandex)) {
+            try (var versions = Files.list(jandex)) {
+                return versions.filter(Files::isDirectory)
+                        .findFirst()
+                        .map(v -> {
+                            String ver = v.getFileName().toString();
+                            Path jar = v.resolve("jandex-" + ver + ".jar");
+                            return Files.exists(jar) ? jar.toString() : null;
+                        })
+                        .orElse(null);
+            } catch (IOException e) {
+                return null;
+            }
         }
         return null;
     }

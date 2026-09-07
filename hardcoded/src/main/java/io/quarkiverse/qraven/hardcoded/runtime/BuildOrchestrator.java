@@ -1,5 +1,9 @@
 package io.quarkiverse.qraven.hardcoded.runtime;
 
+import java.io.IOException;
+import java.io.PrintWriter;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -106,10 +110,32 @@ public class BuildOrchestrator {
                 + directFailures.size() + " failed, " + cascadeFailures.size() + " skipped (cascade)");
         if (!directFailures.isEmpty()) {
             System.err.println("Direct failures: " + String.join(", ", directFailures));
-            System.err.println();
-            for (ModuleBuild m : modules) {
-                if (m.getFailureMessage() != null) {
-                    System.err.println(m.getFailureMessage());
+            Path logFile = modules.get(0).runtime.getProjectRoot().resolve("target/qraven/build.log");
+            try {
+                Files.createDirectories(logFile.getParent());
+                try (PrintWriter pw = new PrintWriter(Files.newBufferedWriter(logFile))) {
+                    pw.println("Build completed in " + elapsed + "ms: " + succeeded + " succeeded, "
+                            + directFailures.size() + " failed, " + cascadeFailures.size() + " skipped (cascade)");
+                    pw.println();
+                    pw.println("Direct failures: " + String.join(", ", directFailures));
+                    pw.println();
+                    for (ModuleBuild m : modules) {
+                        if (m.getFailureMessage() != null) {
+                            pw.println(m.getFailureMessage());
+                        }
+                    }
+                    if (!cascadeFailures.isEmpty()) {
+                        pw.println();
+                        pw.println("Cascade failures (" + cascadeFailures.size() + "): "
+                                + String.join(", ", cascadeFailures));
+                    }
+                }
+                System.err.println(directFailures.size() + " compilation error(s), see " + logFile + " for details");
+            } catch (IOException e) {
+                for (ModuleBuild m : modules) {
+                    if (m.getFailureMessage() != null) {
+                        System.err.println(m.getFailureMessage());
+                    }
                 }
             }
         }
