@@ -51,6 +51,11 @@ public class QravenCli {
             outputDir = projectDir.resolve("target/qraven");
         }
 
+        Path nativeImageBin = null;
+        if (buildNative) {
+            nativeImageBin = resolveNativeImage(graalvmHome);
+        }
+
         System.out.println("Qraven Build Generator");
         System.out.println("Project:  " + projectDir);
         System.out.println("Threads:  " + threads);
@@ -104,7 +109,6 @@ public class QravenCli {
         if (buildNative) {
             stepStart = System.currentTimeMillis();
 
-            Path nativeImageBin = resolveNativeImage(graalvmHome);
             Path nativeBinary = outputDir.resolve("build");
 
             compileNativeImage(nativeImageBin, buildJar, nativeBinary);
