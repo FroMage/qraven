@@ -101,7 +101,8 @@ public class BuildFileGenerator {
         sb.append("    @Override public boolean hasProtobufSources() { return ").append(module.isHasProtobufSources()).append("; }\n");
         sb.append("    @Override public boolean protobufUsesGrpc() { return ").append(module.isProtobufUsesGrpc()).append("; }\n");
         sb.append("    @Override public boolean protobufUsesMutiny() { return ").append(module.isProtobufUsesMutiny()).append("; }\n");
-        sb.append("    @Override public boolean needsJandexIndex() { return ").append(module.isNeedsJandexIndex()).append("; }\n\n");
+        sb.append("    @Override public boolean needsJandexIndex() { return ").append(module.isNeedsJandexIndex()).append("; }\n");
+        sb.append("    @Override public boolean hasExtensionPlugin() { return ").append(module.isHasExtensionPlugin()).append("; }\n\n");
 
         // resourceDirs
         sb.append("    @Override\n");
@@ -184,10 +185,58 @@ public class BuildFileGenerator {
         sb.append("        return List.of(\n");
         sb.append(formatStringList(module.getReactorDependencies(), "            "));
         sb.append("        );\n");
+        sb.append("    }\n\n");
+
+        // extensionDescriptorProperties
+        Map<String, String> extProps = module.getExtensionDescriptorProperties();
+        sb.append("    @Override\n");
+        sb.append("    public Map<String, String> extensionDescriptorProperties() {\n");
+        if (extProps.isEmpty()) {
+            sb.append("        return Map.of();\n");
+        } else {
+            sb.append("        return Map.of(\n");
+            List<Map.Entry<String, String>> extEntries = List.copyOf(extProps.entrySet());
+            for (int i = 0; i < extEntries.size(); i++) {
+                Map.Entry<String, String> entry = extEntries.get(i);
+                sb.append("            ").append(quote(entry.getKey())).append(", ")
+                        .append(quote(entry.getValue()));
+                if (i < extEntries.size() - 1) sb.append(",");
+                sb.append("\n");
+            }
+            sb.append("        );\n");
+        }
+        sb.append("    }\n\n");
+
+        // extension metadata methods
+        sb.append("    @Override public String extensionProjectName() { return ")
+                .append(quoteOrNull(module.getExtensionProjectName())).append("; }\n");
+        sb.append("    @Override public String extensionProjectDescription() { return ")
+                .append(quoteOrNull(module.getExtensionProjectDescription())).append("; }\n");
+        sb.append("    @Override public String extensionScmUrl() { return ")
+                .append(quoteOrNull(module.getExtensionScmUrl())).append("; }\n");
+        sb.append("    @Override public String extensionMinimumJavaVersion() { return ")
+                .append(quoteOrNull(module.getExtensionMinimumJavaVersion())).append("; }\n\n");
+
+        sb.append("    @Override\n");
+        sb.append("    public List<String> extensionModelDeps() {\n");
+        sb.append("        return List.of(\n");
+        sb.append(formatStringList(module.getExtensionModelDeps(), "            "));
+        sb.append("        );\n");
+        sb.append("    }\n\n");
+
+        sb.append("    @Override\n");
+        sb.append("    public List<String> extensionReactorGAs() {\n");
+        sb.append("        return List.of(\n");
+        sb.append(formatStringList(module.getExtensionReactorGAs(), "            "));
+        sb.append("        );\n");
         sb.append("    }\n");
 
         sb.append("}\n");
         return sb.toString();
+    }
+
+    private String quoteOrNull(String s) {
+        return s != null ? quote(s) : "null";
     }
 
     private String generateMainClass(List<ModuleInfo> modules) {
@@ -534,10 +583,9 @@ public class BuildFileGenerator {
                         if (entryName.startsWith("/")) {
                             entryName = entryName.substring(1);
                         }
-                        if (!entryName.endsWith(".class")) {
-                            return FileVisitResult.CONTINUE;
-                        }
-                        if (entryName.startsWith("META-INF/")) {
+                        boolean isClass = entryName.endsWith(".class");
+                        boolean isRequiredResource = entryName.equals("META-INF/quarkus-extension-schema.json");
+                        if (!isClass && !isRequiredResource) {
                             return FileVisitResult.CONTINUE;
                         }
                         try {

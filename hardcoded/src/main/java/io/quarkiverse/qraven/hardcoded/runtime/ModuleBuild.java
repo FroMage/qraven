@@ -75,6 +75,14 @@ public abstract class ModuleBuild {
     public abstract List<String> annotationProcessorPaths();
     public abstract List<String> compilerArgs();
     public abstract List<String> moduleDependencyIds();
+    public abstract boolean hasExtensionPlugin();
+    public abstract Map<String, String> extensionDescriptorProperties();
+    public abstract String extensionProjectName();
+    public abstract String extensionProjectDescription();
+    public abstract String extensionScmUrl();
+    public abstract String extensionMinimumJavaVersion();
+    public abstract List<String> extensionModelDeps();
+    public abstract List<String> extensionReactorGAs();
 
     public void setDependencies(List<ModuleBuild> dependencies) {
         this.dependencies = dependencies;
@@ -172,6 +180,16 @@ public abstract class ModuleBuild {
                     } else {
                         runtime.copyResources(dir, classesDir());
                     }
+                }
+
+                if (hasExtensionPlugin()) {
+                    if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "ext-descriptor", 0);
+                    ExtensionDescriptorHelper.generate(
+                            classesDir(), extensionDescriptorProperties(),
+                            fullClasspath, extensionReactorGAs(),
+                            extensionProjectName(), extensionProjectDescription(),
+                            extensionScmUrl(), extensionMinimumJavaVersion(),
+                            extensionModelDeps());
                 }
 
                 Path generatedProtoDir = null;

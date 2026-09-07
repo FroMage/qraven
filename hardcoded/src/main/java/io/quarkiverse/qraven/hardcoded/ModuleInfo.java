@@ -27,6 +27,14 @@ public class ModuleInfo {
     private boolean hasProtobufSources;
     private boolean protobufUsesGrpc;
     private boolean protobufUsesMutiny;
+    private boolean hasExtensionPlugin;
+    private Map<String, String> extensionDescriptorProperties = new LinkedHashMap<>();
+    private String extensionProjectName;
+    private String extensionProjectDescription;
+    private String extensionScmUrl;
+    private String extensionMinimumJavaVersion;
+    private List<String> extensionModelDeps = new ArrayList<>();
+    private List<String> extensionReactorGAs = new ArrayList<>();
 
     public record ResourceDir(String directory, boolean filtering) {}
 
@@ -86,6 +94,30 @@ public class ModuleInfo {
 
     public boolean isProtobufUsesMutiny() { return protobufUsesMutiny; }
     public void setProtobufUsesMutiny(boolean protobufUsesMutiny) { this.protobufUsesMutiny = protobufUsesMutiny; }
+
+    public boolean isHasExtensionPlugin() { return hasExtensionPlugin; }
+    public void setHasExtensionPlugin(boolean hasExtensionPlugin) { this.hasExtensionPlugin = hasExtensionPlugin; }
+
+    public Map<String, String> getExtensionDescriptorProperties() { return extensionDescriptorProperties; }
+    public void setExtensionDescriptorProperties(Map<String, String> extensionDescriptorProperties) { this.extensionDescriptorProperties = extensionDescriptorProperties; }
+
+    public String getExtensionProjectName() { return extensionProjectName; }
+    public void setExtensionProjectName(String extensionProjectName) { this.extensionProjectName = extensionProjectName; }
+
+    public String getExtensionProjectDescription() { return extensionProjectDescription; }
+    public void setExtensionProjectDescription(String extensionProjectDescription) { this.extensionProjectDescription = extensionProjectDescription; }
+
+    public String getExtensionScmUrl() { return extensionScmUrl; }
+    public void setExtensionScmUrl(String extensionScmUrl) { this.extensionScmUrl = extensionScmUrl; }
+
+    public String getExtensionMinimumJavaVersion() { return extensionMinimumJavaVersion; }
+    public void setExtensionMinimumJavaVersion(String extensionMinimumJavaVersion) { this.extensionMinimumJavaVersion = extensionMinimumJavaVersion; }
+
+    public List<String> getExtensionModelDeps() { return extensionModelDeps; }
+    public void setExtensionModelDeps(List<String> extensionModelDeps) { this.extensionModelDeps = extensionModelDeps; }
+
+    public List<String> getExtensionReactorGAs() { return extensionReactorGAs; }
+    public void setExtensionReactorGAs(List<String> extensionReactorGAs) { this.extensionReactorGAs = extensionReactorGAs; }
 
     @Override
     public String toString() {

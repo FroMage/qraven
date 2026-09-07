@@ -119,7 +119,55 @@ public class PomParser {
             info.getReactorDependencies().addAll(extraDeps);
         }
 
+        List<String> allReactorGAsList = new ArrayList<>(reactorGAs);
+        for (ModuleInfo info : modules) {
+            if (info.isHasExtensionPlugin()) {
+                Model model = effectiveModels.get(info.getGroupId() + ":" + info.getArtifactId());
+                if (model != null) {
+                    collectExtensionMetadata(model, info, allReactorGAsList);
+                }
+            }
+        }
+
         return modules;
+    }
+
+    private void collectExtensionMetadata(Model model, ModuleInfo info, List<String> reactorGAs) {
+        info.getExtensionDescriptorProperties().put("groupId", info.getGroupId());
+        info.getExtensionDescriptorProperties().put("artifactId", info.getArtifactId());
+        info.getExtensionDescriptorProperties().put("version", info.getVersion());
+
+        info.setExtensionProjectName(model.getName());
+        info.setExtensionProjectDescription(model.getDescription());
+        info.setExtensionReactorGAs(reactorGAs);
+
+        String scmUrl = findScmUrl(model);
+        info.setExtensionScmUrl(scmUrl);
+
+        Properties props = model.getProperties();
+        String release = props != null ? props.getProperty("maven.compiler.release") : null;
+        info.setExtensionMinimumJavaVersion(release);
+
+        List<String> modelDeps = new ArrayList<>();
+        if (model.getDependencies() != null) {
+            for (Dependency dep : model.getDependencies()) {
+                String classifier = dep.getClassifier() != null ? dep.getClassifier() : "";
+                String type = dep.getType() != null ? dep.getType() : "jar";
+                String scope = dep.getScope() != null ? dep.getScope() : "compile";
+                String version = dep.getVersion() != null ? dep.getVersion() : "";
+                modelDeps.add(dep.getGroupId() + ":" + dep.getArtifactId() + ":"
+                        + classifier + ":" + type + ":" + version + ":" + scope
+                        + ":" + dep.isOptional());
+            }
+        }
+        info.setExtensionModelDeps(modelDeps);
+    }
+
+    private String findScmUrl(Model model) {
+        if (model.getScm() != null && model.getScm().getUrl() != null) {
+            return model.getScm().getUrl();
+        }
+        return null;
     }
 
     private boolean shouldSkipModule(ModuleInfo info, Map<String, Model> effectiveModels) {
@@ -200,6 +248,7 @@ public class PomParser {
         extractFilterProperties(model, info);
         detectJandexPlugin(model, info);
         detectProtobufPlugin(model, baseDir, info);
+        detectExtensionPlugin(model, info);
         extractManifestEntries(model, info);
 
         return info;
@@ -307,6 +356,73 @@ public class PomParser {
                 }
             }
             return;
+        }
+    }
+
+    private void detectExtensionPlugin(Model model, ModuleInfo info) {
+        if (model.getBuild() == null) return;
+        for (Plugin plugin : model.getBuild().getPlugins()) {
+            if (!"quarkus-extension-maven-plugin".equals(plugin.getArtifactId())) continue;
+
+            boolean hasDescriptorGoal = false;
+            for (PluginExecution exec : plugin.getExecutions()) {
+                if (exec.getGoals().contains("extension-descriptor")) {
+                    hasDescriptorGoal = true;
+
+                    Xpp3Dom execConfig = (Xpp3Dom) exec.getConfiguration();
+                    if (execConfig != null) {
+                        extractExtensionConfig(execConfig, info);
+                    }
+                    break;
+                }
+            }
+            if (!hasDescriptorGoal) continue;
+
+            info.setHasExtensionPlugin(true);
+
+            if (info.getExtensionDescriptorProperties().isEmpty()) {
+                Xpp3Dom globalConfig = (Xpp3Dom) plugin.getConfiguration();
+                if (globalConfig != null) {
+                    extractExtensionConfig(globalConfig, info);
+                }
+            }
+
+            if (!info.getExtensionDescriptorProperties().containsKey("deployment-artifact")) {
+                String deployment = info.getGroupId() + ":" + info.getArtifactId() + "-deployment:" + info.getVersion();
+                info.getExtensionDescriptorProperties().put("deployment-artifact", deployment);
+            }
+            return;
+        }
+    }
+
+    private void extractExtensionConfig(Xpp3Dom config, ModuleInfo info) {
+        Map<String, String> props = info.getExtensionDescriptorProperties();
+
+        Xpp3Dom depNode = config.getChild("deployment");
+        if (depNode != null && depNode.getValue() != null && !depNode.getValue().isBlank()) {
+            props.put("deployment-artifact", depNode.getValue());
+        }
+
+        extractStringListProperty(config, "excludedArtifacts", "excluded-artifacts", props);
+        extractStringListProperty(config, "parentFirstArtifacts", "parent-first-artifacts", props);
+        extractStringListProperty(config, "runnerParentFirstArtifacts", "runner-parent-first-artifacts", props);
+        extractStringListProperty(config, "lesserPriorityArtifacts", "lesser-priority-artifacts", props);
+        extractStringListProperty(config, "conditionalDependencies", "conditional-dependencies", props);
+        extractStringListProperty(config, "dependencyCondition", "dependency-condition", props);
+    }
+
+    private void extractStringListProperty(Xpp3Dom config, String xmlName, String propKey,
+                                            Map<String, String> props) {
+        Xpp3Dom node = config.getChild(xmlName);
+        if (node == null) return;
+        List<String> values = new ArrayList<>();
+        for (Xpp3Dom child : node.getChildren()) {
+            if (child.getValue() != null && !child.getValue().isBlank()) {
+                values.add(child.getValue());
+            }
+        }
+        if (!values.isEmpty()) {
+            props.put(propKey, String.join(",", values));
         }
     }
 
