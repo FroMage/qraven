@@ -1,9 +1,7 @@
 package io.quarkiverse.qraven.hardcoded.runtime;
 
 import java.io.StringReader;
-import java.net.URL;
 import java.nio.file.Path;
-import java.util.Enumeration;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -77,54 +75,7 @@ public class QuarkusBuildHelper {
                 .setIsolateDeployment(true)
                 .build()
                 .bootstrap()) {
-            // Dump build-steps.list entries visible to the augment classloader
-            ClassLoader augmentCl = app.getOrCreateAugmentClassLoader();
-            try {
-                Enumeration<URL> stepLists = augmentCl.getResources("META-INF/quarkus-build-steps.list");
-                int count = 0;
-                boolean foundArc = false;
-                while (stepLists.hasMoreElements()) {
-                    URL url = stepLists.nextElement();
-                    try (var is = url.openStream();
-                         var reader = new java.io.BufferedReader(new java.io.InputStreamReader(is))) {
-                        String line;
-                        while ((line = reader.readLine()) != null) {
-                            line = line.trim();
-                            if (!line.isEmpty() && !line.startsWith("#")) {
-                                count++;
-                                if (line.contains("ArcProcessor")) {
-                                    foundArc = true;
-                                }
-                            }
-                        }
-                    }
-                }
-                if (!foundArc) {
-                    System.err.println("[QRAVEN-DIAG] WARNING: ArcProcessor NOT found in build-steps.list! "
-                        + count + " total steps found for " + module.artifactId());
-                }
-            } catch (Exception diag) {
-                System.err.println("[QRAVEN-DIAG] Failed to enumerate build-steps: " + diag);
-            }
-
-            try {
-                app.createAugmentor().createProductionApplication();
-            } catch (Exception e) {
-                System.err.println("[QRAVEN-DIAG] Build failed for " + module.artifactId() + ": " + e.getClass().getName() + ": " + e.getMessage());
-                Throwable cause = e.getCause();
-                while (cause != null) {
-                    System.err.println("[QRAVEN-DIAG]   Caused by: " + cause.getClass().getName() + ": " + cause.getMessage());
-                    cause = cause.getCause();
-                }
-                System.err.flush();
-                throw e;
-            }
-        } catch (Exception e) {
-            if (!e.getClass().getName().contains("QRAVEN")) {
-                System.err.println("[QRAVEN-DIAG] Outer exception for " + module.artifactId() + ": " + e.getClass().getName() + ": " + e.getMessage());
-                System.err.flush();
-            }
-            throw e;
+            app.createAugmentor().createProductionApplication();
         }
     }
 
