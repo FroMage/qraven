@@ -76,10 +76,13 @@ public class BuildOrchestrator {
         AtomicInteger threadIndexCounter = new AtomicInteger();
         ConcurrentHashMap<Long, Integer> threadIndices = new ConcurrentHashMap<>();
 
-        // Redirect System.err and JUL to build log so they don't break the progress bar.
+        System.out.println("Building " + modules.size() + " modules with " + threadCount + " threads");
+
+        // Redirect System.out, System.err and JUL to build log so they don't break the progress bar.
         // ProgressDisplay already captured the original System.err at construction.
         Path logFile = modules.isEmpty() ? null
                 : modules.get(0).runtime.getProjectRoot().resolve("target/qraven/build.log");
+        PrintStream originalOut = System.out;
         PrintStream originalErr = System.err;
         PrintStream buildLog = null;
         Logger julRoot = Logger.getLogger("");
@@ -91,6 +94,7 @@ public class BuildOrchestrator {
                 buildLog = new PrintStream(
                         Files.newOutputStream(logFile, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING),
                         true);
+                System.setOut(buildLog);
                 System.setErr(buildLog);
 
                 for (Handler h : originalJulHandlers) {
@@ -120,14 +124,13 @@ public class BuildOrchestrator {
                 buildLog = null;
             }
         }
-
-        System.out.println("Building " + modules.size() + " modules with " + threadCount + " threads");
+        BuildStats stats = new BuildStats();
         long start = System.currentTimeMillis();
 
         ExecutorService executor = Executors.newFixedThreadPool(threadCount);
         try {
             for (ModuleBuild m : modules) {
-                m.setProgress(progress, threadIndices, threadIndexCounter, threadCount);
+                m.setProgress(progress, stats, threadIndices, threadIndexCounter, threadCount);
             }
             CompletableFuture<?>[] allFutures = modules.stream()
                     .map(m -> m.buildAsync(executor))
@@ -142,7 +145,8 @@ public class BuildOrchestrator {
         } finally {
             executor.shutdown();
 
-            // Restore System.err and JUL before stopping progress
+            // Restore System.out, System.err and JUL before stopping progress
+            System.setOut(originalOut);
             System.setErr(originalErr);
             if (buildLogHandler != null) {
                 julRoot.removeHandler(buildLogHandler);
@@ -175,6 +179,10 @@ public class BuildOrchestrator {
         }
         System.out.println("Build completed in " + elapsed + "ms: " + succeeded + " succeeded, "
                 + directFailures.size() + " failed, " + cascadeFailures.size() + " skipped (cascade)");
+        String phaseSummary = stats.summary();
+        if (!phaseSummary.isEmpty()) {
+            System.out.println(phaseSummary);
+        }
         if (!directFailures.isEmpty()) {
             System.err.println("Direct failures: " + String.join(", ", directFailures));
             if (logFile != null) {

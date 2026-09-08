@@ -22,6 +22,7 @@ public abstract class ModuleBuild {
     private volatile CompletableFuture<Void> buildFuture;
     private List<ModuleBuild> dependencies = List.of();
     private ProgressDisplay progress;
+    private BuildStats stats;
     private ConcurrentHashMap<Long, Integer> threadIndices;
     private AtomicInteger threadIndexCounter;
     private int maxThreadIndex;
@@ -119,9 +120,11 @@ public abstract class ModuleBuild {
         return dependencies;
     }
 
-    public void setProgress(ProgressDisplay progress, ConcurrentHashMap<Long, Integer> threadIndices,
+    public void setProgress(ProgressDisplay progress, BuildStats stats,
+                           ConcurrentHashMap<Long, Integer> threadIndices,
                            AtomicInteger threadIndexCounter, int maxThreadIndex) {
         this.progress = progress;
+        this.stats = stats;
         this.threadIndices = threadIndices;
         this.threadIndexCounter = threadIndexCounter;
         this.maxThreadIndex = maxThreadIndex;
@@ -190,7 +193,9 @@ public abstract class ModuleBuild {
         try {
             if ("pom".equals(packaging())) {
                 if (progress != null) progress.moduleStarted(threadIdx, artifactId(), "pom", 0);
+                long t = System.currentTimeMillis();
                 runtime.install(null, pomFile(), groupId(), artifactId(), version(), packaging());
+                recordPhase("install", t);
             } else {
                 runtime.clean(targetDir());
 
@@ -199,6 +204,7 @@ public abstract class ModuleBuild {
                 addReactorJars(this, fullClasspath, added);
 
                 if (progress != null) progress.moduleStarted(threadIdx, artifactId(), "resources", 0);
+                long t = System.currentTimeMillis();
                 for (String[] rd : resourceDirs()) {
                     Path dir = runtime.getProjectRoot().resolve(baseDir()).resolve(rd[0]);
                     boolean filtering = "true".equals(rd[1]);
@@ -208,9 +214,11 @@ public abstract class ModuleBuild {
                         runtime.copyResources(dir, classesDir());
                     }
                 }
+                recordPhase("resources", t);
 
                 if (hasExtensionPlugin()) {
                     if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "ext-descriptor", 0);
+                    t = System.currentTimeMillis();
                     ExtensionDescriptorHelper.generate(
                             classesDir(), extensionDescriptorProperties(),
                             fullClasspath, extensionReactorGAs(),
@@ -224,25 +232,31 @@ public abstract class ModuleBuild {
                             extensionProvidesCapabilities(),
                             extensionRequiresCapabilities(),
                             evaluateSkip(extensionValidationSkipWhen()));
+                    recordPhase("ext-descriptor", t);
                 }
 
                 Path generatedProtoDir = null;
                 if (hasProtobufSources() && !evaluateSkip(generateCodeSkipWhen())) {
                     if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "protobuf", 0);
+                    t = System.currentTimeMillis();
                     generatedProtoDir = generatedProtobufDir();
                     runtime.compileProtobuf(protoSourceDir(), generatedProtoDir,
                             protobufUsesGrpc(), protobufUsesMutiny(), fullClasspath);
+                    recordPhase("protobuf", t);
                 }
 
                 if (hasKotlinSources()) {
                     if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "kotlin", 0);
+                    t = System.currentTimeMillis();
                     runtime.compileKotlin(kotlinSourceDir(), sourceDir(), classesDir(), fullClasspath);
                     fullClasspath.add(0, classesDir().toString());
+                    recordPhase("kotlin", t);
                 }
 
                 if (hasJavaSources() || generatedProtoDir != null) {
                     int sourceCount = countSources();
                     if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "compile", sourceCount);
+                    t = System.currentTimeMillis();
                     if (generatedProtoDir != null) {
                         Path javaOut = generatedProtoDir.resolve("java");
                         Path grpcOut = generatedProtoDir.resolve("grpc-java");
@@ -254,22 +268,31 @@ public abstract class ModuleBuild {
                         runtime.compile(sourceDir(), classesDir(), fullClasspath,
                                 resolvedAnnotationProcessorPaths(), compilerArgs());
                     }
+                    recordPhase("compile", t);
                 }
 
                 if (needsJandexIndex()) {
                     if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "jandex", 0);
+                    t = System.currentTimeMillis();
                     runtime.generateJandexIndex(classesDir());
+                    recordPhase("jandex", t);
                 }
 
                 if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "jar", 0);
+                t = System.currentTimeMillis();
                 runtime.createJar(classesDir(), jarFile(), manifestEntries());
+                recordPhase("jar", t);
 
                 if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "install", 0);
+                t = System.currentTimeMillis();
                 runtime.install(jarFile(), pomFile(), groupId(), artifactId(), version(), packaging());
+                recordPhase("install", t);
 
                 if (hasQuarkusBuildPlugin() && !evaluateSkip(quarkusBuildSkipWhen())) {
                     if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "quarkus-build", 0);
+                    t = System.currentTimeMillis();
                     QuarkusBuildHelper.run(this, dependencies);
+                    recordPhase("quarkus-build", t);
                 }
             }
 
@@ -291,6 +314,12 @@ public abstract class ModuleBuild {
                 progress.moduleCompleted(threadIdx, false);
             }
             throw new RuntimeException("Build failed for " + artifactId(), e);
+        }
+    }
+
+    private void recordPhase(String phase, long startTime) {
+        if (stats != null) {
+            stats.record(phase, System.currentTimeMillis() - startTime);
         }
     }
 
