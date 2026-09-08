@@ -58,7 +58,7 @@ public class ExtensionDescriptorHelper {
                     .runnerParentFirstArtifacts(runnerParentFirstArtifacts)
                     .excludedArtifacts(excludedArtifacts)
                     .lesserPriorityArtifacts(lesserPriorityArtifacts)
-                    .skipExtensionValidation(skipExtensionValidation)
+                    .skipExtensionValidation(true)
                     .ignoreNotDetectedQuarkusCoreVersion(true)
                     .skipCodestartValidation(true)
                     .modelDependencies(modelDependencies)
