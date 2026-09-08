@@ -1,9 +1,11 @@
 package io.quarkiverse.qraven.hardcoded.runtime;
 
 import java.io.IOException;
+import java.io.PrintStream;
 import java.io.PrintWriter;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -16,6 +18,9 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.logging.Handler;
+import java.util.logging.LogRecord;
+import java.util.logging.Logger;
 
 public class BuildOrchestrator {
 
@@ -71,6 +76,51 @@ public class BuildOrchestrator {
         AtomicInteger threadIndexCounter = new AtomicInteger();
         ConcurrentHashMap<Long, Integer> threadIndices = new ConcurrentHashMap<>();
 
+        // Redirect System.err and JUL to build log so they don't break the progress bar.
+        // ProgressDisplay already captured the original System.err at construction.
+        Path logFile = modules.isEmpty() ? null
+                : modules.get(0).runtime.getProjectRoot().resolve("target/qraven/build.log");
+        PrintStream originalErr = System.err;
+        PrintStream buildLog = null;
+        Logger julRoot = Logger.getLogger("");
+        Handler[] originalJulHandlers = julRoot.getHandlers();
+        Handler buildLogHandler = null;
+        if (logFile != null) {
+            try {
+                Files.createDirectories(logFile.getParent());
+                buildLog = new PrintStream(
+                        Files.newOutputStream(logFile, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING),
+                        true);
+                System.setErr(buildLog);
+
+                for (Handler h : originalJulHandlers) {
+                    julRoot.removeHandler(h);
+                }
+                final PrintStream logOut = buildLog;
+                buildLogHandler = new Handler() {
+                    @Override
+                    public void publish(LogRecord record) {
+                        if (record != null && isLoggable(record)) {
+                            logOut.println("[" + record.getLevel() + "] " + record.getLoggerName()
+                                    + ": " + record.getMessage());
+                        }
+                    }
+
+                    @Override
+                    public void flush() {
+                        logOut.flush();
+                    }
+
+                    @Override
+                    public void close() {
+                    }
+                };
+                julRoot.addHandler(buildLogHandler);
+            } catch (IOException e) {
+                buildLog = null;
+            }
+        }
+
         System.out.println("Building " + modules.size() + " modules with " + threadCount + " threads");
         long start = System.currentTimeMillis();
 
@@ -91,6 +141,16 @@ public class BuildOrchestrator {
             }
         } finally {
             executor.shutdown();
+
+            // Restore System.err and JUL before stopping progress
+            System.setErr(originalErr);
+            if (buildLogHandler != null) {
+                julRoot.removeHandler(buildLogHandler);
+            }
+            for (Handler h : originalJulHandlers) {
+                julRoot.addHandler(h);
+            }
+
             if (!modules.isEmpty()) {
                 modules.get(0).runtime.close();
             }
@@ -117,34 +177,43 @@ public class BuildOrchestrator {
                 + directFailures.size() + " failed, " + cascadeFailures.size() + " skipped (cascade)");
         if (!directFailures.isEmpty()) {
             System.err.println("Direct failures: " + String.join(", ", directFailures));
-            Path logFile = modules.get(0).runtime.getProjectRoot().resolve("target/qraven/build.log");
-            try {
-                Files.createDirectories(logFile.getParent());
-                try (PrintWriter pw = new PrintWriter(Files.newBufferedWriter(logFile))) {
-                    pw.println("Build completed in " + elapsed + "ms: " + succeeded + " succeeded, "
-                            + directFailures.size() + " failed, " + cascadeFailures.size() + " skipped (cascade)");
-                    pw.println();
-                    pw.println("Direct failures: " + String.join(", ", directFailures));
-                    pw.println();
-                    for (ModuleBuild m : modules) {
-                        if (m.getFailureMessage() != null) {
-                            pw.println(m.getFailureMessage());
+            if (logFile != null) {
+                try {
+                    // Append failure summary to the build log (which already has JUL/stderr output)
+                    try (PrintWriter pw = new PrintWriter(Files.newBufferedWriter(logFile,
+                            StandardOpenOption.CREATE, StandardOpenOption.APPEND))) {
+                        pw.println();
+                        pw.println("=== BUILD FAILURE SUMMARY ===");
+                        pw.println("Build completed in " + elapsed + "ms: " + succeeded + " succeeded, "
+                                + directFailures.size() + " failed, " + cascadeFailures.size()
+                                + " skipped (cascade)");
+                        pw.println();
+                        pw.println("Direct failures: " + String.join(", ", directFailures));
+                        pw.println();
+                        for (ModuleBuild m : modules) {
+                            if (m.getFailureMessage() != null) {
+                                pw.println(m.getFailureMessage());
+                            }
+                        }
+                        if (!cascadeFailures.isEmpty()) {
+                            pw.println();
+                            pw.println("Cascade failures (" + cascadeFailures.size() + "): "
+                                    + String.join(", ", cascadeFailures));
                         }
                     }
-                    if (!cascadeFailures.isEmpty()) {
-                        pw.println();
-                        pw.println("Cascade failures (" + cascadeFailures.size() + "): "
-                                + String.join(", ", cascadeFailures));
-                    }
-                }
-                System.err.println(directFailures.size() + " compilation error(s), see " + logFile + " for details");
-            } catch (IOException e) {
-                for (ModuleBuild m : modules) {
-                    if (m.getFailureMessage() != null) {
-                        System.err.println(m.getFailureMessage());
+                    System.err.println(directFailures.size() + " compilation error(s), see " + logFile
+                            + " for details");
+                } catch (IOException e) {
+                    for (ModuleBuild m : modules) {
+                        if (m.getFailureMessage() != null) {
+                            System.err.println(m.getFailureMessage());
+                        }
                     }
                 }
             }
+        }
+        if (buildLog != null) {
+            buildLog.close();
         }
         if (!cascadeFailures.isEmpty()) {
             System.err.println("Cascade failures (" + cascadeFailures.size() + "): "
