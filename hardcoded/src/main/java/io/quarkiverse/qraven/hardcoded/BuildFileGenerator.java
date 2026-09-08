@@ -538,10 +538,27 @@ public class BuildFileGenerator {
             return versions.filter(Files::isDirectory)
                     .filter(v -> Files.exists(v.resolve(artifactName + "-" + v.getFileName() + ".jar")))
                     .map(v -> v.getFileName().toString())
-                    .findFirst().orElse(null);
+                    .max(BuildFileGenerator::compareVersions).orElse(null);
         } catch (IOException e) {
             return null;
         }
+    }
+
+    private static int compareVersions(String a, String b) {
+        String[] pa = a.split("[.\\-]");
+        String[] pb = b.split("[.\\-]");
+        for (int i = 0; i < Math.max(pa.length, pb.length); i++) {
+            String sa = i < pa.length ? pa[i] : "0";
+            String sb = i < pb.length ? pb[i] : "0";
+            try {
+                int cmp = Integer.compare(Integer.parseInt(sa), Integer.parseInt(sb));
+                if (cmp != 0) return cmp;
+            } catch (NumberFormatException e) {
+                int cmp = sa.compareTo(sb);
+                if (cmp != 0) return cmp;
+            }
+        }
+        return 0;
     }
 
     private void addFirstVersionJar(java.util.Set<Path> jars, Path artifactDir, String artifactName) {
