@@ -23,6 +23,7 @@ import org.eclipse.aether.spi.connector.transport.TransporterFactory;
 import org.eclipse.aether.transport.file.FileTransporterFactory;
 import org.eclipse.aether.transport.http.HttpTransporterFactory;
 import org.eclipse.aether.util.artifact.JavaScopes;
+import org.eclipse.aether.util.filter.DependencyFilterUtils;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -90,33 +91,32 @@ public class DependencyResolver {
 
         collectRequest.setRepositories(remoteRepos);
 
-        DependencyRequest depRequest = new DependencyRequest(collectRequest, null);
+        DependencyRequest depRequest = new DependencyRequest(collectRequest,
+                DependencyFilterUtils.classpathFilter(JavaScopes.COMPILE, JavaScopes.RUNTIME));
 
         try {
             DependencyResult result = repoSystem.resolveDependencies(session, depRequest);
-            return result.getArtifactResults().stream()
-                    .filter(ArtifactResult::isResolved)
-                    .map(ar -> new ResolvedArtifact(
-                            ar.getArtifact().getGroupId(),
-                            ar.getArtifact().getArtifactId(),
-                            ar.getArtifact().getVersion(),
-                            ar.getArtifact().getFile().getAbsolutePath()))
-                    .toList();
+            return toResolvedArtifacts(result);
         } catch (DependencyResolutionException e) {
             System.err.println("WARNING: Dependency resolution incomplete: " + e.getMessage());
             DependencyResult result = e.getResult();
             if (result != null) {
-                return result.getArtifactResults().stream()
-                        .filter(ArtifactResult::isResolved)
-                        .map(ar -> new ResolvedArtifact(
-                                ar.getArtifact().getGroupId(),
-                                ar.getArtifact().getArtifactId(),
-                                ar.getArtifact().getVersion(),
-                                ar.getArtifact().getFile().getAbsolutePath()))
-                        .toList();
+                return toResolvedArtifacts(result);
             }
             return List.of();
         }
+    }
+
+    private List<ResolvedArtifact> toResolvedArtifacts(DependencyResult result) {
+        return result.getArtifactResults().stream()
+                .filter(ArtifactResult::isResolved)
+                .filter(ar -> "jar".equals(ar.getArtifact().getExtension()))
+                .map(ar -> new ResolvedArtifact(
+                        ar.getArtifact().getGroupId(),
+                        ar.getArtifact().getArtifactId(),
+                        ar.getArtifact().getVersion(),
+                        ar.getArtifact().getFile().getAbsolutePath()))
+                .toList();
     }
 
     public List<String> resolveAnnotationProcessorPath(String groupId, String artifactId, String version,

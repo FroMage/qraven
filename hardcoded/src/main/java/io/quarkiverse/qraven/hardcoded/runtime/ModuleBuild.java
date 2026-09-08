@@ -26,6 +26,7 @@ public abstract class ModuleBuild {
     private AtomicInteger threadIndexCounter;
     private int maxThreadIndex;
     private List<String> resolvedClasspath;
+    private Set<String> resolvedOptionalClasspath;
     private List<String> resolvedAnnotationProcessorPaths;
 
     protected ModuleBuild(BuildRuntime runtime) {
@@ -45,9 +46,18 @@ public abstract class ModuleBuild {
 
     public List<String> resolvedClasspath() {
         if (resolvedClasspath == null) {
-            resolvedClasspath = resolvePaths(compileClasspath());
+            List<String> cp = new ArrayList<>(resolvePaths(compileClasspath()));
+            cp.addAll(resolvePaths(optionalCompileClasspath()));
+            resolvedClasspath = cp;
         }
         return resolvedClasspath;
+    }
+
+    public Set<String> resolvedOptionalClasspathEntries() {
+        if (resolvedOptionalClasspath == null) {
+            resolvedOptionalClasspath = new HashSet<>(resolvePaths(optionalCompileClasspath()));
+        }
+        return resolvedOptionalClasspath;
     }
 
     public List<String> resolvedAnnotationProcessorPaths() {
@@ -72,9 +82,11 @@ public abstract class ModuleBuild {
     public abstract boolean needsJandexIndex();
     public abstract Map<String, String> manifestEntries();
     public abstract List<String> compileClasspath();
+    public abstract List<String> optionalCompileClasspath();
     public abstract List<String> annotationProcessorPaths();
     public abstract List<String> compilerArgs();
     public abstract List<String> moduleDependencyIds();
+    public abstract List<String> optionalModuleDependencyIds();
     public abstract boolean hasExtensionPlugin();
     public abstract Map<String, String> extensionDescriptorProperties();
     public abstract String extensionProjectName();
@@ -83,6 +95,17 @@ public abstract class ModuleBuild {
     public abstract String extensionMinimumJavaVersion();
     public abstract List<String> extensionModelDeps();
     public abstract List<String> extensionReactorGAs();
+    public abstract List<String> extensionParentFirstArtifacts();
+    public abstract List<String> extensionRunnerParentFirstArtifacts();
+    public abstract List<String> extensionExcludedArtifacts();
+    public abstract List<String> extensionLesserPriorityArtifacts();
+    public abstract List<String> extensionProvidesCapabilities();
+    public abstract List<String> extensionRequiresCapabilities();
+    public abstract boolean hasQuarkusBuildPlugin();
+    public abstract Map<String, String> quarkusBuildProperties();
+    public abstract List<String> deploymentClasspath();
+    public abstract List<String> runtimeExtensionArtifacts();
+    public abstract Map<String, String> extensionDevProperties();
 
     public void setDependencies(List<ModuleBuild> dependencies) {
         this.dependencies = dependencies;
@@ -189,7 +212,13 @@ public abstract class ModuleBuild {
                             fullClasspath, extensionReactorGAs(),
                             extensionProjectName(), extensionProjectDescription(),
                             extensionScmUrl(), extensionMinimumJavaVersion(),
-                            extensionModelDeps());
+                            extensionModelDeps(),
+                            extensionParentFirstArtifacts(),
+                            extensionRunnerParentFirstArtifacts(),
+                            extensionExcludedArtifacts(),
+                            extensionLesserPriorityArtifacts(),
+                            extensionProvidesCapabilities(),
+                            extensionRequiresCapabilities());
                 }
 
                 Path generatedProtoDir = null;
@@ -232,6 +261,11 @@ public abstract class ModuleBuild {
 
                 if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "install", 0);
                 runtime.install(jarFile(), pomFile(), groupId(), artifactId(), version(), packaging());
+
+                if (hasQuarkusBuildPlugin()) {
+                    if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "quarkus-build", 0);
+                    QuarkusBuildHelper.run(this, dependencies);
+                }
             }
 
             buildSucceeded = true;
@@ -240,7 +274,14 @@ public abstract class ModuleBuild {
             }
         } catch (Throwable e) {
             long elapsed = System.currentTimeMillis() - start;
-            failureMessage = "[" + artifactId() + "] FAILED after " + elapsed + "ms: " + e.getMessage();
+            StringBuilder msg = new StringBuilder();
+            msg.append("[").append(artifactId()).append("] FAILED after ").append(elapsed).append("ms: ").append(e.getMessage());
+            Throwable cause = e.getCause();
+            while (cause != null) {
+                msg.append("\n  Caused by: ").append(cause.getClass().getName()).append(": ").append(cause.getMessage());
+                cause = cause.getCause();
+            }
+            failureMessage = msg.toString();
             if (progress != null) {
                 progress.moduleCompleted(threadIdx, false);
             }

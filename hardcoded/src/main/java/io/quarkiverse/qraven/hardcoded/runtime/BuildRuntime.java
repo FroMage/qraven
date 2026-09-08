@@ -341,18 +341,14 @@ public class BuildRuntime {
         options.add("-d");
         options.add(outputDir.toString());
 
-        List<String> fullClasspath = new ArrayList<>(classpath);
-        if (!annotationProcessorPaths.isEmpty()) {
-            for (String ap : annotationProcessorPaths) {
-                if (!fullClasspath.contains(ap)) {
-                    fullClasspath.add(ap);
-                }
-            }
+        if (!classpath.isEmpty()) {
+            options.add("-classpath");
+            options.add(String.join(File.pathSeparator, classpath));
         }
 
-        if (!fullClasspath.isEmpty()) {
-            options.add("-classpath");
-            options.add(String.join(File.pathSeparator, fullClasspath));
+        if (!annotationProcessorPaths.isEmpty()) {
+            options.add("-processorpath");
+            options.add(String.join(File.pathSeparator, annotationProcessorPaths));
         }
 
         for (int i = 0; i < compilerArgs.size(); i++) {

@@ -17,6 +17,7 @@ import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.jar.Attributes;
@@ -162,7 +163,17 @@ public class BuildFileGenerator {
         sb.append("    @Override\n");
         sb.append("    public List<String> compileClasspath() {\n");
         sb.append("        return List.of(\n");
-        sb.append(formatStringList(makePortable(module.getCompileClasspath()), "            "));
+        List<String> nonOptionalCp = new ArrayList<>(module.getCompileClasspath());
+        nonOptionalCp.removeAll(module.getOptionalClasspathEntries());
+        sb.append(formatStringList(makePortable(nonOptionalCp), "            "));
+        sb.append("        );\n");
+        sb.append("    }\n\n");
+
+        sb.append("    @Override\n");
+        sb.append("    public List<String> optionalCompileClasspath() {\n");
+        sb.append("        return List.of(\n");
+        List<String> optionalCp = new ArrayList<>(module.getOptionalClasspathEntries());
+        sb.append(formatStringList(makePortable(optionalCp), "            "));
         sb.append("        );\n");
         sb.append("    }\n\n");
 
@@ -184,6 +195,13 @@ public class BuildFileGenerator {
         sb.append("    public List<String> moduleDependencyIds() {\n");
         sb.append("        return List.of(\n");
         sb.append(formatStringList(module.getReactorDependencies(), "            "));
+        sb.append("        );\n");
+        sb.append("    }\n\n");
+
+        sb.append("    @Override\n");
+        sb.append("    public List<String> optionalModuleDependencyIds() {\n");
+        sb.append("        return List.of(\n");
+        sb.append(formatStringList(new java.util.ArrayList<>(module.getOptionalReactorDependencies()), "            "));
         sb.append("        );\n");
         sb.append("    }\n\n");
 
@@ -229,7 +247,101 @@ public class BuildFileGenerator {
         sb.append("        return List.of(\n");
         sb.append(formatStringList(module.getExtensionReactorGAs(), "            "));
         sb.append("        );\n");
-        sb.append("    }\n");
+        sb.append("    }\n\n");
+
+        sb.append("    @Override\n");
+        sb.append("    public List<String> extensionParentFirstArtifacts() {\n");
+        sb.append("        return List.of(\n");
+        sb.append(formatStringList(module.getExtensionParentFirstArtifacts(), "            "));
+        sb.append("        );\n");
+        sb.append("    }\n\n");
+
+        sb.append("    @Override\n");
+        sb.append("    public List<String> extensionRunnerParentFirstArtifacts() {\n");
+        sb.append("        return List.of(\n");
+        sb.append(formatStringList(module.getExtensionRunnerParentFirstArtifacts(), "            "));
+        sb.append("        );\n");
+        sb.append("    }\n\n");
+
+        sb.append("    @Override\n");
+        sb.append("    public List<String> extensionExcludedArtifacts() {\n");
+        sb.append("        return List.of(\n");
+        sb.append(formatStringList(module.getExtensionExcludedArtifacts(), "            "));
+        sb.append("        );\n");
+        sb.append("    }\n\n");
+
+        sb.append("    @Override\n");
+        sb.append("    public List<String> extensionLesserPriorityArtifacts() {\n");
+        sb.append("        return List.of(\n");
+        sb.append(formatStringList(module.getExtensionLesserPriorityArtifacts(), "            "));
+        sb.append("        );\n");
+        sb.append("    }\n\n");
+
+        sb.append("    @Override\n");
+        sb.append("    public List<String> extensionProvidesCapabilities() {\n");
+        sb.append("        return List.of(\n");
+        sb.append(formatStringList(module.getExtensionProvidesCapabilities(), "            "));
+        sb.append("        );\n");
+        sb.append("    }\n\n");
+
+        sb.append("    @Override\n");
+        sb.append("    public List<String> extensionRequiresCapabilities() {\n");
+        sb.append("        return List.of(\n");
+        sb.append(formatStringList(module.getExtensionRequiresCapabilities(), "            "));
+        sb.append("        );\n");
+        sb.append("    }\n\n");
+
+        // quarkus build plugin
+        sb.append("    @Override public boolean hasQuarkusBuildPlugin() { return ")
+                .append(module.isHasQuarkusBuildPlugin()).append("; }\n\n");
+
+        // quarkusBuildProperties
+        Map<String, String> qbProps = module.getQuarkusBuildProperties();
+        if (qbProps.isEmpty()) {
+            sb.append("    @Override\n");
+            sb.append("    public Map<String, String> quarkusBuildProperties() { return Map.of(); }\n\n");
+        } else {
+            sb.append("    private static final String QUARKUS_BUILD_PROPS = \"\"\"\n");
+            for (Map.Entry<String, String> entry : qbProps.entrySet()) {
+                sb.append("            ").append(escapeTextBlock(entry.getKey()))
+                        .append("=").append(escapeTextBlock(entry.getValue())).append("\n");
+            }
+            sb.append("            \"\"\";\n\n");
+            sb.append("    @Override\n");
+            sb.append("    public Map<String, String> quarkusBuildProperties() { return parseProps(QUARKUS_BUILD_PROPS); }\n\n");
+        }
+
+        // deploymentClasspath
+        sb.append("    @Override\n");
+        sb.append("    public List<String> deploymentClasspath() {\n");
+        sb.append("        return List.of(\n");
+        sb.append(formatStringList(makePortable(module.getDeploymentClasspath()), "            "));
+        sb.append("        );\n");
+        sb.append("    }\n\n");
+
+        // runtimeExtensionArtifacts
+        sb.append("    @Override\n");
+        sb.append("    public List<String> runtimeExtensionArtifacts() {\n");
+        sb.append("        return List.of(\n");
+        sb.append(formatStringList(module.getRuntimeExtensionArtifacts(), "            "));
+        sb.append("        );\n");
+        sb.append("    }\n\n");
+
+        // extensionDevProperties
+        Map<String, String> edProps = module.getExtensionDevProperties();
+        if (edProps.isEmpty()) {
+            sb.append("    @Override\n");
+            sb.append("    public Map<String, String> extensionDevProperties() { return Map.of(); }\n");
+        } else {
+            sb.append("    private static final String EXT_DEV_PROPS = \"\"\"\n");
+            for (Map.Entry<String, String> entry : edProps.entrySet()) {
+                sb.append("            ").append(escapeTextBlock(entry.getKey()))
+                        .append("=").append(escapeTextBlock(entry.getValue().replace("\n", "\\n"))).append("\n");
+            }
+            sb.append("            \"\"\";\n\n");
+            sb.append("    @Override\n");
+            sb.append("    public Map<String, String> extensionDevProperties() { return parseProps(EXT_DEV_PROPS); }\n");
+        }
 
         sb.append("}\n");
         return sb.toString();

@@ -185,6 +185,56 @@ qraven/
         BuildRuntime.java          # Compilation, resource copying, JAR creation
         BuildOrchestrator.java     # Multi-threaded build execution
         ModuleBuild.java           # Per-module build logic
+        QuarkusBuildHelper.java    # Quarkus augmentation (quarkus:build goal)
 ```
 
 The `runtime/` classes are bundled into the generated `build.jar` and execute at build time. The other classes are only used during generation.
+
+## Supported Maven plugins
+
+Qraven replicates the behavior of the following Maven plugins during build:
+
+### Compilation
+- **maven-compiler-plugin** -- Compiles Java sources using the `javax.tools.JavaCompiler` API (no external javac process). Supports `-parameters`, `--release`, `-source`/`-target`, `<compilerArgs>`, and annotation processor paths (`<annotationProcessorPaths>`). Reads configuration from both plugin-level and execution-level blocks. Merges compiler args from `<pluginManagement>` and `<build>/<plugins>` sections, including the `<parameters>true</parameters>` shorthand.
+- **kotlin-maven-plugin** -- Compiles Kotlin sources using the embedded K2 JVM compiler. Supports mixed Java+Kotlin projects (Kotlin compiled first, then Java with Kotlin classes on the classpath).
+- **protobuf-maven-plugin** -- Compiles `.proto` files using the `protoc` binary from `~/.m2/repository`. Supports gRPC and Quarkus Mutiny gRPC code generation plugins.
+
+### Resource handling
+- **maven-resources-plugin** -- Copies `src/main/resources` to `target/classes` with optional Maven-style property filtering (`${property}` interpolation). Binary file extensions are detected and copied without filtering.
+
+### Indexing
+- **jandex-maven-plugin** (SmallRye Jandex / `org.jboss.jandex:jandex-maven-plugin`) -- Generates `META-INF/jandex.idx` from compiled classes.
+
+### Packaging
+- **maven-jar-plugin** -- Creates JAR files with manifest entries from `<archive>/<manifestEntries>` configuration.
+- **maven-install-plugin** -- Installs JARs and POMs to `~/.m2/repository`.
+
+### Quarkus
+- **quarkus-maven-plugin:build** -- Runs the full Quarkus augmentation pipeline (`QuarkusBootstrap` + `CuratedApplication.createAugmentor().createProductionApplication()`). Builds the `ApplicationModel` with all dependency flags (`runtimeCp`, `deploymentCp`, `runtimeExtensionArtifact`), extension properties (`parent-first-artifacts`, `excluded-artifacts`, `lesser-priority-artifacts`), and extension capabilities (`provides-capabilities`, `requires-capabilities`). Bypasses Maven entirely via `QuarkusBootstrap.builder().setExistingModel(model)`.
+
+### Quarkus extension development
+- **quarkus-extension-maven-plugin** -- Generates `META-INF/quarkus-extension.properties` and `META-INF/quarkus-extension.yaml` for Quarkus extension modules.
+
+### Not yet supported
+- **kotlin-maven-plugin** -- Kotlin compilation (modules using Kotlin are skipped)
+- **protobuf-maven-plugin** -- Protocol buffer compilation (modules using protobuf are skipped)
+- **maven-surefire-plugin / maven-failsafe-plugin** -- Test execution
+- **maven-shade-plugin / maven-assembly-plugin** -- Uber-jar / assembly creation
+
+## How the Quarkus build works
+
+When a module declares `quarkus-maven-plugin` with the `build` goal, qraven:
+
+1. **At generation time** (PomParser): Scans all runtime dependency JARs for `META-INF/quarkus-extension.properties` to identify Quarkus extensions. Extracts deployment artifact coordinates and extension properties (capabilities, excluded artifacts, etc.). Resolves the full deployment classpath transitively.
+
+2. **At build time** (QuarkusBuildHelper): Constructs an `ApplicationModel` with:
+   - The app artifact pointing to `target/classes`
+   - All runtime dependencies with `runtimeCp=true, deploymentCp=true` flags
+   - Extension JARs additionally flagged with `runtimeExtensionArtifact=true`
+   - Extension properties processed via `handleExtensionProperties()` (parent-first, excluded-artifacts, etc.)
+   - Extension capabilities registered via `addExtensionCapabilities()` (provides/requires)
+   - Deployment-only JARs with `deploymentCp=true` only
+
+3. **Bootstraps Quarkus**: Creates a `QuarkusBootstrap` with `setExistingModel()` to skip Maven resolution entirely, then calls `createAugmentor().createProductionApplication()` which runs all deployment processors (Arc CDI, REST, Hibernate ORM, etc.) and produces the `quarkus-app/` directory.
+
+The key insight is that `setExistingModel()` tells Quarkus "I've already resolved everything -- don't try to use Maven." This is what makes it possible to run the build from a native binary without Maven.

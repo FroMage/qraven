@@ -2,6 +2,7 @@ package io.quarkiverse.qraven.hardcoded.runtime;
 
 import io.quarkus.maven.ExtensionDescriptorGenerator;
 import io.quarkus.maven.capabilities.CapabilitiesConfig;
+import io.quarkus.maven.capabilities.CapabilityConfig;
 import io.quarkus.maven.dependency.ArtifactCoords;
 
 import java.nio.file.Files;
@@ -16,7 +17,13 @@ public class ExtensionDescriptorHelper {
                                 List<String> classpath, List<String> reactorModuleGAs,
                                 String projectName, String projectDescription,
                                 String scmUrl, String minimumJavaVersion,
-                                List<String> modelDeps) {
+                                List<String> modelDeps,
+                                List<String> parentFirstArtifacts,
+                                List<String> runnerParentFirstArtifacts,
+                                List<String> excludedArtifacts,
+                                List<String> lesserPriorityArtifacts,
+                                List<String> providesCapabilities,
+                                List<String> requiresCapabilities) {
         String deployment = properties.get("deployment-artifact");
         if (deployment == null) {
             throw new RuntimeException("Missing deployment-artifact in extension descriptor properties");
@@ -41,11 +48,15 @@ public class ExtensionDescriptorHelper {
                     .projectName(projectName)
                     .projectDescription(projectDescription)
                     .deployment(deployment)
-                    .capabilities(new CapabilitiesConfig())
+                    .capabilities(buildCapabilities(providesCapabilities, requiresCapabilities))
                     .outputDirectory(classesDir)
                     .extensionFile(Files.exists(extensionFile) ? extensionFile : null)
                     .scmUrl(scmUrl)
                     .minimumJavaVersion(minimumJavaVersion)
+                    .parentFirstArtifacts(parentFirstArtifacts)
+                    .runnerParentFirstArtifacts(runnerParentFirstArtifacts)
+                    .excludedArtifacts(excludedArtifacts)
+                    .lesserPriorityArtifacts(lesserPriorityArtifacts)
                     .skipExtensionValidation(true)
                     .ignoreNotDetectedQuarkusCoreVersion(true)
                     .skipCodestartValidation(true)
@@ -60,6 +71,25 @@ public class ExtensionDescriptorHelper {
             throw new RuntimeException("Failed to generate extension descriptor for "
                     + groupId + ":" + artifactId + ": " + e.getMessage(), e);
         }
+    }
+
+    private static CapabilitiesConfig buildCapabilities(List<String> provides, List<String> requires) {
+        CapabilitiesConfig config = new CapabilitiesConfig();
+        if (provides != null) {
+            for (String cap : provides) {
+                CapabilityConfig cc = new CapabilityConfig();
+                cc.set(cap);
+                config.addProvides(cc);
+            }
+        }
+        if (requires != null) {
+            for (String cap : requires) {
+                CapabilityConfig cc = new CapabilityConfig();
+                cc.set(cap);
+                config.addRequires(cc);
+            }
+        }
+        return config;
     }
 
     private static ExtensionDescriptorGenerator.DependencyResolver createResolver(

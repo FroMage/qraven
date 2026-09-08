@@ -3,8 +3,10 @@ package io.quarkiverse.qraven.hardcoded;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 public class ModuleInfo {
 
@@ -35,6 +37,19 @@ public class ModuleInfo {
     private String extensionMinimumJavaVersion;
     private List<String> extensionModelDeps = new ArrayList<>();
     private List<String> extensionReactorGAs = new ArrayList<>();
+    private List<String> extensionParentFirstArtifacts = new ArrayList<>();
+    private List<String> extensionRunnerParentFirstArtifacts = new ArrayList<>();
+    private List<String> extensionExcludedArtifacts = new ArrayList<>();
+    private List<String> extensionLesserPriorityArtifacts = new ArrayList<>();
+    private List<String> extensionProvidesCapabilities = new ArrayList<>();
+    private List<String> extensionRequiresCapabilities = new ArrayList<>();
+    private boolean hasQuarkusBuildPlugin;
+    private Map<String, String> quarkusBuildProperties = new LinkedHashMap<>();
+    private List<String> deploymentClasspath = new ArrayList<>();
+    private List<String> runtimeExtensionArtifacts = new ArrayList<>();
+    private Map<String, String> extensionDevProperties = new LinkedHashMap<>();
+    private Set<String> optionalClasspathEntries = new LinkedHashSet<>();
+    private Set<String> optionalReactorDependencies = new LinkedHashSet<>();
 
     public record ResourceDir(String directory, boolean filtering) {}
 
@@ -118,6 +133,45 @@ public class ModuleInfo {
 
     public List<String> getExtensionReactorGAs() { return extensionReactorGAs; }
     public void setExtensionReactorGAs(List<String> extensionReactorGAs) { this.extensionReactorGAs = extensionReactorGAs; }
+
+    public List<String> getExtensionParentFirstArtifacts() { return extensionParentFirstArtifacts; }
+    public void setExtensionParentFirstArtifacts(List<String> v) { this.extensionParentFirstArtifacts = v; }
+
+    public List<String> getExtensionRunnerParentFirstArtifacts() { return extensionRunnerParentFirstArtifacts; }
+    public void setExtensionRunnerParentFirstArtifacts(List<String> v) { this.extensionRunnerParentFirstArtifacts = v; }
+
+    public List<String> getExtensionExcludedArtifacts() { return extensionExcludedArtifacts; }
+    public void setExtensionExcludedArtifacts(List<String> v) { this.extensionExcludedArtifacts = v; }
+
+    public List<String> getExtensionLesserPriorityArtifacts() { return extensionLesserPriorityArtifacts; }
+    public void setExtensionLesserPriorityArtifacts(List<String> v) { this.extensionLesserPriorityArtifacts = v; }
+
+    public List<String> getExtensionProvidesCapabilities() { return extensionProvidesCapabilities; }
+    public void setExtensionProvidesCapabilities(List<String> v) { this.extensionProvidesCapabilities = v; }
+
+    public List<String> getExtensionRequiresCapabilities() { return extensionRequiresCapabilities; }
+    public void setExtensionRequiresCapabilities(List<String> v) { this.extensionRequiresCapabilities = v; }
+
+    public boolean isHasQuarkusBuildPlugin() { return hasQuarkusBuildPlugin; }
+    public void setHasQuarkusBuildPlugin(boolean hasQuarkusBuildPlugin) { this.hasQuarkusBuildPlugin = hasQuarkusBuildPlugin; }
+
+    public Map<String, String> getQuarkusBuildProperties() { return quarkusBuildProperties; }
+    public void setQuarkusBuildProperties(Map<String, String> quarkusBuildProperties) { this.quarkusBuildProperties = quarkusBuildProperties; }
+
+    public List<String> getDeploymentClasspath() { return deploymentClasspath; }
+    public void setDeploymentClasspath(List<String> deploymentClasspath) { this.deploymentClasspath = deploymentClasspath; }
+
+    public List<String> getRuntimeExtensionArtifacts() { return runtimeExtensionArtifacts; }
+    public void setRuntimeExtensionArtifacts(List<String> runtimeExtensionArtifacts) { this.runtimeExtensionArtifacts = runtimeExtensionArtifacts; }
+
+    public Map<String, String> getExtensionDevProperties() { return extensionDevProperties; }
+    public void setExtensionDevProperties(Map<String, String> extensionDevProperties) { this.extensionDevProperties = extensionDevProperties; }
+
+    public Set<String> getOptionalClasspathEntries() { return optionalClasspathEntries; }
+    public void setOptionalClasspathEntries(Set<String> optionalClasspathEntries) { this.optionalClasspathEntries = optionalClasspathEntries; }
+
+    public Set<String> getOptionalReactorDependencies() { return optionalReactorDependencies; }
+    public void setOptionalReactorDependencies(Set<String> optionalReactorDependencies) { this.optionalReactorDependencies = optionalReactorDependencies; }
 
     @Override
     public String toString() {
