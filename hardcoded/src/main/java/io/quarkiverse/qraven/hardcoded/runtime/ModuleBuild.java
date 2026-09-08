@@ -231,7 +231,8 @@ public abstract class ModuleBuild {
                             extensionLesserPriorityArtifacts(),
                             extensionProvidesCapabilities(),
                             extensionRequiresCapabilities(),
-                            evaluateSkip(extensionValidationSkipWhen()));
+                            evaluateSkip(extensionValidationSkipWhen()),
+                            deploymentClasspath());
                     recordPhase("ext-descriptor", t);
                 }
 

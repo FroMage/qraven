@@ -24,7 +24,8 @@ public class ExtensionDescriptorHelper {
                                 List<String> lesserPriorityArtifacts,
                                 List<String> providesCapabilities,
                                 List<String> requiresCapabilities,
-                                boolean skipExtensionValidation) {
+                                boolean skipExtensionValidation,
+                                List<String> deploymentClasspath) {
         String deployment = properties.get("deployment-artifact");
         if (deployment == null) {
             throw new RuntimeException("Missing deployment-artifact in extension descriptor properties");
@@ -39,7 +40,7 @@ public class ExtensionDescriptorHelper {
         List<ExtensionDescriptorGenerator.ModelDependency> modelDependencies = parseModelDeps(modelDeps);
 
         ExtensionDescriptorGenerator.DependencyResolver resolver = createResolver(
-                groupId, artifactId, version, classpath, reactorModuleGAs);
+                groupId, artifactId, version, classpath, reactorModuleGAs, deploymentClasspath);
 
         try {
             ExtensionDescriptorGenerator generator = new ExtensionDescriptorGenerator.Builder()
@@ -58,7 +59,7 @@ public class ExtensionDescriptorHelper {
                     .runnerParentFirstArtifacts(runnerParentFirstArtifacts)
                     .excludedArtifacts(excludedArtifacts)
                     .lesserPriorityArtifacts(lesserPriorityArtifacts)
-                    .skipExtensionValidation(true)
+                    .skipExtensionValidation(skipExtensionValidation)
                     .ignoreNotDetectedQuarkusCoreVersion(true)
                     .skipCodestartValidation(true)
                     .modelDependencies(modelDependencies)
@@ -95,7 +96,8 @@ public class ExtensionDescriptorHelper {
 
     private static ExtensionDescriptorGenerator.DependencyResolver createResolver(
             String groupId, String artifactId, String version,
-            List<String> classpath, List<String> reactorModuleGAs) {
+            List<String> classpath, List<String> reactorModuleGAs,
+            List<String> deploymentClasspath) {
 
         List<ExtensionDescriptorGenerator.DepNode> children = new ArrayList<>();
         for (String jarPath : classpath) {
@@ -110,6 +112,18 @@ public class ExtensionDescriptorHelper {
         ExtensionDescriptorGenerator.DepNode rootNode = new ExtensionDescriptorGenerator.DepNode(
                 groupId, artifactId, "", "jar", version, null, children);
 
+        List<ExtensionDescriptorGenerator.DepNode> deploymentChildren = new ArrayList<>();
+        if (deploymentClasspath != null) {
+            for (String jarPath : deploymentClasspath) {
+                GavFromPath gav = parseGavFromM2Path(jarPath);
+                if (gav != null) {
+                    deploymentChildren.add(new ExtensionDescriptorGenerator.DepNode(
+                            gav.groupId, gav.artifactId, "", "jar",
+                            gav.version, Path.of(jarPath), List.of()));
+                }
+            }
+        }
+
         return new ExtensionDescriptorGenerator.DependencyResolver() {
             @Override
             public ExtensionDescriptorGenerator.DepNode resolveRuntimeDependencies() {
@@ -120,7 +134,7 @@ public class ExtensionDescriptorHelper {
             public ExtensionDescriptorGenerator.DepNode collectDeploymentDependencies(ArtifactCoords coords) {
                 return new ExtensionDescriptorGenerator.DepNode(
                         coords.getGroupId(), coords.getArtifactId(), coords.getClassifier(),
-                        coords.getType(), coords.getVersion(), null, List.of());
+                        coords.getType(), coords.getVersion(), null, deploymentChildren);
             }
 
             @Override
