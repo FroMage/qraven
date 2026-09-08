@@ -29,6 +29,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.function.Consumer;
 
 public class DependencyResolver {
 
@@ -36,6 +37,7 @@ public class DependencyResolver {
     private final DefaultRepositorySystemSession session;
     private final List<RemoteRepository> remoteRepos;
     private final Path localRepoPath;
+    private Consumer<String> warningConsumer;
 
     public DependencyResolver() {
         this.localRepoPath = Path.of(System.getProperty("user.home"), ".m2", "repository");
@@ -64,6 +66,18 @@ public class DependencyResolver {
 
     public Path getLocalRepoPath() {
         return localRepoPath;
+    }
+
+    public void setWarningConsumer(Consumer<String> consumer) {
+        this.warningConsumer = consumer;
+    }
+
+    private void warn(String message) {
+        if (warningConsumer != null) {
+            warningConsumer.accept(message);
+        } else {
+            System.err.println(message);
+        }
     }
 
     public record ResolvedArtifact(String groupId, String artifactId, String version, String filePath) {}
@@ -98,7 +112,7 @@ public class DependencyResolver {
             DependencyResult result = repoSystem.resolveDependencies(session, depRequest);
             return toResolvedArtifacts(result);
         } catch (DependencyResolutionException e) {
-            System.err.println("WARNING: Dependency resolution incomplete: " + e.getMessage());
+            warn("WARNING: Dependency resolution incomplete: " + e.getMessage());
             DependencyResult result = e.getResult();
             if (result != null) {
                 return toResolvedArtifacts(result);
@@ -143,7 +157,7 @@ public class DependencyResolver {
                     .map(ar -> ar.getArtifact().getFile().getAbsolutePath())
                     .toList();
         } catch (DependencyResolutionException e) {
-            System.err.println("WARNING: Could not resolve annotation processor " +
+            warn("WARNING: Could not resolve annotation processor " +
                     groupId + ":" + artifactId + ":" + version + ": " + e.getMessage());
             DependencyResult result = e.getResult();
             if (result != null) {

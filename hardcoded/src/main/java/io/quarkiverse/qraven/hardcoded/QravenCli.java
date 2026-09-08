@@ -7,6 +7,7 @@
 //DEPS org.apache.maven.resolver:maven-resolver-transport-http:1.9.18
 //DEPS io.smallrye:jandex:3.5.3
 //DEPS org.jetbrains.kotlin:kotlin-compiler:2.4.10
+//DEPS org.slf4j:slf4j-nop:2.0.17
 //SOURCES BuildFileGenerator.java
 //SOURCES DependencyResolver.java
 //SOURCES LocalRepoModelResolver.java
@@ -67,10 +68,10 @@ public class QravenCli {
         System.out.println();
 
         long totalStart = System.currentTimeMillis();
-        long stepStart = System.currentTimeMillis();
 
         DependencyResolver resolver = new DependencyResolver();
         PomParser parser = new PomParser(projectDir, resolver);
+        parser.setThreads(threads);
         parser.setProgressListener((phase, detail, current, total) -> {
             String msg = switch (phase) {
                 case "scan" -> "Scanning modules... " + current + " found (" + detail + ")";
@@ -82,10 +83,10 @@ public class QravenCli {
         List<ModuleInfo> modules = parser.parseProject();
         System.err.print(ERASE_LINE);
 
-        System.out.println("Parsed " + modules.size() + " modules in " +
-                (System.currentTimeMillis() - stepStart) + "ms");
+        System.out.println("Scanned " + modules.size() + " modules in " + parser.getScanTimeMs() + "ms");
+        System.out.println("Resolved dependencies in " + parser.getResolveTimeMs() + "ms");
 
-        stepStart = System.currentTimeMillis();
+        long stepStart = System.currentTimeMillis();
 
         BuildFileGenerator generator = new BuildFileGenerator(projectDir, outputDir, threads);
         generator.setProgressListener((detail, current, total) ->
@@ -105,7 +106,17 @@ public class QravenCli {
         System.out.println("Packaged build.jar in " + (System.currentTimeMillis() - stepStart) + "ms");
         System.out.println();
 
+        // Print any deferred warnings
+        List<String> warnings = parser.getWarnings();
+        if (!warnings.isEmpty()) {
+            System.err.println();
+            for (String w : warnings) {
+                System.err.println("WARNING: " + w);
+            }
+        }
+
         Path buildJar = outputDir.resolve("build.jar");
+        Path relativeJar = projectDir.relativize(buildJar);
 
         if (buildNative) {
             stepStart = System.currentTimeMillis();
@@ -125,10 +136,10 @@ public class QravenCli {
         System.out.println();
         if (buildNative) {
             System.out.println("To build the project, run:");
-            System.out.println("  JAVA_HOME=$GRAALVM_HOME " + outputDir.resolve("build"));
+            System.out.println("  JAVA_HOME=$GRAALVM_HOME " + projectDir.relativize(outputDir.resolve("build")));
         } else {
             System.out.println("To build the project, run:");
-            System.out.println("  java -jar " + buildJar);
+            System.out.println("  java -jar " + relativeJar);
         }
     }
 

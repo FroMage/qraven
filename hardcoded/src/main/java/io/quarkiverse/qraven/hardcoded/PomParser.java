@@ -24,8 +24,16 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.jar.JarFile;
 import java.util.stream.Collectors;
+import javax.xml.stream.XMLInputFactory;
+import javax.xml.stream.XMLStreamConstants;
+import javax.xml.stream.XMLStreamReader;
 
 public class PomParser {
 
@@ -33,21 +41,44 @@ public class PomParser {
         void update(String phase, String detail, int current, int total);
     }
 
+    private record PomEntry(Path pomFile, Path baseDir) {}
+
     private final Path projectRoot;
     private final DependencyResolver resolver;
-    private final ModelBuilder modelBuilder;
+    private final ThreadLocal<ModelBuilder> threadLocalModelBuilder =
+            ThreadLocal.withInitial(() -> new DefaultModelBuilderFactory().newInstance());
     private final Path localRepoDir;
+    private final ConcurrentLinkedQueue<String> warnings = new ConcurrentLinkedQueue<>();
     private ProgressListener progressListener;
+    private int threads = Runtime.getRuntime().availableProcessors();
+    private long scanTimeMs;
+    private long resolveTimeMs;
 
     public PomParser(Path projectRoot, DependencyResolver resolver) {
         this.projectRoot = projectRoot;
         this.resolver = resolver;
-        this.modelBuilder = new DefaultModelBuilderFactory().newInstance();
         this.localRepoDir = resolver.getLocalRepoPath();
+        resolver.setWarningConsumer(warnings::add);
     }
 
     public void setProgressListener(ProgressListener listener) {
         this.progressListener = listener;
+    }
+
+    public void setThreads(int threads) {
+        this.threads = threads;
+    }
+
+    public List<String> getWarnings() {
+        return new ArrayList<>(warnings);
+    }
+
+    public long getScanTimeMs() {
+        return scanTimeMs;
+    }
+
+    public long getResolveTimeMs() {
+        return resolveTimeMs;
     }
 
     private void progress(String phase, String detail, int current, int total) {
@@ -57,10 +88,57 @@ public class PomParser {
     }
 
     public List<ModuleInfo> parseProject() {
-        Map<String, Model> effectiveModels = new LinkedHashMap<>();
-        List<ModuleInfo> modules = new ArrayList<>();
+        // Phase 1: Quick discover all pom paths
+        long scanStart = System.currentTimeMillis();
+        List<PomEntry> pomEntries = new ArrayList<>();
+        quickDiscoverPoms(projectRoot.resolve("pom.xml"), projectRoot, pomEntries);
 
-        discoverModules(projectRoot.resolve("pom.xml"), projectRoot, modules, effectiveModels);
+        // Phase 2: Build effective models in parallel
+        int totalPoms = pomEntries.size();
+        ModuleInfo[] moduleInfos = new ModuleInfo[totalPoms];
+        Model[] modelArray = new Model[totalPoms];
+        AtomicInteger scanCounter = new AtomicInteger();
+
+        ExecutorService executor = Executors.newFixedThreadPool(threads);
+        try {
+            List<Future<?>> futures = new ArrayList<>(totalPoms);
+            for (int i = 0; i < totalPoms; i++) {
+                final int idx = i;
+                PomEntry entry = pomEntries.get(idx);
+                futures.add(executor.submit(() -> {
+                    Model model = buildEffectiveModel(entry.pomFile);
+                    if (model != null) {
+                        ModuleInfo info = toModuleInfo(model, entry.baseDir);
+                        moduleInfos[idx] = info;
+                        modelArray[idx] = model;
+                    }
+                    int done = scanCounter.incrementAndGet();
+                    String name = moduleInfos[idx] != null
+                            ? moduleInfos[idx].getArtifactId()
+                            : entry.baseDir.getFileName().toString();
+                    progress("scan", name, done, totalPoms);
+                }));
+            }
+            for (Future<?> f : futures) {
+                try { f.get(); } catch (Exception e) { /* errors logged in buildEffectiveModel */ }
+            }
+        } finally {
+            executor.shutdown();
+        }
+
+        // Assemble results preserving discovery order
+        List<ModuleInfo> modules = new ArrayList<>();
+        Map<String, Model> effectiveModels = new LinkedHashMap<>();
+        for (int i = 0; i < totalPoms; i++) {
+            if (moduleInfos[i] != null && modelArray[i] != null) {
+                modules.add(moduleInfos[i]);
+                effectiveModels.put(
+                        moduleInfos[i].getGroupId() + ":" + moduleInfos[i].getArtifactId(),
+                        modelArray[i]);
+            }
+        }
+
+        scanTimeMs = System.currentTimeMillis() - scanStart;
 
         Set<String> reactorGAs = new LinkedHashSet<>();
         Map<String, String> gaToArtifactId = new LinkedHashMap<>();
@@ -70,16 +148,20 @@ public class PomParser {
             gaToArtifactId.put(ga, m.getArtifactId());
         }
 
+        // Identify skipped modules (check once, cache result)
+        Set<String> skipSet = new LinkedHashSet<>();
         Map<String, List<String>> skippedModuleReactorDeps = new LinkedHashMap<>();
         for (ModuleInfo m : modules) {
             if (shouldSkipModule(m, effectiveModels)) {
+                skipSet.add(m.getArtifactId());
                 Model model = effectiveModels.get(m.getGroupId() + ":" + m.getArtifactId());
                 if (model != null && model.getDependencies() != null) {
                     List<String> deps = new ArrayList<>();
                     for (Dependency dep : model.getDependencies()) {
                         String scope = dep.getScope() != null ? dep.getScope() : "compile";
                         String ga = dep.getGroupId() + ":" + dep.getArtifactId();
-                        if (("compile".equals(scope) || "provided".equals(scope)) && reactorGAs.contains(ga)) {
+                        if (("compile".equals(scope) || "provided".equals(scope))
+                                && reactorGAs.contains(ga)) {
                             deps.add(gaToArtifactId.get(ga));
                         }
                     }
@@ -88,39 +170,55 @@ public class PomParser {
             }
         }
 
-        modules.removeIf(m -> shouldSkipModule(m, effectiveModels));
+        modules.removeIf(m -> skipSet.contains(m.getArtifactId()));
 
-        int resolveIdx = 0;
-        for (ModuleInfo info : modules) {
-            resolveIdx++;
-            Model model = effectiveModels.get(info.getGroupId() + ":" + info.getArtifactId());
-            if (model == null) continue;
+        // Phase 3: Resolve dependencies in parallel
+        long resolveStart = System.currentTimeMillis();
+        AtomicInteger resolveCounter = new AtomicInteger();
+        int totalModules = modules.size();
 
-            extractCompilerConfig(model, info);
+        executor = Executors.newFixedThreadPool(threads);
+        try {
+            List<Future<?>> futures = new ArrayList<>(totalModules);
+            for (ModuleInfo info : modules) {
+                futures.add(executor.submit(() -> {
+                    Model model = effectiveModels.get(
+                            info.getGroupId() + ":" + info.getArtifactId());
+                    if (model == null) return;
 
-            if ("pom".equals(info.getPackaging())) {
-                progress("resolve", info.getArtifactId(), resolveIdx, modules.size());
-                continue;
-            }
+                    extractCompilerConfig(model, info);
 
-            progress("resolve", info.getArtifactId(), resolveIdx, modules.size());
-            resolveDependencies(model, info, reactorGAs);
+                    if (!"pom".equals(info.getPackaging())) {
+                        resolveDependencies(model, info, reactorGAs);
 
-            List<String> extraDeps = new ArrayList<>();
-            for (String depId : new ArrayList<>(info.getReactorDependencies())) {
-                if (skippedModuleReactorDeps.containsKey(depId)) {
-                    for (String transitiveDep : skippedModuleReactorDeps.get(depId)) {
-                        if (!info.getReactorDependencies().contains(transitiveDep)
-                                && !extraDeps.contains(transitiveDep)
-                                && !skippedModuleReactorDeps.containsKey(transitiveDep)) {
-                            extraDeps.add(transitiveDep);
+                        List<String> extraDeps = new ArrayList<>();
+                        for (String depId : new ArrayList<>(info.getReactorDependencies())) {
+                            if (skippedModuleReactorDeps.containsKey(depId)) {
+                                for (String transitiveDep : skippedModuleReactorDeps.get(depId)) {
+                                    if (!info.getReactorDependencies().contains(transitiveDep)
+                                            && !extraDeps.contains(transitiveDep)
+                                            && !skippedModuleReactorDeps.containsKey(transitiveDep)) {
+                                        extraDeps.add(transitiveDep);
+                                    }
+                                }
+                                info.getReactorDependencies().remove(depId);
+                            }
                         }
+                        info.getReactorDependencies().addAll(extraDeps);
                     }
-                    info.getReactorDependencies().remove(depId);
-                }
+
+                    int done = resolveCounter.incrementAndGet();
+                    progress("resolve", info.getArtifactId(), done, totalModules);
+                }));
             }
-            info.getReactorDependencies().addAll(extraDeps);
+            for (Future<?> f : futures) {
+                try { f.get(); } catch (Exception e) { /* errors logged */ }
+            }
+        } finally {
+            executor.shutdown();
         }
+
+        resolveTimeMs = System.currentTimeMillis() - resolveStart;
 
         List<String> allReactorGAsList = new ArrayList<>(reactorGAs);
         for (ModuleInfo info : modules) {
@@ -141,6 +239,71 @@ public class PomParser {
             }
         }
 
+        return modules;
+    }
+
+    private void quickDiscoverPoms(Path pomFile, Path baseDir, List<PomEntry> result) {
+        result.add(new PomEntry(pomFile, baseDir));
+        List<String> moduleNames = readModuleNames(pomFile);
+        for (String moduleName : moduleNames) {
+            Path moduleDir = baseDir.resolve(moduleName);
+            Path modulePom = moduleDir.resolve("pom.xml");
+            if (Files.exists(modulePom)) {
+                quickDiscoverPoms(modulePom, moduleDir, result);
+            } else {
+                warnings.add("Module POM not found: " + modulePom);
+            }
+        }
+    }
+
+    private List<String> readModuleNames(Path pomFile) {
+        List<String> modules = new ArrayList<>();
+        try (InputStream is = Files.newInputStream(pomFile)) {
+            XMLInputFactory factory = XMLInputFactory.newInstance();
+            factory.setProperty(XMLInputFactory.IS_SUPPORTING_EXTERNAL_ENTITIES, false);
+            XMLStreamReader reader = factory.createXMLStreamReader(is);
+            try {
+                boolean inModules = false;
+                boolean inModule = false;
+                StringBuilder moduleText = null;
+                while (reader.hasNext()) {
+                    int event = reader.next();
+                    switch (event) {
+                        case XMLStreamConstants.START_ELEMENT -> {
+                            String name = reader.getLocalName();
+                            if ("modules".equals(name)) {
+                                inModules = true;
+                            } else if (inModules && "module".equals(name)) {
+                                inModule = true;
+                                moduleText = new StringBuilder();
+                            }
+                        }
+                        case XMLStreamConstants.END_ELEMENT -> {
+                            String name = reader.getLocalName();
+                            if ("module".equals(name) && inModule) {
+                                String text = moduleText.toString().trim();
+                                if (!text.isEmpty() && !modules.contains(text)) {
+                                    modules.add(text);
+                                }
+                                inModule = false;
+                                moduleText = null;
+                            } else if ("modules".equals(name)) {
+                                inModules = false;
+                            }
+                        }
+                        case XMLStreamConstants.CHARACTERS, XMLStreamConstants.CDATA -> {
+                            if (inModule && moduleText != null) {
+                                moduleText.append(reader.getText());
+                            }
+                        }
+                    }
+                }
+            } finally {
+                reader.close();
+            }
+        } catch (Exception e) {
+            warnings.add("Failed to read modules from " + pomFile + ": " + e.getMessage());
+        }
         return modules;
     }
 
@@ -247,7 +410,7 @@ public class PomParser {
 
     private boolean shouldSkipModule(ModuleInfo info, Map<String, Model> effectiveModels) {
         if ("maven-plugin".equals(info.getPackaging())) {
-            System.out.println("  Skipping maven-plugin module: " + info.getArtifactId());
+            warnings.add("Skipping maven-plugin module: " + info.getArtifactId());
             return true;
         }
 
@@ -255,30 +418,6 @@ public class PomParser {
         if (model == null || model.getBuild() == null) return false;
 
         return false;
-    }
-
-    private void discoverModules(Path pomFile, Path baseDir, List<ModuleInfo> modules,
-                                  Map<String, Model> effectiveModels) {
-        Model model = buildEffectiveModel(pomFile);
-        if (model == null) {
-            System.err.println("WARNING: Failed to build effective model for " + pomFile);
-            return;
-        }
-
-        ModuleInfo info = toModuleInfo(model, baseDir);
-        modules.add(info);
-        effectiveModels.put(info.getGroupId() + ":" + info.getArtifactId(), model);
-        progress("scan", info.getArtifactId(), modules.size(), 0);
-
-        for (String moduleName : model.getModules()) {
-            Path moduleDir = baseDir.resolve(moduleName);
-            Path modulePom = moduleDir.resolve("pom.xml");
-            if (Files.exists(modulePom)) {
-                discoverModules(modulePom, moduleDir, modules, effectiveModels);
-            } else {
-                System.err.println("WARNING: Module POM not found: " + modulePom);
-            }
-        }
     }
 
     private Model buildEffectiveModel(Path pomFile) {
@@ -292,10 +431,11 @@ public class PomParser {
             request.setUserProperties(new Properties());
             request.setModelResolver(new LocalRepoModelResolver(localRepoDir, resolver));
 
-            ModelBuildingResult result = modelBuilder.build(request);
+            ModelBuilder builder = threadLocalModelBuilder.get();
+            ModelBuildingResult result = builder.build(request);
             return result.getEffectiveModel();
         } catch (ModelBuildingException e) {
-            System.err.println("WARNING: Model building problems for " + pomFile + ": " + e.getMessage());
+            warnings.add("Model building problems for " + pomFile + ": " + e.getMessage());
             try {
                 return e.getResult() != null ? e.getResult().getEffectiveModel() : null;
             } catch (Exception ex) {
