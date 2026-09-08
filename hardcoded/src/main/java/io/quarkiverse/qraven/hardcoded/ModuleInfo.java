@@ -44,6 +44,9 @@ public class ModuleInfo {
     private List<String> extensionProvidesCapabilities = new ArrayList<>();
     private List<String> extensionRequiresCapabilities = new ArrayList<>();
     private boolean hasQuarkusBuildPlugin;
+    private String quarkusBuildSkipWhen;
+    private boolean hasGenerateCodeGoal;
+    private String generateCodeSkipWhen;
     private Map<String, String> quarkusBuildProperties = new LinkedHashMap<>();
     private List<String> deploymentClasspath = new ArrayList<>();
     private List<String> runtimeExtensionArtifacts = new ArrayList<>();
@@ -154,6 +157,15 @@ public class ModuleInfo {
 
     public boolean isHasQuarkusBuildPlugin() { return hasQuarkusBuildPlugin; }
     public void setHasQuarkusBuildPlugin(boolean hasQuarkusBuildPlugin) { this.hasQuarkusBuildPlugin = hasQuarkusBuildPlugin; }
+
+    public String getQuarkusBuildSkipWhen() { return quarkusBuildSkipWhen; }
+    public void setQuarkusBuildSkipWhen(String quarkusBuildSkipWhen) { this.quarkusBuildSkipWhen = quarkusBuildSkipWhen; }
+
+    public boolean isHasGenerateCodeGoal() { return hasGenerateCodeGoal; }
+    public void setHasGenerateCodeGoal(boolean hasGenerateCodeGoal) { this.hasGenerateCodeGoal = hasGenerateCodeGoal; }
+
+    public String getGenerateCodeSkipWhen() { return generateCodeSkipWhen; }
+    public void setGenerateCodeSkipWhen(String generateCodeSkipWhen) { this.generateCodeSkipWhen = generateCodeSkipWhen; }
 
     public Map<String, String> getQuarkusBuildProperties() { return quarkusBuildProperties; }
     public void setQuarkusBuildProperties(Map<String, String> quarkusBuildProperties) { this.quarkusBuildProperties = quarkusBuildProperties; }

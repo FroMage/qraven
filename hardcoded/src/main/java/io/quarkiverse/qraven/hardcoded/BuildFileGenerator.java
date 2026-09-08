@@ -20,6 +20,10 @@ import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.jar.Attributes;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
@@ -63,14 +67,37 @@ public class BuildFileGenerator {
         }
 
         int total = modules.size() + 1;
-        for (int i = 0; i < modules.size(); i++) {
-            ModuleInfo module = modules.get(i);
-            String className = sanitizeClassName(module.getArtifactId());
-            Path sourceFile = srcDir.resolve("Build_" + className + ".java");
-            Files.writeString(sourceFile, generateModuleClass(module, className));
-            if (progressListener != null) {
-                progressListener.update(module.getArtifactId(), i + 1, total);
+        AtomicInteger progress = new AtomicInteger();
+
+        ExecutorService executor = Executors.newFixedThreadPool(threads);
+        try {
+            List<Future<?>> futures = new ArrayList<>(modules.size());
+            for (ModuleInfo module : modules) {
+                futures.add(executor.submit(() -> {
+                    String className = sanitizeClassName(module.getArtifactId());
+                    String source = generateModuleClass(module, className);
+                    Path sourceFile = srcDir.resolve("Build_" + className + ".java");
+                    try {
+                        Files.writeString(sourceFile, source);
+                    } catch (IOException e) {
+                        throw new RuntimeException(e);
+                    }
+                    int done = progress.incrementAndGet();
+                    if (progressListener != null) {
+                        progressListener.update(module.getArtifactId(), done, total);
+                    }
+                }));
             }
+            for (Future<?> f : futures) {
+                try {
+                    f.get();
+                } catch (Exception e) {
+                    if (e.getCause() instanceof IOException ioe) throw ioe;
+                    throw new RuntimeException(e);
+                }
+            }
+        } finally {
+            executor.shutdown();
         }
 
         Path mainFile = srcDir.resolve("Build.java");
@@ -293,7 +320,13 @@ public class BuildFileGenerator {
 
         // quarkus build plugin
         sb.append("    @Override public boolean hasQuarkusBuildPlugin() { return ")
-                .append(module.isHasQuarkusBuildPlugin()).append("; }\n\n");
+                .append(module.isHasQuarkusBuildPlugin()).append("; }\n");
+        sb.append("    @Override public String quarkusBuildSkipWhen() { return ")
+                .append(quoteOrNull(module.getQuarkusBuildSkipWhen())).append("; }\n");
+        sb.append("    @Override public boolean hasGenerateCodeGoal() { return ")
+                .append(module.isHasGenerateCodeGoal()).append("; }\n");
+        sb.append("    @Override public String generateCodeSkipWhen() { return ")
+                .append(quoteOrNull(module.getGenerateCodeSkipWhen())).append("; }\n\n");
 
         // quarkusBuildProperties
         Map<String, String> qbProps = module.getQuarkusBuildProperties();
@@ -364,7 +397,15 @@ public class BuildFileGenerator {
         sb.append("        boolean alsoMake = false;\n\n");
 
         sb.append("        for (int i = 0; i < args.length; i++) {\n");
-        sb.append("            if ((\"--threads\".equals(args[i]) || \"-t\".equals(args[i])) && i + 1 < args.length) {\n");
+        sb.append("            if (args[i].startsWith(\"-D\")) {\n");
+        sb.append("                String prop = args[i].substring(2);\n");
+        sb.append("                int eq = prop.indexOf('=');\n");
+        sb.append("                if (eq >= 0) {\n");
+        sb.append("                    System.setProperty(prop.substring(0, eq), prop.substring(eq + 1));\n");
+        sb.append("                } else {\n");
+        sb.append("                    System.setProperty(prop, \"true\");\n");
+        sb.append("                }\n");
+        sb.append("            } else if ((\"--threads\".equals(args[i]) || \"-t\".equals(args[i])) && i + 1 < args.length) {\n");
         sb.append("                threads = Integer.parseInt(args[++i]);\n");
         sb.append("            } else if ((\"--project\".equals(args[i]) || \"-p\".equals(args[i])) && i + 1 < args.length) {\n");
         sb.append("                projectRoot = java.nio.file.Path.of(args[++i]).toAbsolutePath().normalize();\n");

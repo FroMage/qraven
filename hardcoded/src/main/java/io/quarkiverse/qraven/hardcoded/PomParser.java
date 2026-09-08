@@ -646,13 +646,43 @@ public class PomParser {
         if (model.getBuild() == null) return;
         for (Plugin plugin : model.getBuild().getPlugins()) {
             if (!"quarkus-maven-plugin".equals(plugin.getArtifactId())) continue;
+
+            Xpp3Dom pluginConfig = (Xpp3Dom) plugin.getConfiguration();
+
             for (PluginExecution exec : plugin.getExecutions()) {
+                Xpp3Dom execConfig = (Xpp3Dom) exec.getConfiguration();
+
                 if (exec.getGoals().contains("build")) {
                     info.setHasQuarkusBuildPlugin(true);
-                    return;
+                    // BuildMojo field is "skip", property "quarkus.build.skip"
+                    String skip = extractConfigValue("skip", execConfig, pluginConfig);
+                    info.setQuarkusBuildSkipWhen(skip != null ? skip : "${quarkus.build.skip}");
+                }
+                if (exec.getGoals().contains("generate-code")) {
+                    info.setHasGenerateCodeGoal(true);
+                    // GenerateCodeMojo field is "skipSourceGeneration", property "quarkus.generate-code.skip"
+                    String skip = extractConfigValue("skipSourceGeneration", execConfig, pluginConfig);
+                    info.setGenerateCodeSkipWhen(skip != null ? skip : "${quarkus.generate-code.skip}");
                 }
             }
+            return;
         }
+    }
+
+    private String extractConfigValue(String elementName, Xpp3Dom execConfig, Xpp3Dom pluginConfig) {
+        if (execConfig != null) {
+            Xpp3Dom node = execConfig.getChild(elementName);
+            if (node != null && node.getValue() != null && !node.getValue().isBlank()) {
+                return node.getValue();
+            }
+        }
+        if (pluginConfig != null) {
+            Xpp3Dom node = pluginConfig.getChild(elementName);
+            if (node != null && node.getValue() != null && !node.getValue().isBlank()) {
+                return node.getValue();
+            }
+        }
+        return null;
     }
 
     private void collectQuarkusBuildMetadata(Model model, ModuleInfo info, Set<String> reactorGAs,

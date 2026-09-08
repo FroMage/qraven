@@ -102,6 +102,9 @@ public abstract class ModuleBuild {
     public abstract List<String> extensionProvidesCapabilities();
     public abstract List<String> extensionRequiresCapabilities();
     public abstract boolean hasQuarkusBuildPlugin();
+    public abstract String quarkusBuildSkipWhen();
+    public abstract boolean hasGenerateCodeGoal();
+    public abstract String generateCodeSkipWhen();
     public abstract Map<String, String> quarkusBuildProperties();
     public abstract List<String> deploymentClasspath();
     public abstract List<String> runtimeExtensionArtifacts();
@@ -222,7 +225,7 @@ public abstract class ModuleBuild {
                 }
 
                 Path generatedProtoDir = null;
-                if (hasProtobufSources()) {
+                if (hasProtobufSources() && !evaluateSkip(generateCodeSkipWhen())) {
                     if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "protobuf", 0);
                     generatedProtoDir = generatedProtobufDir();
                     runtime.compileProtobuf(protoSourceDir(), generatedProtoDir,
@@ -262,7 +265,7 @@ public abstract class ModuleBuild {
                 if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "install", 0);
                 runtime.install(jarFile(), pomFile(), groupId(), artifactId(), version(), packaging());
 
-                if (hasQuarkusBuildPlugin()) {
+                if (hasQuarkusBuildPlugin() && !evaluateSkip(quarkusBuildSkipWhen())) {
                     if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "quarkus-build", 0);
                     QuarkusBuildHelper.run(this, dependencies);
                 }
@@ -350,5 +353,15 @@ public abstract class ModuleBuild {
             }
         }
         return map;
+    }
+
+    static boolean evaluateSkip(String expression) {
+        if (expression == null || expression.isEmpty()) return false;
+        if (expression.startsWith("${") && expression.endsWith("}")) {
+            String propName = expression.substring(2, expression.length() - 1);
+            String value = System.getProperty(propName);
+            return value != null && !"false".equalsIgnoreCase(value);
+        }
+        return "true".equalsIgnoreCase(expression);
     }
 }
