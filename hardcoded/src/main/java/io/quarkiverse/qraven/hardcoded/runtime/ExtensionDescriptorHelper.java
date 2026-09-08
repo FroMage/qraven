@@ -23,7 +23,8 @@ public class ExtensionDescriptorHelper {
                                 List<String> excludedArtifacts,
                                 List<String> lesserPriorityArtifacts,
                                 List<String> providesCapabilities,
-                                List<String> requiresCapabilities) {
+                                List<String> requiresCapabilities,
+                                boolean skipExtensionValidation) {
         String deployment = properties.get("deployment-artifact");
         if (deployment == null) {
             throw new RuntimeException("Missing deployment-artifact in extension descriptor properties");
@@ -57,7 +58,7 @@ public class ExtensionDescriptorHelper {
                     .runnerParentFirstArtifacts(runnerParentFirstArtifacts)
                     .excludedArtifacts(excludedArtifacts)
                     .lesserPriorityArtifacts(lesserPriorityArtifacts)
-                    .skipExtensionValidation(true)
+                    .skipExtensionValidation(skipExtensionValidation)
                     .ignoreNotDetectedQuarkusCoreVersion(true)
                     .skipCodestartValidation(true)
                     .modelDependencies(modelDependencies)

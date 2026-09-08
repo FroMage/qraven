@@ -130,7 +130,9 @@ public class BuildFileGenerator {
         sb.append("    @Override public boolean protobufUsesGrpc() { return ").append(module.isProtobufUsesGrpc()).append("; }\n");
         sb.append("    @Override public boolean protobufUsesMutiny() { return ").append(module.isProtobufUsesMutiny()).append("; }\n");
         sb.append("    @Override public boolean needsJandexIndex() { return ").append(module.isNeedsJandexIndex()).append("; }\n");
-        sb.append("    @Override public boolean hasExtensionPlugin() { return ").append(module.isHasExtensionPlugin()).append("; }\n\n");
+        sb.append("    @Override public boolean hasExtensionPlugin() { return ").append(module.isHasExtensionPlugin()).append("; }\n");
+        sb.append("    @Override public String extensionValidationSkipWhen() { return ")
+                .append(quoteOrNull(module.getExtensionValidationSkipWhen())).append("; }\n\n");
 
         // resourceDirs
         sb.append("    @Override\n");

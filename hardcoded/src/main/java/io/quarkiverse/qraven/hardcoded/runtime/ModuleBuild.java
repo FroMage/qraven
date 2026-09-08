@@ -88,6 +88,7 @@ public abstract class ModuleBuild {
     public abstract List<String> moduleDependencyIds();
     public abstract List<String> optionalModuleDependencyIds();
     public abstract boolean hasExtensionPlugin();
+    public abstract String extensionValidationSkipWhen();
     public abstract Map<String, String> extensionDescriptorProperties();
     public abstract String extensionProjectName();
     public abstract String extensionProjectDescription();
@@ -221,7 +222,8 @@ public abstract class ModuleBuild {
                             extensionExcludedArtifacts(),
                             extensionLesserPriorityArtifacts(),
                             extensionProvidesCapabilities(),
-                            extensionRequiresCapabilities());
+                            extensionRequiresCapabilities(),
+                            evaluateSkip(extensionValidationSkipWhen()));
                 }
 
                 Path generatedProtoDir = null;

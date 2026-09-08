@@ -580,6 +580,7 @@ public class PomParser {
         for (Plugin plugin : model.getBuild().getPlugins()) {
             if (!"quarkus-extension-maven-plugin".equals(plugin.getArtifactId())) continue;
 
+            Xpp3Dom pluginConfig = (Xpp3Dom) plugin.getConfiguration();
             boolean hasDescriptorGoal = false;
             for (PluginExecution exec : plugin.getExecutions()) {
                 if (exec.getGoals().contains("extension-descriptor")) {
@@ -589,6 +590,9 @@ public class PomParser {
                     if (execConfig != null) {
                         extractExtensionConfig(execConfig, info);
                     }
+
+                    String skip = extractConfigValue("skipExtensionValidation", execConfig, pluginConfig);
+                    info.setExtensionValidationSkipWhen(skip != null ? skip : "${skipExtensionValidation}");
                     break;
                 }
             }
@@ -597,9 +601,8 @@ public class PomParser {
             info.setHasExtensionPlugin(true);
 
             if (info.getExtensionDescriptorProperties().isEmpty()) {
-                Xpp3Dom globalConfig = (Xpp3Dom) plugin.getConfiguration();
-                if (globalConfig != null) {
-                    extractExtensionConfig(globalConfig, info);
+                if (pluginConfig != null) {
+                    extractExtensionConfig(pluginConfig, info);
                 }
             }
 

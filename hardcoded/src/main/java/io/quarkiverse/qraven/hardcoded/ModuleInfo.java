@@ -30,6 +30,7 @@ public class ModuleInfo {
     private boolean protobufUsesGrpc;
     private boolean protobufUsesMutiny;
     private boolean hasExtensionPlugin;
+    private String extensionValidationSkipWhen;
     private Map<String, String> extensionDescriptorProperties = new LinkedHashMap<>();
     private String extensionProjectName;
     private String extensionProjectDescription;
@@ -115,6 +116,9 @@ public class ModuleInfo {
 
     public boolean isHasExtensionPlugin() { return hasExtensionPlugin; }
     public void setHasExtensionPlugin(boolean hasExtensionPlugin) { this.hasExtensionPlugin = hasExtensionPlugin; }
+
+    public String getExtensionValidationSkipWhen() { return extensionValidationSkipWhen; }
+    public void setExtensionValidationSkipWhen(String v) { this.extensionValidationSkipWhen = v; }
 
     public Map<String, String> getExtensionDescriptorProperties() { return extensionDescriptorProperties; }
     public void setExtensionDescriptorProperties(Map<String, String> extensionDescriptorProperties) { this.extensionDescriptorProperties = extensionDescriptorProperties; }
