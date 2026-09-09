@@ -132,9 +132,11 @@ public class ExtensionDescriptorHelper {
 
             @Override
             public ExtensionDescriptorGenerator.DepNode collectDeploymentDependencies(ArtifactCoords coords) {
+                List<ExtensionDescriptorGenerator.DepNode> allDeps = new ArrayList<>(children);
+                allDeps.addAll(deploymentChildren);
                 return new ExtensionDescriptorGenerator.DepNode(
                         coords.getGroupId(), coords.getArtifactId(), coords.getClassifier(),
-                        coords.getType(), coords.getVersion(), null, deploymentChildren);
+                        coords.getType(), coords.getVersion(), null, allDeps);
             }
 
             @Override
