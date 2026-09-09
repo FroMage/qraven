@@ -347,10 +347,22 @@ public class BuildRuntime {
         }
 
         if (!annotationProcessorPaths.isEmpty()) {
-            options.add("-processorpath");
-            options.add(String.join(File.pathSeparator, annotationProcessorPaths));
+            List<File> apFiles = annotationProcessorPaths.stream()
+                    .map(File::new)
+                    .filter(File::exists)
+                    .toList();
+            try {
+                fileManager.setLocation(StandardLocation.ANNOTATION_PROCESSOR_PATH, apFiles);
+            } catch (IOException e) {
+                throw new RuntimeException("Failed to set annotation processor path", e);
+            }
         } else {
             options.add("-proc:none");
+            try {
+                fileManager.setLocation(StandardLocation.ANNOTATION_PROCESSOR_PATH, List.of());
+            } catch (IOException e) {
+                // best effort clear
+            }
         }
 
         for (int i = 0; i < compilerArgs.size(); i++) {

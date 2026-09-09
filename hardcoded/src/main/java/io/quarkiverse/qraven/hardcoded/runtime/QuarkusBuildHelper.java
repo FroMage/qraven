@@ -244,15 +244,14 @@ public class QuarkusBuildHelper {
                     && "grpc-core".equals(gav.artifactId)) {
                 grpcVersion = gav.version;
             }
+            if (quarkusGrpcVersion == null && "io.quarkus".equals(gav.groupId)
+                    && "quarkus-grpc-protoc-plugin".equals(gav.artifactId)) {
+                quarkusGrpcVersion = gav.version;
+            }
         }
 
         if (quarkusGrpcVersion == null) {
-            for (ModuleBuild dep : reactorDeps) {
-                if ("quarkus-grpc-protoc-plugin".equals(dep.artifactId())) {
-                    quarkusGrpcVersion = dep.version();
-                    break;
-                }
-            }
+            quarkusGrpcVersion = findProtocPluginVersionInReactorDeps(reactorDeps, new HashSet<>());
         }
 
         if (protocVersion != null) {
@@ -319,6 +318,18 @@ public class QuarkusBuildHelper {
             return null;
         }
         return osName + "-" + archName;
+    }
+
+    private static String findProtocPluginVersionInReactorDeps(List<ModuleBuild> deps, Set<String> visited) {
+        for (ModuleBuild dep : deps) {
+            if (!visited.add(dep.artifactId())) continue;
+            if ("quarkus-grpc-protoc-plugin".equals(dep.artifactId())) {
+                return dep.version();
+            }
+            String found = findProtocPluginVersionInReactorDeps(dep.getDependencies(), visited);
+            if (found != null) return found;
+        }
+        return null;
     }
 
     private record GAV(String groupId, String artifactId, String version) {}
