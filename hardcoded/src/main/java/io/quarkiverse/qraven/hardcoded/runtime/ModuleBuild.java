@@ -254,21 +254,23 @@ public abstract class ModuleBuild {
                     recordPhase("kotlin", t);
                 }
 
-                if (hasJavaSources() || generatedProtoDir != null) {
+                boolean hasKotlinJava = hasKotlinSources() && hasJavaInKotlinDir();
+                if (hasJavaSources() || hasKotlinJava || generatedProtoDir != null) {
                     int sourceCount = countSources();
                     if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "compile", sourceCount);
                     t = System.currentTimeMillis();
+                    List<Path> extraDirs = new ArrayList<>();
                     if (generatedProtoDir != null) {
-                        Path javaOut = generatedProtoDir.resolve("java");
-                        Path grpcOut = generatedProtoDir.resolve("grpc-java");
-                        Path mutinyOut = generatedProtoDir.resolve("quarkus-grpc");
-                        runtime.compile(sourceDir(), classesDir(), fullClasspath,
-                                resolvedAnnotationProcessorPaths(), compilerArgs(),
-                                javaOut, grpcOut, mutinyOut);
-                    } else {
-                        runtime.compile(sourceDir(), classesDir(), fullClasspath,
-                                resolvedAnnotationProcessorPaths(), compilerArgs());
+                        extraDirs.add(generatedProtoDir.resolve("java"));
+                        extraDirs.add(generatedProtoDir.resolve("grpc-java"));
+                        extraDirs.add(generatedProtoDir.resolve("quarkus-grpc"));
                     }
+                    if (hasKotlinJava) {
+                        extraDirs.add(kotlinSourceDir());
+                    }
+                    runtime.compile(sourceDir(), classesDir(), fullClasspath,
+                            resolvedAnnotationProcessorPaths(), compilerArgs(),
+                            extraDirs.toArray(new Path[0]));
                     recordPhase("compile", t);
                 }
 
@@ -365,6 +367,16 @@ public abstract class ModuleBuild {
 
     public Path kotlinSourceDir() {
         return runtime.getProjectRoot().resolve(baseDir()).resolve("src/main/kotlin");
+    }
+
+    private boolean hasJavaInKotlinDir() {
+        Path kotlinDir = kotlinSourceDir();
+        if (!Files.isDirectory(kotlinDir)) return false;
+        try (var stream = Files.walk(kotlinDir)) {
+            return stream.anyMatch(p -> p.toString().endsWith(".java"));
+        } catch (IOException e) {
+            return false;
+        }
     }
 
     public Path protoSourceDir() {

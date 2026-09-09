@@ -349,6 +349,8 @@ public class BuildRuntime {
         if (!annotationProcessorPaths.isEmpty()) {
             options.add("-processorpath");
             options.add(String.join(File.pathSeparator, annotationProcessorPaths));
+        } else {
+            options.add("-proc:none");
         }
 
         for (int i = 0; i < compilerArgs.size(); i++) {
@@ -542,32 +544,36 @@ public class BuildRuntime {
                 Path versionDir = versions.filter(Files::isDirectory).findFirst().orElse(null);
                 if (versionDir == null) return null;
                 String ver = versionDir.getFileName().toString();
-                Path pluginJar = versionDir.resolve("quarkus-grpc-protoc-plugin-" + ver + ".jar");
+                Path shadedJar = versionDir.resolve("quarkus-grpc-protoc-plugin-" + ver + "-shaded.jar");
+                Path pluginJar = Files.exists(shadedJar) ? shadedJar
+                        : versionDir.resolve("quarkus-grpc-protoc-plugin-" + ver + ".jar");
                 if (!Files.exists(pluginJar)) return null;
 
                 List<String> pluginCp = new ArrayList<>();
                 pluginCp.add(pluginJar.toString());
 
-                Path jprotocBase = m2.resolve("com/salesforce/servicelibs/jprotoc");
-                if (Files.isDirectory(jprotocBase)) {
-                    try (var jVers = Files.list(jprotocBase)) {
-                        jVers.filter(Files::isDirectory).findFirst().ifPresent(jv -> {
-                            String jver = jv.getFileName().toString();
-                            Path jjar = jv.resolve("jprotoc-" + jver + ".jar");
-                            if (Files.exists(jjar)) pluginCp.add(jjar.toString());
-                        });
+                if (!pluginJar.equals(shadedJar)) {
+                    Path jprotocBase = m2.resolve("com/salesforce/servicelibs/jprotoc");
+                    if (Files.isDirectory(jprotocBase)) {
+                        try (var jVers = Files.list(jprotocBase)) {
+                            jVers.filter(Files::isDirectory).findFirst().ifPresent(jv -> {
+                                String jver = jv.getFileName().toString();
+                                Path jjar = jv.resolve("jprotoc-" + jver + ".jar");
+                                if (Files.exists(jjar)) pluginCp.add(jjar.toString());
+                            });
+                        }
                     }
-                }
 
-                for (String cp : classpath) {
-                    if (cp.contains("protobuf-java") && !cp.contains("util")) {
-                        pluginCp.add(cp);
-                    }
-                    if (cp.contains("smallrye-common-annotation")) {
-                        pluginCp.add(cp);
-                    }
-                    if (cp.contains("guava")) {
-                        pluginCp.add(cp);
+                    for (String cp : classpath) {
+                        if (cp.contains("protobuf-java") && !cp.contains("util")) {
+                            pluginCp.add(cp);
+                        }
+                        if (cp.contains("smallrye-common-annotation")) {
+                            pluginCp.add(cp);
+                        }
+                        if (cp.contains("guava")) {
+                            pluginCp.add(cp);
+                        }
                     }
                 }
 
