@@ -58,7 +58,7 @@ public class ModuleInfo {
     private Set<String> optionalReactorDependencies = new LinkedHashSet<>();
     private Map<String, Set<String>> reactorDependencyExclusions = new LinkedHashMap<>();
 
-    public record ResourceDir(String directory, boolean filtering) {}
+    public record ResourceDir(String directory, boolean filtering, String targetPath) {}
 
     public String getGroupId() { return groupId; }
     public void setGroupId(String groupId) { this.groupId = groupId; }

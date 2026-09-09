@@ -210,10 +210,14 @@ public abstract class ModuleBuild {
                 for (String[] rd : resourceDirs()) {
                     Path dir = runtime.getProjectRoot().resolve(baseDir()).resolve(rd[0]);
                     boolean filtering = "true".equals(rd[1]);
+                    Path outputDir = classesDir();
+                    if (rd.length > 2 && rd[2] != null) {
+                        outputDir = classesDir().resolve(rd[2]);
+                    }
                     if (filtering) {
-                        runtime.copyResourcesFiltered(dir, classesDir(), filterProperties());
+                        runtime.copyResourcesFiltered(dir, outputDir, filterProperties());
                     } else {
-                        runtime.copyResources(dir, classesDir());
+                        runtime.copyResources(dir, outputDir);
                     }
                 }
                 recordPhase("resources", t);
@@ -278,7 +282,20 @@ public abstract class ModuleBuild {
                 if (hasKotlinSources()) {
                     if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "kotlin", 0);
                     t = System.currentTimeMillis();
-                    runtime.compileKotlin(kotlinSourceDir(), sourceDir(), classesDir(), fullClasspath);
+                    List<Path> kotlinExtraRoots = new ArrayList<>();
+                    if (generatedSourcesDir != null && Files.isDirectory(generatedSourcesDir)) {
+                        addGeneratedSourceDirs(generatedSourcesDir, kotlinExtraRoots);
+                    }
+                    if (generatedProtoDir != null) {
+                        Path javaDir = generatedProtoDir.resolve("java");
+                        if (Files.isDirectory(javaDir)) kotlinExtraRoots.add(javaDir);
+                        Path grpcDir = generatedProtoDir.resolve("grpc-java");
+                        if (Files.isDirectory(grpcDir)) kotlinExtraRoots.add(grpcDir);
+                        Path quarkusDir = generatedProtoDir.resolve("quarkus-grpc");
+                        if (Files.isDirectory(quarkusDir)) kotlinExtraRoots.add(quarkusDir);
+                    }
+                    runtime.compileKotlin(kotlinSourceDir(), sourceDir(), classesDir(), fullClasspath,
+                            kotlinExtraRoots.toArray(new Path[0]));
                     fullClasspath.add(0, classesDir().toString());
                     recordPhase("kotlin", t);
                 }
@@ -320,6 +337,7 @@ public abstract class ModuleBuild {
 
                 if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "jar", 0);
                 t = System.currentTimeMillis();
+                Files.createDirectories(classesDir());
                 runtime.createJar(classesDir(), jarFile(), manifestEntries());
                 recordPhase("jar", t);
 
@@ -348,6 +366,13 @@ public abstract class ModuleBuild {
             while (cause != null) {
                 msg.append("\n  Caused by: ").append(cause.getClass().getName()).append(": ").append(cause.getMessage());
                 cause = cause.getCause();
+            }
+            Throwable root = e;
+            while (root.getCause() != null) root = root.getCause();
+            if (root instanceof NoClassDefFoundError || root instanceof ClassNotFoundException) {
+                java.io.StringWriter sw = new java.io.StringWriter();
+                e.printStackTrace(new java.io.PrintWriter(sw));
+                msg.append("\n  Full stack trace:\n").append(sw);
             }
             failureMessage = msg.toString();
             if (progress != null) {

@@ -488,13 +488,14 @@ public class PomParser {
                 }
                 if (Files.isDirectory(baseDir.resolve(dirPath))) {
                     resourceDirs.add(new ModuleInfo.ResourceDir(
-                            dirPath.toString(), resource.isFiltering()));
+                            dirPath.toString(), resource.isFiltering(),
+                            resource.getTargetPath()));
                 }
             }
         } else {
             Path resMain = baseDir.resolve("src/main/resources");
             if (Files.isDirectory(resMain)) {
-                resourceDirs.add(new ModuleInfo.ResourceDir("src/main/resources", false));
+                resourceDirs.add(new ModuleInfo.ResourceDir("src/main/resources", false, null));
             }
         }
 

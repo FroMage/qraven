@@ -153,7 +153,8 @@ public class BuildFileGenerator {
             for (int i = 0; i < rds.size(); i++) {
                 ModuleInfo.ResourceDir rd = rds.get(i);
                 sb.append("            {").append(quote(rd.directory())).append(", ")
-                        .append(quote(String.valueOf(rd.filtering()))).append("}");
+                        .append(quote(String.valueOf(rd.filtering()))).append(", ")
+                        .append(quoteOrNull(rd.targetPath())).append("}");
                 if (i < rds.size() - 1) sb.append(",");
                 sb.append("\n");
             }

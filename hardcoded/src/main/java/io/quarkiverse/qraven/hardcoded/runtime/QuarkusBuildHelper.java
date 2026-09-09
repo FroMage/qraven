@@ -63,7 +63,7 @@ public class QuarkusBuildHelper {
             modelBuilder.addDependency(dep);
         }
 
-        addCodegenToolArtifacts(module, deploymentCp, modelBuilder);
+        addCodegenToolArtifacts(module, reactorDeps, deploymentCp, modelBuilder);
 
         var appModel = modelBuilder.build();
 
@@ -211,8 +211,8 @@ public class QuarkusBuildHelper {
         }
     }
 
-    private static void addCodegenToolArtifacts(ModuleBuild module, List<String> deploymentCp,
-            ApplicationModelBuilder modelBuilder) {
+    private static void addCodegenToolArtifacts(ModuleBuild module, List<ModuleBuild> reactorDeps,
+            List<String> deploymentCp, ApplicationModelBuilder modelBuilder) {
         String classifier = osClassifier();
         if (classifier == null) return;
 
@@ -243,6 +243,15 @@ public class QuarkusBuildHelper {
             if (grpcVersion == null && "io.grpc".equals(gav.groupId)
                     && "grpc-core".equals(gav.artifactId)) {
                 grpcVersion = gav.version;
+            }
+        }
+
+        if (quarkusGrpcVersion == null) {
+            for (ModuleBuild dep : reactorDeps) {
+                if ("quarkus-grpc-protoc-plugin".equals(dep.artifactId())) {
+                    quarkusGrpcVersion = dep.version();
+                    break;
+                }
             }
         }
 

@@ -403,7 +403,8 @@ public class BuildRuntime {
         System.out.println("Kotlin compiler warmup: " + elapsed + "ms");
     }
 
-    public void compileKotlin(Path kotlinSourceDir, Path javaSourceDir, Path outputDir, List<String> classpath) {
+    public void compileKotlin(Path kotlinSourceDir, Path javaSourceDir, Path outputDir,
+            List<String> classpath, Path... extraJavaSourceRoots) {
         if (!Files.isDirectory(kotlinSourceDir)) return;
 
         List<Path> kotlinFiles;
@@ -441,6 +442,11 @@ public class BuildRuntime {
             javaRoots.add(javaSourceDir.toString());
         }
         javaRoots.add(kotlinSourceDir.toString());
+        for (Path extra : extraJavaSourceRoots) {
+            if (extra != null && Files.isDirectory(extra)) {
+                javaRoots.add(extra.toString());
+            }
+        }
         args.add("-Xjava-source-roots=" + String.join(",", javaRoots));
 
         for (Path ktFile : kotlinFiles) {
