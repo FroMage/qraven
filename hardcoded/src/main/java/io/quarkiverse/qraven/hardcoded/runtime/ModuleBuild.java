@@ -78,8 +78,8 @@ public abstract class ModuleBuild {
     public abstract boolean hasProtobufSources();
     public abstract boolean protobufUsesGrpc();
     public abstract boolean protobufUsesMutiny();
-    public abstract boolean hasAntlrSources();
-    public abstract boolean antlrVisitor();
+    public boolean hasAntlrSources() { return false; }
+    public boolean antlrVisitor() { return false; }
     public abstract String[][] resourceDirs();
     public abstract Map<String, String> filterProperties();
     public abstract boolean needsJandexIndex();
