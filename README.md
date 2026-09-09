@@ -80,6 +80,22 @@ Options:
 java -jar target/qraven/build.jar
 ```
 
+**Build specific modules:**
+```bash
+java -jar target/qraven/build.jar -pl my-module
+java -jar target/qraven/build.jar -pl my-module -am    # also build dependencies
+```
+
+**Options:**
+- `--help` or `-h` -- Show usage information
+- `--project <path>` or `-p <path>` -- Project root directory (default: current dir)
+- `--threads <n>` or `-t <n>` -- Thread count (default: available processors)
+- `--projects <list>` or `-pl <list>` -- Comma-separated list of module artifactIds to build
+- `--also-make` or `-am` -- Build dependencies of modules specified by `-pl`
+- `-D<key>=<value>` -- Set a system property (e.g. `-DskipTests=true`)
+
+Unknown options are rejected with an error message.
+
 **JVM mode with AOT cache (JDK 25+):**
 ```bash
 # Training (one-time):
@@ -196,28 +212,34 @@ Qraven replicates the behavior of the following Maven plugins during build:
 
 ### Compilation
 - **maven-compiler-plugin** -- Compiles Java sources using the `javax.tools.JavaCompiler` API (no external javac process). Supports `-parameters`, `--release`, `-source`/`-target`, `<compilerArgs>`, and annotation processor paths (`<annotationProcessorPaths>`). Reads configuration from both plugin-level and execution-level blocks. Merges compiler args from `<pluginManagement>` and `<build>/<plugins>` sections, including the `<parameters>true</parameters>` shorthand.
-- **kotlin-maven-plugin** -- Compiles Kotlin sources using the embedded K2 JVM compiler. Supports mixed Java+Kotlin projects (Kotlin compiled first, then Java with Kotlin classes on the classpath).
-- **protobuf-maven-plugin** -- Compiles `.proto` files using the `protoc` binary from `~/.m2/repository`. Supports gRPC and Quarkus Mutiny gRPC code generation plugins.
+- **kotlin-maven-plugin** -- Compiles Kotlin sources using the embedded K2 JVM compiler. Supports mixed Java+Kotlin projects (Kotlin compiled first, then Java with Kotlin classes on the classpath). Generated sources from code generation and protobuf are passed as additional Java source roots.
+- **protobuf-maven-plugin** -- Compiles `.proto` files using the `protoc` binary from `~/.m2/repository`. Supports gRPC (`protoc-gen-grpc-java`) and Quarkus Mutiny gRPC (`quarkus-grpc-protoc-plugin`) code generation plugins. The Quarkus protoc plugin is resolved from both the deployment classpath and reactor dependencies.
+- **antlr4-maven-plugin** -- Compiles ANTLR4 `.g4` grammar files to Java sources using the `antlr4` tool jar. Supports visitor generation via `<visitor>true</visitor>` configuration.
+
+### Code generation
+- **quarkus-maven-plugin:generate-code** -- Runs Quarkus code generators (e.g. gRPC, Avro) before compilation via `io.quarkus.deployment.CodeGenerator`. Generated sources are compiled alongside regular sources and passed to the Kotlin compiler when applicable.
 
 ### Resource handling
-- **maven-resources-plugin** -- Copies `src/main/resources` to `target/classes` with optional Maven-style property filtering (`${property}` interpolation). Binary file extensions are detected and copied without filtering.
+- **maven-resources-plugin** -- Copies `src/main/resources` to `target/classes` with optional Maven-style property filtering (`${property}` interpolation). Binary file extensions are detected and copied without filtering. Supports `<targetPath>` for placing resources under a specific prefix in the output.
 
 ### Indexing
 - **jandex-maven-plugin** (SmallRye Jandex / `org.jboss.jandex:jandex-maven-plugin`) -- Generates `META-INF/jandex.idx` from compiled classes.
 
 ### Packaging
-- **maven-jar-plugin** -- Creates JAR files with manifest entries from `<archive>/<manifestEntries>` configuration.
+- **maven-jar-plugin** -- Creates JAR files with manifest entries from `<archive>/<manifestEntries>` configuration. Empty modules (no sources or resources) produce valid empty JARs, matching Maven behavior.
 - **maven-install-plugin** -- Installs JARs and POMs to `~/.m2/repository`.
 
+### Dependency handling
+- **Maven dependency exclusions** -- Honors `<exclusion>` elements on reactor dependencies. Exclusions are propagated transitively through the BFS dependency walk and applied to both the runtime extension list and the deployment classpath resolution (both Aether and reactor module traversal).
+
 ### Quarkus
-- **quarkus-maven-plugin:build** -- Runs the full Quarkus augmentation pipeline (`QuarkusBootstrap` + `CuratedApplication.createAugmentor().createProductionApplication()`). Builds the `ApplicationModel` with all dependency flags (`runtimeCp`, `deploymentCp`, `runtimeExtensionArtifact`), extension properties (`parent-first-artifacts`, `excluded-artifacts`, `lesser-priority-artifacts`), and extension capabilities (`provides-capabilities`, `requires-capabilities`). Bypasses Maven entirely via `QuarkusBootstrap.builder().setExistingModel(model)`.
+- **quarkus-maven-plugin:build** -- Runs the full Quarkus augmentation pipeline (`QuarkusBootstrap` + `CuratedApplication.createAugmentor().createProductionApplication()`). Builds the `ApplicationModel` with all dependency flags (`runtimeCp`, `deploymentCp`, `runtimeExtensionArtifact`), extension properties (`parent-first-artifacts`, `excluded-artifacts`, `lesser-priority-artifacts`), and extension capabilities (`provides-capabilities`, `requires-capabilities`). Registers protoc, gRPC, and Quarkus gRPC codegen tool artifacts. Bypasses Maven entirely via `QuarkusBootstrap.builder().setExistingModel(model)`.
 
 ### Quarkus extension development
 - **quarkus-extension-maven-plugin** -- Generates `META-INF/quarkus-extension.properties` and `META-INF/quarkus-extension.yaml` for Quarkus extension modules.
 
 ### Not yet supported
-- **kotlin-maven-plugin** -- Kotlin compilation (modules using Kotlin are skipped)
-- **protobuf-maven-plugin** -- Protocol buffer compilation (modules using protobuf are skipped)
+- **avro-maven-plugin** -- Avro schema (`.avsc`) to Java code generation (Avro codegen runs via the Quarkus `generate-code` step instead)
 - **maven-surefire-plugin / maven-failsafe-plugin** -- Test execution
 - **maven-shade-plugin / maven-assembly-plugin** -- Uber-jar / assembly creation
 

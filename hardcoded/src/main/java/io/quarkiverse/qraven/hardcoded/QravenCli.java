@@ -46,6 +46,11 @@ public class QravenCli {
                 case "--output", "-o" -> outputDir = Path.of(args[++i]).toAbsolutePath().normalize();
                 case "--native" -> buildNative = true;
                 case "--graalvm-home" -> graalvmHome = args[++i];
+                default -> {
+                    System.err.println("Unknown option: " + args[i]);
+                    System.err.println("Run with --help for usage information.");
+                    System.exit(1);
+                }
             }
         }
 

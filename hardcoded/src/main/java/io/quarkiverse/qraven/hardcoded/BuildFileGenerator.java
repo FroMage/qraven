@@ -408,7 +408,18 @@ public class BuildFileGenerator {
         sb.append("        boolean alsoMake = false;\n\n");
 
         sb.append("        for (int i = 0; i < args.length; i++) {\n");
-        sb.append("            if (args[i].startsWith(\"-D\")) {\n");
+        sb.append("            if (\"--help\".equals(args[i]) || \"-h\".equals(args[i])) {\n");
+        sb.append("                System.out.println(\"Usage: java -jar build.jar [options]\");\n");
+        sb.append("                System.out.println();\n");
+        sb.append("                System.out.println(\"Options:\");\n");
+        sb.append("                System.out.println(\"  -h, --help                Show this help message and exit\");\n");
+        sb.append("                System.out.println(\"  -p, --project <path>      Project root directory (default: current directory)\");\n");
+        sb.append("                System.out.println(\"  -t, --threads <n>         Thread count for parallel compilation (default: available CPUs)\");\n");
+        sb.append("                System.out.println(\"  -pl, --projects <list>    Comma-separated list of module artifactIds to build\");\n");
+        sb.append("                System.out.println(\"  -am, --also-make          Build dependencies of modules specified by -pl\");\n");
+        sb.append("                System.out.println(\"  -D<key>=<value>           Set a system property\");\n");
+        sb.append("                return;\n");
+        sb.append("            } else if (args[i].startsWith(\"-D\")) {\n");
         sb.append("                String prop = args[i].substring(2);\n");
         sb.append("                int eq = prop.indexOf('=');\n");
         sb.append("                if (eq >= 0) {\n");
@@ -424,6 +435,10 @@ public class BuildFileGenerator {
         sb.append("                projects = args[++i];\n");
         sb.append("            } else if (\"--also-make\".equals(args[i]) || \"-am\".equals(args[i])) {\n");
         sb.append("                alsoMake = true;\n");
+        sb.append("            } else {\n");
+        sb.append("                System.err.println(\"Unknown option: \" + args[i]);\n");
+        sb.append("                System.err.println(\"Run with --help for usage information.\");\n");
+        sb.append("                System.exit(1);\n");
         sb.append("            }\n");
         sb.append("        }\n\n");
 
