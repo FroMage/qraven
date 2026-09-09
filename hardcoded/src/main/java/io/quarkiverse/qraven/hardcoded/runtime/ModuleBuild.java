@@ -240,10 +240,16 @@ public abstract class ModuleBuild {
                 if (hasGenerateCodeGoal() && !evaluateSkip(generateCodeSkipWhen())) {
                     if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "generate-code", 0);
                     t = System.currentTimeMillis();
+                    Files.createDirectories(classesDir());
                     try {
                         generatedSourcesDir = QuarkusBuildHelper.generateCode(this, dependencies);
                     } catch (Exception e) {
-                        System.err.println("[" + artifactId() + "] generate-code failed: " + e.getMessage());
+                        Throwable cause = e;
+                        while (cause.getCause() != null && (cause.getMessage() == null
+                                || cause instanceof java.lang.reflect.InvocationTargetException)) {
+                            cause = cause.getCause();
+                        }
+                        System.err.println("[" + artifactId() + "] generate-code failed: " + cause.getMessage());
                     }
                     recordPhase("generate-code", t);
                 }

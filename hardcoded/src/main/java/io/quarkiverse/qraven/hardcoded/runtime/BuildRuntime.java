@@ -441,7 +441,7 @@ public class BuildRuntime {
             javaRoots.add(javaSourceDir.toString());
         }
         javaRoots.add(kotlinSourceDir.toString());
-        args.add("-Xjava-source-roots=" + String.join(File.pathSeparator, javaRoots));
+        args.add("-Xjava-source-roots=" + String.join(",", javaRoots));
 
         for (Path ktFile : kotlinFiles) {
             args.add(ktFile.toString());

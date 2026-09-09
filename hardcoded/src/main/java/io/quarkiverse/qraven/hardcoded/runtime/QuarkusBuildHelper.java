@@ -2,6 +2,7 @@ package io.quarkiverse.qraven.hardcoded.runtime;
 
 import java.io.StringReader;
 import java.lang.reflect.Method;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashSet;
 import java.util.List;
@@ -61,6 +62,8 @@ public class QuarkusBuildHelper {
 
             modelBuilder.addDependency(dep);
         }
+
+        addCodegenToolArtifacts(module, deploymentCp, modelBuilder);
 
         var appModel = modelBuilder.build();
 
@@ -206,6 +209,106 @@ public class QuarkusBuildHelper {
 
             addReactorDeps(dep, dep.getDependencies(), extensionGAs, extensionProps, modelBuilder, visited);
         }
+    }
+
+    private static void addCodegenToolArtifacts(ModuleBuild module, List<String> deploymentCp,
+            ApplicationModelBuilder modelBuilder) {
+        String classifier = osClassifier();
+        if (classifier == null) return;
+
+        String m2 = System.getProperty("user.home") + "/.m2/repository/";
+        String protocVersion = null;
+        String grpcVersion = null;
+        String quarkusGrpcVersion = null;
+
+        for (String jar : deploymentCp) {
+            GAV gav = parseGAVFromM2Path(jar);
+            if (gav == null) continue;
+            if ("com.google.protobuf".equals(gav.groupId) && "protobuf-java".equals(gav.artifactId)) {
+                protocVersion = gav.version;
+            } else if ("io.grpc".equals(gav.groupId) && "grpc-core".equals(gav.artifactId)) {
+                grpcVersion = gav.version;
+            } else if ("io.quarkus".equals(gav.groupId) && "quarkus-grpc-protoc-plugin".equals(gav.artifactId)) {
+                quarkusGrpcVersion = gav.version;
+            }
+        }
+
+        for (String jar : module.resolvedClasspath()) {
+            GAV gav = parseGAVFromM2Path(jar);
+            if (gav == null) continue;
+            if (protocVersion == null && "com.google.protobuf".equals(gav.groupId)
+                    && "protobuf-java".equals(gav.artifactId)) {
+                protocVersion = gav.version;
+            }
+            if (grpcVersion == null && "io.grpc".equals(gav.groupId)
+                    && "grpc-core".equals(gav.artifactId)) {
+                grpcVersion = gav.version;
+            }
+        }
+
+        if (protocVersion != null) {
+            Path protocPath = Path.of(m2, "com/google/protobuf/protoc/" + protocVersion
+                    + "/protoc-" + protocVersion + "-" + classifier + ".exe");
+            if (Files.exists(protocPath)) {
+                addToolArtifact(modelBuilder, "com.google.protobuf", "protoc",
+                        protocVersion, classifier, "exe", protocPath);
+            }
+        }
+        if (grpcVersion != null) {
+            Path grpcPluginPath = Path.of(m2, "io/grpc/protoc-gen-grpc-java/" + grpcVersion
+                    + "/protoc-gen-grpc-java-" + grpcVersion + "-" + classifier + ".exe");
+            if (Files.exists(grpcPluginPath)) {
+                addToolArtifact(modelBuilder, "io.grpc", "protoc-gen-grpc-java",
+                        grpcVersion, classifier, "exe", grpcPluginPath);
+            }
+        }
+        if (quarkusGrpcVersion != null) {
+            Path quarkusPluginPath = Path.of(m2, "io/quarkus/quarkus-grpc-protoc-plugin/"
+                    + quarkusGrpcVersion + "/quarkus-grpc-protoc-plugin-" + quarkusGrpcVersion
+                    + "-shaded.jar");
+            if (Files.exists(quarkusPluginPath)) {
+                addToolArtifact(modelBuilder, "io.quarkus", "quarkus-grpc-protoc-plugin",
+                        quarkusGrpcVersion, "shaded", "jar", quarkusPluginPath);
+            }
+        }
+    }
+
+    private static void addToolArtifact(ApplicationModelBuilder modelBuilder,
+            String groupId, String artifactId, String version,
+            String classifier, String type, Path path) {
+        ArtifactKey key = ArtifactKey.of(groupId, artifactId, classifier, type);
+        if (modelBuilder.hasDependency(key)) return;
+        modelBuilder.addDependency(ResolvedDependencyBuilder.newInstance()
+                .setGroupId(groupId)
+                .setArtifactId(artifactId)
+                .setVersion(version)
+                .setClassifier(classifier)
+                .setType(type)
+                .setResolvedPath(path));
+    }
+
+    private static String osClassifier() {
+        String os = System.getProperty("os.name").toLowerCase();
+        String arch = System.getProperty("os.arch").toLowerCase();
+        String osName;
+        if (os.contains("linux")) {
+            osName = "linux";
+        } else if (os.contains("mac") || os.contains("darwin")) {
+            osName = "osx";
+        } else if (os.contains("win")) {
+            osName = "windows";
+        } else {
+            return null;
+        }
+        String archName;
+        if ("amd64".equals(arch) || "x86_64".equals(arch)) {
+            archName = "x86_64";
+        } else if ("aarch64".equals(arch) || "arm64".equals(arch)) {
+            archName = "aarch_64";
+        } else {
+            return null;
+        }
+        return osName + "-" + archName;
     }
 
     private record GAV(String groupId, String artifactId, String version) {}
