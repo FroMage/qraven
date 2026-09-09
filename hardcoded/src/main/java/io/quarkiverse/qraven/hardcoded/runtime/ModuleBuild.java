@@ -236,6 +236,18 @@ public abstract class ModuleBuild {
                     recordPhase("ext-descriptor", t);
                 }
 
+                Path generatedSourcesDir = null;
+                if (hasGenerateCodeGoal() && !evaluateSkip(generateCodeSkipWhen())) {
+                    if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "generate-code", 0);
+                    t = System.currentTimeMillis();
+                    try {
+                        generatedSourcesDir = QuarkusBuildHelper.generateCode(this, dependencies);
+                    } catch (Exception e) {
+                        System.err.println("[" + artifactId() + "] generate-code failed: " + e.getMessage());
+                    }
+                    recordPhase("generate-code", t);
+                }
+
                 Path generatedProtoDir = null;
                 if (hasProtobufSources() && !evaluateSkip(generateCodeSkipWhen())) {
                     if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "protobuf", 0);
@@ -255,7 +267,8 @@ public abstract class ModuleBuild {
                 }
 
                 boolean hasKotlinJava = hasKotlinSources() && hasJavaInKotlinDir();
-                if (hasJavaSources() || hasKotlinJava || generatedProtoDir != null) {
+                boolean hasGenSources = generatedSourcesDir != null && Files.isDirectory(generatedSourcesDir);
+                if (hasJavaSources() || hasKotlinJava || generatedProtoDir != null || hasGenSources) {
                     int sourceCount = countSources();
                     if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "compile", sourceCount);
                     t = System.currentTimeMillis();
@@ -264,6 +277,9 @@ public abstract class ModuleBuild {
                         extraDirs.add(generatedProtoDir.resolve("java"));
                         extraDirs.add(generatedProtoDir.resolve("grpc-java"));
                         extraDirs.add(generatedProtoDir.resolve("quarkus-grpc"));
+                    }
+                    if (hasGenSources) {
+                        addGeneratedSourceDirs(generatedSourcesDir, extraDirs);
                     }
                     if (hasKotlinJava) {
                         extraDirs.add(kotlinSourceDir());
@@ -367,6 +383,14 @@ public abstract class ModuleBuild {
 
     public Path kotlinSourceDir() {
         return runtime.getProjectRoot().resolve(baseDir()).resolve("src/main/kotlin");
+    }
+
+    private void addGeneratedSourceDirs(Path generatedSourcesDir, List<Path> extraDirs) {
+        try (var subdirs = Files.list(generatedSourcesDir)) {
+            subdirs.filter(Files::isDirectory).forEach(extraDirs::add);
+        } catch (IOException e) {
+            // ignore
+        }
     }
 
     private boolean hasJavaInKotlinDir() {

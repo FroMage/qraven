@@ -1,24 +1,29 @@
 package io.quarkiverse.qraven.hardcoded.runtime;
 
 import java.io.StringReader;
+import java.lang.reflect.Method;
 import java.nio.file.Path;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
+import java.util.function.Consumer;
 
 import io.quarkus.bootstrap.app.CuratedApplication;
 import io.quarkus.bootstrap.app.QuarkusBootstrap;
+import io.quarkus.bootstrap.classloading.QuarkusClassLoader;
+import io.quarkus.bootstrap.model.ApplicationModel;
 import io.quarkus.bootstrap.model.ApplicationModelBuilder;
 import io.quarkus.bootstrap.model.CapabilityContract;
 import io.quarkus.maven.dependency.ArtifactKey;
 import io.quarkus.maven.dependency.ResolvedDependencyBuilder;
+import io.quarkus.paths.PathCollection;
 import io.quarkus.paths.PathList;
 
 public class QuarkusBuildHelper {
 
-    static void run(ModuleBuild module, List<ModuleBuild> reactorDeps) throws Exception {
+    private static CuratedApplication bootstrap(ModuleBuild module, List<ModuleBuild> reactorDeps) throws Exception {
         ApplicationModelBuilder modelBuilder = new ApplicationModelBuilder();
 
         ResolvedDependencyBuilder appArtifact = ResolvedDependencyBuilder.newInstance()
@@ -37,7 +42,6 @@ public class QuarkusBuildHelper {
             addRuntimeDep(jarPath, extensionGAs, extensionProps, modelBuilder);
         }
 
-        // reactor dependencies are not in the resolved classpath - add them
         addReactorDeps(module, reactorDeps, extensionGAs, extensionProps, modelBuilder, new HashSet<>());
 
         List<String> deploymentCp = ModuleBuild.resolvePaths(module.deploymentClasspath());
@@ -63,7 +67,7 @@ public class QuarkusBuildHelper {
         Properties buildSystemProps = new Properties();
         buildSystemProps.putAll(module.quarkusBuildProperties());
 
-        try (CuratedApplication app = QuarkusBootstrap.builder()
+        return QuarkusBootstrap.builder()
                 .setBaseClassLoader(QuarkusBuildHelper.class.getClassLoader())
                 .setExistingModel(appModel)
                 .setProjectRoot(module.targetDir().getParent())
@@ -74,9 +78,44 @@ public class QuarkusBuildHelper {
                 .setLocalProjectDiscovery(false)
                 .setIsolateDeployment(true)
                 .build()
-                .bootstrap()) {
+                .bootstrap();
+    }
+
+    static void run(ModuleBuild module, List<ModuleBuild> reactorDeps) throws Exception {
+        try (CuratedApplication app = bootstrap(module, reactorDeps)) {
             app.createAugmentor().createProductionApplication();
         }
+    }
+
+    static Path generateCode(ModuleBuild module, List<ModuleBuild> reactorDeps) throws Exception {
+        Path generatedSourcesDir = module.targetDir().resolve("generated-sources");
+        ClassLoader originalTccl = Thread.currentThread().getContextClassLoader();
+        try (CuratedApplication app = bootstrap(module, reactorDeps)) {
+            QuarkusClassLoader deploymentCl = app.createDeploymentClassLoader();
+            Thread.currentThread().setContextClassLoader(deploymentCl);
+            try {
+                Class<?> codeGenerator = deploymentCl.loadClass("io.quarkus.deployment.CodeGenerator");
+                Method initAndRun = codeGenerator.getMethod("initAndRun",
+                        QuarkusClassLoader.class, PathCollection.class,
+                        Path.class, Path.class,
+                        Consumer.class, ApplicationModel.class, Properties.class, String.class,
+                        boolean.class);
+
+                Path sourceParent = module.sourceDir().getParent();
+                PathCollection sourceParentDirs = PathList.of(sourceParent);
+                Properties buildProps = new Properties();
+                buildProps.putAll(module.quarkusBuildProperties());
+
+                initAndRun.invoke(null, deploymentCl, sourceParentDirs,
+                        generatedSourcesDir, module.targetDir(),
+                        (Consumer<Path>) p -> {}, app.getApplicationModel(), buildProps,
+                        "NORMAL", false);
+            } finally {
+                Thread.currentThread().setContextClassLoader(originalTccl);
+                deploymentCl.close();
+            }
+        }
+        return generatedSourcesDir;
     }
 
     private static void addRuntimeDep(String jarPath, Set<String> extensionGAs,
