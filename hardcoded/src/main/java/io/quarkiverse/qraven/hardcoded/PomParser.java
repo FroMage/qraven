@@ -1123,11 +1123,23 @@ public class PomParser {
                 Xpp3Dom gidNode = pathEntry.getChild("groupId");
                 Xpp3Dom aidNode = pathEntry.getChild("artifactId");
                 Xpp3Dom verNode = pathEntry.getChild("version");
-                if (gidNode != null && aidNode != null && verNode != null) {
-                    List<String> resolved = resolver.resolveAnnotationProcessorPath(
-                            gidNode.getValue(), aidNode.getValue(), verNode.getValue(),
-                            managedDeps);
-                    annotationProcessorPaths.addAll(resolved);
+                if (gidNode != null && aidNode != null) {
+                    String ver = verNode != null ? verNode.getValue() : null;
+                    if (ver == null || ver.isBlank()) {
+                        for (Dependency md : managedDeps) {
+                            if (gidNode.getValue().equals(md.getGroupId())
+                                    && aidNode.getValue().equals(md.getArtifactId())) {
+                                ver = md.getVersion();
+                                break;
+                            }
+                        }
+                    }
+                    if (ver != null && !ver.isBlank()) {
+                        List<String> resolved = resolver.resolveAnnotationProcessorPath(
+                                gidNode.getValue(), aidNode.getValue(), ver,
+                                managedDeps);
+                        annotationProcessorPaths.addAll(resolved);
+                    }
                 }
             }
         }

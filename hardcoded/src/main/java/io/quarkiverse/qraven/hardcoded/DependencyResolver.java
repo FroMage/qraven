@@ -60,7 +60,9 @@ public class DependencyResolver {
                 new RemoteRepository.Builder("central", "default",
                         "https://repo.maven.apache.org/maven2/").build(),
                 new RemoteRepository.Builder("gradle", "default",
-                        "https://repo.gradle.org/gradle/libs-releases/").build()
+                        "https://repo.gradle.org/gradle/libs-releases/").build(),
+                new RemoteRepository.Builder("confluent", "default",
+                        "https://packages.confluent.io/maven/").build()
         );
     }
 
