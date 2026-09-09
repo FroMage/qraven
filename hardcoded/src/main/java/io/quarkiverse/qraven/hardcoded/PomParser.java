@@ -463,6 +463,7 @@ public class PomParser {
         extractFilterProperties(model, info);
         detectJandexPlugin(model, info);
         detectProtobufPlugin(model, baseDir, info);
+        detectAntlrPlugin(model, baseDir, info);
         detectExtensionPlugin(model, info);
         detectQuarkusBuildPlugin(model, info);
         extractManifestEntries(model, info);
@@ -571,6 +572,43 @@ public class PomParser {
                     }
                 }
             }
+            return;
+        }
+    }
+
+    private void detectAntlrPlugin(Model model, Path baseDir, ModuleInfo info) {
+        if (model.getBuild() == null) return;
+        for (Plugin plugin : model.getBuild().getPlugins()) {
+            if (!"antlr4-maven-plugin".equals(plugin.getArtifactId())) continue;
+
+            Path antlrDir = baseDir.resolve("src/main/antlr4");
+            if (!Files.isDirectory(antlrDir)) return;
+            try (var stream = Files.walk(antlrDir)) {
+                if (stream.noneMatch(p -> p.toString().endsWith(".g4"))) return;
+            } catch (IOException e) {
+                return;
+            }
+
+            info.setHasAntlrSources(true);
+
+            boolean visitor = false;
+            for (PluginExecution exec : plugin.getExecutions()) {
+                Xpp3Dom execConfig = (Xpp3Dom) exec.getConfiguration();
+                if (execConfig != null) {
+                    Xpp3Dom visitorNode = execConfig.getChild("visitor");
+                    if (visitorNode != null && "true".equals(visitorNode.getValue())) {
+                        visitor = true;
+                    }
+                }
+            }
+            Xpp3Dom pluginConfig = (Xpp3Dom) plugin.getConfiguration();
+            if (pluginConfig != null) {
+                Xpp3Dom visitorNode = pluginConfig.getChild("visitor");
+                if (visitorNode != null && "true".equals(visitorNode.getValue())) {
+                    visitor = true;
+                }
+            }
+            info.setAntlrVisitor(visitor);
             return;
         }
     }

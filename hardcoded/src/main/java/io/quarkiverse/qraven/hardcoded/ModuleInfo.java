@@ -29,6 +29,8 @@ public class ModuleInfo {
     private boolean hasProtobufSources;
     private boolean protobufUsesGrpc;
     private boolean protobufUsesMutiny;
+    private boolean hasAntlrSources;
+    private boolean antlrVisitor;
     private boolean hasExtensionPlugin;
     private String extensionValidationSkipWhen;
     private Map<String, String> extensionDescriptorProperties = new LinkedHashMap<>();
@@ -113,6 +115,12 @@ public class ModuleInfo {
 
     public boolean isProtobufUsesMutiny() { return protobufUsesMutiny; }
     public void setProtobufUsesMutiny(boolean protobufUsesMutiny) { this.protobufUsesMutiny = protobufUsesMutiny; }
+
+    public boolean isHasAntlrSources() { return hasAntlrSources; }
+    public void setHasAntlrSources(boolean hasAntlrSources) { this.hasAntlrSources = hasAntlrSources; }
+
+    public boolean isAntlrVisitor() { return antlrVisitor; }
+    public void setAntlrVisitor(boolean antlrVisitor) { this.antlrVisitor = antlrVisitor; }
 
     public boolean isHasExtensionPlugin() { return hasExtensionPlugin; }
     public void setHasExtensionPlugin(boolean hasExtensionPlugin) { this.hasExtensionPlugin = hasExtensionPlugin; }

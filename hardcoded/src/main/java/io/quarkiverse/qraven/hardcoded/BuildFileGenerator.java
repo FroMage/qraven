@@ -37,8 +37,10 @@ public class BuildFileGenerator {
     private final int threads;
     private boolean hasKotlinModules;
     private boolean hasProtobufModules;
+    private boolean hasAntlrModules;
     private String protocPath;
     private String grpcJavaPluginPath;
+    private String antlrToolClasspath;
 
     public BuildFileGenerator(Path projectRoot, Path outputDir, int threads) {
         this.projectRoot = projectRoot;
@@ -64,6 +66,10 @@ public class BuildFileGenerator {
         hasProtobufModules = modules.stream().anyMatch(ModuleInfo::isHasProtobufSources);
         if (hasProtobufModules) {
             resolveProtocPaths(modules);
+        }
+        hasAntlrModules = modules.stream().anyMatch(ModuleInfo::isHasAntlrSources);
+        if (hasAntlrModules) {
+            resolveAntlrToolClasspath(modules);
         }
 
         int total = modules.size() + 1;
@@ -129,6 +135,8 @@ public class BuildFileGenerator {
         sb.append("    @Override public boolean hasProtobufSources() { return ").append(module.isHasProtobufSources()).append("; }\n");
         sb.append("    @Override public boolean protobufUsesGrpc() { return ").append(module.isProtobufUsesGrpc()).append("; }\n");
         sb.append("    @Override public boolean protobufUsesMutiny() { return ").append(module.isProtobufUsesMutiny()).append("; }\n");
+        sb.append("    @Override public boolean hasAntlrSources() { return ").append(module.isHasAntlrSources()).append("; }\n");
+        sb.append("    @Override public boolean antlrVisitor() { return ").append(module.isAntlrVisitor()).append("; }\n");
         sb.append("    @Override public boolean needsJandexIndex() { return ").append(module.isNeedsJandexIndex()).append("; }\n");
         sb.append("    @Override public boolean hasExtensionPlugin() { return ").append(module.isHasExtensionPlugin()).append("; }\n");
         sb.append("    @Override public String extensionValidationSkipWhen() { return ")
@@ -425,6 +433,9 @@ public class BuildFileGenerator {
         if (grpcJavaPluginPath != null) {
             sb.append("        runtime.setGrpcJavaPluginPath(").append(quote(grpcJavaPluginPath)).append(");\n");
         }
+        if (antlrToolClasspath != null) {
+            sb.append("        runtime.setAntlrToolClasspath(").append(quote(antlrToolClasspath)).append(");\n");
+        }
         sb.append("        List<ModuleBuild> modules = new ArrayList<>();\n");
 
         for (ModuleInfo module : modules) {
@@ -627,6 +638,84 @@ public class BuildFileGenerator {
         }
         if (needsGrpc && grpcJavaPluginPath != null) {
             System.out.println("Resolved protoc-gen-grpc-java: " + grpcJavaPluginPath);
+        }
+    }
+
+    private void resolveAntlrToolClasspath(List<ModuleInfo> modules) {
+        Path m2 = Path.of(System.getProperty("user.home"), ".m2", "repository");
+        String antlrVersion = null;
+        for (ModuleInfo module : modules) {
+            if (!module.isHasAntlrSources()) continue;
+            for (String cp : module.getCompileClasspath()) {
+                if (cp.contains("/antlr4-runtime/")) {
+                    String resolved = cp.startsWith("$HOME/")
+                            ? System.getProperty("user.home") + cp.substring(5) : cp;
+                    Path jar = Path.of(resolved);
+                    String name = jar.getFileName().toString();
+                    if (name.startsWith("antlr4-runtime-") && name.endsWith(".jar")) {
+                        antlrVersion = name.substring("antlr4-runtime-".length(),
+                                name.length() - ".jar".length());
+                        break;
+                    }
+                }
+            }
+            if (antlrVersion != null) break;
+        }
+        if (antlrVersion == null) {
+            System.err.println("WARNING: could not determine ANTLR4 version from classpath");
+            return;
+        }
+
+        List<String> jars = new ArrayList<>();
+        String[][] deps = {
+            {"org/antlr/antlr4/" + antlrVersion, "antlr4-" + antlrVersion + ".jar"},
+            {"org/antlr/antlr4-runtime/" + antlrVersion, "antlr4-runtime-" + antlrVersion + ".jar"},
+        };
+        boolean allFound = true;
+        for (String[] dep : deps) {
+            Path jar = m2.resolve(dep[0]).resolve(dep[1]);
+            if (!Files.exists(jar)) {
+                System.err.println("WARNING: ANTLR4 dependency not found: " + jar);
+                allFound = false;
+                continue;
+            }
+            jars.add(jar.toString());
+        }
+        // ANTLR4 tool transitive deps - find whatever version is available
+        String[][] transitiveDeps = {
+            {"org/antlr/antlr-runtime", "antlr-runtime"},
+            {"org/antlr/ST4", "ST4"},
+            {"org/abego/treelayout/org.abego.treelayout.core", "org.abego.treelayout.core"},
+        };
+        for (String[] dep : transitiveDeps) {
+            Path depDir = m2.resolve(dep[0]);
+            if (!Files.isDirectory(depDir)) {
+                System.err.println("WARNING: ANTLR4 transitive dependency dir not found: " + depDir);
+                allFound = false;
+                continue;
+            }
+            try (var versions = Files.list(depDir)) {
+                String found = versions.filter(Files::isDirectory)
+                        .map(v -> {
+                            String ver = v.getFileName().toString();
+                            Path jar = v.resolve(dep[1] + "-" + ver + ".jar");
+                            return Files.exists(jar) ? jar.toString() : null;
+                        })
+                        .filter(p -> p != null)
+                        .findFirst().orElse(null);
+                if (found != null) {
+                    jars.add(found);
+                } else {
+                    System.err.println("WARNING: ANTLR4 transitive dependency jar not found in " + depDir);
+                    allFound = false;
+                }
+            } catch (IOException e) {
+                allFound = false;
+            }
+        }
+        if (allFound && !jars.isEmpty()) {
+            antlrToolClasspath = String.join(java.io.File.pathSeparator, jars);
+            System.out.println("Resolved ANTLR4 tool classpath (" + antlrVersion + ")");
         }
     }
 

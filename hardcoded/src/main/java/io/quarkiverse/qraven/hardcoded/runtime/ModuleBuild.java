@@ -78,6 +78,8 @@ public abstract class ModuleBuild {
     public abstract boolean hasProtobufSources();
     public abstract boolean protobufUsesGrpc();
     public abstract boolean protobufUsesMutiny();
+    public abstract boolean hasAntlrSources();
+    public abstract boolean antlrVisitor();
     public abstract String[][] resourceDirs();
     public abstract Map<String, String> filterProperties();
     public abstract boolean needsJandexIndex();
@@ -264,6 +266,15 @@ public abstract class ModuleBuild {
                     recordPhase("protobuf", t);
                 }
 
+                Path generatedAntlrDir = null;
+                if (hasAntlrSources()) {
+                    if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "antlr", 0);
+                    t = System.currentTimeMillis();
+                    generatedAntlrDir = generatedAntlrDir();
+                    runtime.compileAntlr(antlrSourceDir(), generatedAntlrDir, antlrVisitor());
+                    recordPhase("antlr", t);
+                }
+
                 if (hasKotlinSources()) {
                     if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "kotlin", 0);
                     t = System.currentTimeMillis();
@@ -274,7 +285,8 @@ public abstract class ModuleBuild {
 
                 boolean hasKotlinJava = hasKotlinSources() && hasJavaInKotlinDir();
                 boolean hasGenSources = generatedSourcesDir != null && Files.isDirectory(generatedSourcesDir);
-                if (hasJavaSources() || hasKotlinJava || generatedProtoDir != null || hasGenSources) {
+                if (hasJavaSources() || hasKotlinJava || generatedProtoDir != null
+                        || generatedAntlrDir != null || hasGenSources) {
                     int sourceCount = countSources();
                     if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "compile", sourceCount);
                     t = System.currentTimeMillis();
@@ -283,6 +295,9 @@ public abstract class ModuleBuild {
                         extraDirs.add(generatedProtoDir.resolve("java"));
                         extraDirs.add(generatedProtoDir.resolve("grpc-java"));
                         extraDirs.add(generatedProtoDir.resolve("quarkus-grpc"));
+                    }
+                    if (generatedAntlrDir != null && Files.isDirectory(generatedAntlrDir)) {
+                        extraDirs.add(generatedAntlrDir);
                     }
                     if (hasGenSources) {
                         addGeneratedSourceDirs(generatedSourcesDir, extraDirs);
@@ -413,8 +428,16 @@ public abstract class ModuleBuild {
         return runtime.getProjectRoot().resolve(baseDir()).resolve("src/main/proto");
     }
 
+    public Path antlrSourceDir() {
+        return runtime.getProjectRoot().resolve(baseDir()).resolve("src/main/antlr4");
+    }
+
     public Path generatedProtobufDir() {
         return targetDir().resolve("generated-sources/protobuf");
+    }
+
+    public Path generatedAntlrDir() {
+        return targetDir().resolve("generated-sources/antlr4");
     }
 
     protected static Map<String, String> parseProps(String packed) {

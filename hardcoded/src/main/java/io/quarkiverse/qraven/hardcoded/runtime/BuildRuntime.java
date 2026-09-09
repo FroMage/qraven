@@ -458,10 +458,12 @@ public class BuildRuntime {
 
     private String protocPath;
     private String grpcJavaPluginPath;
+    private String antlrToolClasspath;
     private volatile Path mutinyPluginScript;
 
     public void setProtocPath(String path) { this.protocPath = path; }
     public void setGrpcJavaPluginPath(String path) { this.grpcJavaPluginPath = path; }
+    public void setAntlrToolClasspath(String classpath) { this.antlrToolClasspath = classpath; }
 
     public void compileProtobuf(Path protoSourceDir, Path outputDir,
                                 boolean useGrpc, boolean useMutiny, List<String> classpath) {
@@ -528,6 +530,71 @@ public class BuildRuntime {
             }
         } catch (IOException | InterruptedException e) {
             throw new RuntimeException("Failed to run protoc", e);
+        }
+    }
+
+    public void compileAntlr(Path antlrSourceDir, Path outputDir, boolean visitor) {
+        if (antlrToolClasspath == null) {
+            throw new RuntimeException("ANTLR4 tool classpath not set — cannot compile .g4 files");
+        }
+
+        List<Path> grammarFiles;
+        try (var stream = Files.walk(antlrSourceDir)) {
+            grammarFiles = stream.filter(p -> p.toString().endsWith(".g4")).toList();
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to list .g4 files in " + antlrSourceDir, e);
+        }
+        if (grammarFiles.isEmpty()) return;
+
+        Map<Path, List<Path>> byDir = new java.util.LinkedHashMap<>();
+        for (Path g4 : grammarFiles) {
+            byDir.computeIfAbsent(g4.getParent(), k -> new ArrayList<>()).add(g4);
+        }
+
+        String javaExe = Path.of(System.getProperty("java.home"), "bin", "java").toString();
+
+        for (var entry : byDir.entrySet()) {
+            Path dir = entry.getKey();
+            List<Path> files = entry.getValue();
+
+            Path relDir = antlrSourceDir.relativize(dir);
+            String pkg = relDir.toString().replace(File.separatorChar, '.');
+
+            Path outDir = outputDir.resolve(relDir);
+            try {
+                Files.createDirectories(outDir);
+            } catch (IOException e) {
+                throw new RuntimeException("Failed to create ANTLR output dir " + outDir, e);
+            }
+
+            List<String> cmd = new ArrayList<>();
+            cmd.add(javaExe);
+            cmd.add("-cp");
+            cmd.add(antlrToolClasspath);
+            cmd.add("org.antlr.v4.Tool");
+            if (visitor) {
+                cmd.add("-visitor");
+            }
+            cmd.add("-o");
+            cmd.add(outDir.toString());
+            cmd.add("-package");
+            cmd.add(pkg);
+            for (Path f : files) {
+                cmd.add(f.toString());
+            }
+
+            try {
+                ProcessBuilder pb = new ProcessBuilder(cmd);
+                pb.redirectErrorStream(true);
+                Process process = pb.start();
+                String output = new String(process.getInputStream().readAllBytes());
+                int exitCode = process.waitFor();
+                if (exitCode != 0) {
+                    throw new RuntimeException("ANTLR4 failed (exit " + exitCode + "):\n" + output);
+                }
+            } catch (IOException | InterruptedException e) {
+                throw new RuntimeException("Failed to run ANTLR4 tool", e);
+            }
         }
     }
 
