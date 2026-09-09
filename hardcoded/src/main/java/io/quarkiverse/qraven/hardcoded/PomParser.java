@@ -18,11 +18,15 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
@@ -752,7 +756,8 @@ public class PomParser {
 
         // also scan reactor dependencies for extension properties
         Set<String> reactorDepIds = new LinkedHashSet<>(info.getReactorDependencies());
-        collectTransitiveReactorDeps(reactorDepIds, allModules);
+        Set<String> excludedReactorDeps = new LinkedHashSet<>();
+        collectTransitiveReactorDeps(reactorDepIds, allModules, excludedReactorDeps);
         for (String depId : reactorDepIds) {
             for (ModuleInfo m : allModules) {
                 if (!m.getArtifactId().equals(depId)) continue;
@@ -770,10 +775,29 @@ public class PomParser {
             }
         }
 
+        // Build excluded deployment artifact set from excluded reactor deps
+        Set<String> excludedDeploymentGAs = new LinkedHashSet<>();
+        for (String excludedId : excludedReactorDeps) {
+            for (ModuleInfo m : allModules) {
+                if (!m.getArtifactId().equals(excludedId)) continue;
+                if (m.isHasExtensionPlugin()) {
+                    String deployGA = m.getExtensionDescriptorProperties().get("deployment-artifact");
+                    if (deployGA != null) {
+                        String[] parts = deployGA.split(":");
+                        if (parts.length >= 2) {
+                            excludedDeploymentGAs.add(parts[0] + ":" + parts[1]);
+                        }
+                    }
+                }
+                break;
+            }
+        }
+
         info.setRuntimeExtensionArtifacts(extensionArtifacts);
         info.setExtensionDevProperties(extensionDevProps);
 
-        List<String> deploymentClasspath = resolveDeploymentClasspath(deploymentGAVs, info, reactorGAs, allModules);
+        List<String> deploymentClasspath = resolveDeploymentClasspath(deploymentGAVs, info,
+                reactorGAs, allModules, excludedDeploymentGAs);
         info.setDeploymentClasspath(deploymentClasspath);
     }
 
@@ -819,21 +843,52 @@ public class PomParser {
         extensionDevProps.put(ga, packed.toString());
     }
 
-    private void collectTransitiveReactorDeps(Set<String> result, List<ModuleInfo> allModules) {
-        int prevSize;
-        do {
-            prevSize = result.size();
-            for (ModuleInfo m : allModules) {
-                if (result.contains(m.getArtifactId())) {
-                    Set<String> optionalDeps = m.getOptionalReactorDependencies();
-                    for (String dep : m.getReactorDependencies()) {
-                        if (!optionalDeps.contains(dep)) {
-                            result.add(dep);
-                        }
+    private void collectTransitiveReactorDeps(Set<String> result, List<ModuleInfo> allModules,
+                                                Set<String> excludedDeps) {
+        Map<String, ModuleInfo> modulesByArtifactId = new LinkedHashMap<>();
+        for (ModuleInfo m : allModules) {
+            modulesByArtifactId.put(m.getArtifactId(), m);
+        }
+
+        // Track exclusions that apply to each module in the result set
+        Map<String, Set<String>> activeExclusions = new HashMap<>();
+        Set<String> skippedByExclusion = new HashSet<>();
+        Queue<String> queue = new LinkedList<>(result);
+
+        while (!queue.isEmpty()) {
+            String current = queue.poll();
+            ModuleInfo m = modulesByArtifactId.get(current);
+            if (m == null) continue;
+
+            Set<String> myExclusions = activeExclusions.getOrDefault(current, Set.of());
+            Set<String> optionalDeps = m.getOptionalReactorDependencies();
+
+            for (String dep : m.getReactorDependencies()) {
+                if (optionalDeps.contains(dep)) continue;
+                if (myExclusions.contains(dep)) {
+                    skippedByExclusion.add(dep);
+                    continue;
+                }
+
+                if (result.add(dep)) {
+                    // Propagate: parent's exclusions + this dep's declared exclusions
+                    Set<String> depExclusions = new HashSet<>(myExclusions);
+                    depExclusions.addAll(m.getReactorDependencyExclusionsFor(dep));
+                    if (!depExclusions.isEmpty()) {
+                        activeExclusions.put(dep, depExclusions);
                     }
+                    queue.add(dep);
                 }
             }
-        } while (result.size() > prevSize);
+        }
+
+        if (excludedDeps != null) {
+            for (String s : skippedByExclusion) {
+                if (!result.contains(s)) {
+                    excludedDeps.add(s);
+                }
+            }
+        }
     }
 
     private void scanExtensionJar(String jarPath, List<String> extensionArtifacts,
@@ -917,11 +972,20 @@ public class PomParser {
     }
 
     private List<String> resolveDeploymentClasspath(Set<String> deploymentGAVs, ModuleInfo info,
-                                                     Set<String> reactorGAs, List<ModuleInfo> allModules) {
+                                                     Set<String> reactorGAs, List<ModuleInfo> allModules,
+                                                     Set<String> excludedDeploymentGAs) {
         if (deploymentGAVs.isEmpty()) return List.of();
 
         List<org.apache.maven.model.Dependency> externalDeploymentDeps = new ArrayList<>();
         List<String> reactorDeploymentArtifactIds = new ArrayList<>();
+
+        Set<String> excludedDeploymentArtifactIds = new LinkedHashSet<>();
+        for (String ga : excludedDeploymentGAs) {
+            String[] parts = ga.split(":");
+            if (parts.length >= 2) {
+                excludedDeploymentArtifactIds.add(parts[1]);
+            }
+        }
 
         for (String gav : deploymentGAVs) {
             String[] parts = gav.split(":");
@@ -935,6 +999,15 @@ public class PomParser {
                 dep.setArtifactId(parts[1]);
                 dep.setVersion(parts[2]);
                 dep.setScope("compile");
+                for (String exclGA : excludedDeploymentGAs) {
+                    String[] exclParts = exclGA.split(":");
+                    if (exclParts.length >= 2) {
+                        org.apache.maven.model.Exclusion exclusion = new org.apache.maven.model.Exclusion();
+                        exclusion.setGroupId(exclParts[0]);
+                        exclusion.setArtifactId(exclParts[1]);
+                        dep.addExclusion(exclusion);
+                    }
+                }
                 externalDeploymentDeps.add(dep);
             }
         }
@@ -956,15 +1029,18 @@ public class PomParser {
         // For reactor deployment modules, collect their classpaths directly
         Set<String> visited = new LinkedHashSet<>();
         for (String artifactId : reactorDeploymentArtifactIds) {
-            collectReactorModuleClasspath(artifactId, allModules, deploymentOnly, runtimePaths, visited);
+            collectReactorModuleClasspath(artifactId, allModules, deploymentOnly, runtimePaths,
+                    visited, excludedDeploymentArtifactIds);
         }
 
         return deploymentOnly;
     }
 
     private void collectReactorModuleClasspath(String artifactId, List<ModuleInfo> allModules,
-                                                List<String> result, Set<String> exclude, Set<String> visited) {
+                                                List<String> result, Set<String> exclude, Set<String> visited,
+                                                Set<String> excludedArtifactIds) {
         if (!visited.add(artifactId)) return;
+        if (excludedArtifactIds.contains(artifactId)) return;
         for (ModuleInfo m : allModules) {
             if (!m.getArtifactId().equals(artifactId)) continue;
             if ("pom".equals(m.getPackaging())) continue;
@@ -985,7 +1061,8 @@ public class PomParser {
             Set<String> optionalReactorDeps = m.getOptionalReactorDependencies();
             for (String depId : m.getReactorDependencies()) {
                 if (!optionalReactorDeps.contains(depId)) {
-                    collectReactorModuleClasspath(depId, allModules, result, exclude, visited);
+                    collectReactorModuleClasspath(depId, allModules, result, exclude, visited,
+                            excludedArtifactIds);
                 }
             }
             break;
@@ -1205,6 +1282,14 @@ public class PomParser {
                 info.getReactorDependencies().add(dep.getArtifactId());
                 if ("true".equals(dep.getOptional())) {
                     info.getOptionalReactorDependencies().add(dep.getArtifactId());
+                }
+                if (dep.getExclusions() != null) {
+                    for (org.apache.maven.model.Exclusion excl : dep.getExclusions()) {
+                        String exclGA = excl.getGroupId() + ":" + excl.getArtifactId();
+                        if (reactorGAs.contains(exclGA)) {
+                            info.addReactorDependencyExclusion(dep.getArtifactId(), excl.getArtifactId());
+                        }
+                    }
                 }
                 continue;
             }

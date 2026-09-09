@@ -56,6 +56,7 @@ public class ModuleInfo {
     private Map<String, String> extensionDevProperties = new LinkedHashMap<>();
     private Set<String> optionalClasspathEntries = new LinkedHashSet<>();
     private Set<String> optionalReactorDependencies = new LinkedHashSet<>();
+    private Map<String, Set<String>> reactorDependencyExclusions = new LinkedHashMap<>();
 
     public record ResourceDir(String directory, boolean filtering) {}
 
@@ -196,6 +197,14 @@ public class ModuleInfo {
 
     public Set<String> getOptionalReactorDependencies() { return optionalReactorDependencies; }
     public void setOptionalReactorDependencies(Set<String> optionalReactorDependencies) { this.optionalReactorDependencies = optionalReactorDependencies; }
+
+    public Map<String, Set<String>> getReactorDependencyExclusions() { return reactorDependencyExclusions; }
+    public void addReactorDependencyExclusion(String depArtifactId, String excludedArtifactId) {
+        reactorDependencyExclusions.computeIfAbsent(depArtifactId, k -> new LinkedHashSet<>()).add(excludedArtifactId);
+    }
+    public Set<String> getReactorDependencyExclusionsFor(String depArtifactId) {
+        return reactorDependencyExclusions.getOrDefault(depArtifactId, Set.of());
+    }
 
     @Override
     public String toString() {

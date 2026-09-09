@@ -284,7 +284,8 @@ public class QuarkusBuildHelper {
                 .setVersion(version)
                 .setClassifier(classifier)
                 .setType(type)
-                .setResolvedPath(path));
+                .setResolvedPath(path)
+                .setDeploymentCp());
     }
 
     private static String osClassifier() {
