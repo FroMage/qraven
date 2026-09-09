@@ -7,6 +7,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -47,6 +49,16 @@ public class BuildOrchestrator {
         if (projectsFilter != null) {
             modules = filterProjects(modules, byId, projectsFilter, alsoMake);
         }
+
+        Map<String, Integer> forwardReach = computeForwardReach(modules);
+        Comparator<ModuleBuild> byPriority = Comparator.comparingInt(
+                (ModuleBuild m) -> forwardReach.getOrDefault(m.artifactId(), 0)).reversed();
+        for (ModuleBuild m : modules) {
+            List<ModuleBuild> sorted = new ArrayList<>(m.getDependencies());
+            sorted.sort(byPriority);
+            m.setDependencies(sorted);
+        }
+        modules.sort(byPriority);
 
         Set<String> allJars = new LinkedHashSet<>();
         for (ModuleBuild m : modules) {
@@ -227,6 +239,32 @@ public class BuildOrchestrator {
             System.err.println("Cascade failures (" + cascadeFailures.size() + "): "
                     + String.join(", ", cascadeFailures));
         }
+    }
+
+    private Map<String, Integer> computeForwardReach(List<ModuleBuild> modules) {
+        Map<String, List<String>> dependents = new HashMap<>();
+        for (ModuleBuild m : modules) {
+            for (ModuleBuild dep : m.getDependencies()) {
+                dependents.computeIfAbsent(dep.artifactId(), k -> new ArrayList<>()).add(m.artifactId());
+            }
+        }
+        Map<String, Integer> result = new HashMap<>();
+        for (ModuleBuild m : modules) {
+            computeForwardReachRecursive(m.artifactId(), dependents, result);
+        }
+        return result;
+    }
+
+    private int computeForwardReachRecursive(String id, Map<String, List<String>> dependents,
+                                              Map<String, Integer> cache) {
+        if (cache.containsKey(id)) return cache.get(id);
+        cache.put(id, 0);
+        int max = 0;
+        for (String depId : dependents.getOrDefault(id, List.of())) {
+            max = Math.max(max, 1 + computeForwardReachRecursive(depId, dependents, cache));
+        }
+        cache.put(id, max);
+        return max;
     }
 
     private List<ModuleBuild> filterProjects(List<ModuleBuild> allModules,
