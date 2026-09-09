@@ -132,7 +132,10 @@ public class ExtensionDescriptorHelper {
 
             @Override
             public ExtensionDescriptorGenerator.DepNode collectDeploymentDependencies(ArtifactCoords coords) {
-                List<ExtensionDescriptorGenerator.DepNode> allDeps = new ArrayList<>(children);
+                List<ExtensionDescriptorGenerator.DepNode> allDeps = new ArrayList<>();
+                allDeps.add(new ExtensionDescriptorGenerator.DepNode(
+                        groupId, artifactId, "", "jar", version, null, List.of()));
+                allDeps.addAll(children);
                 allDeps.addAll(deploymentChildren);
                 return new ExtensionDescriptorGenerator.DepNode(
                         coords.getGroupId(), coords.getArtifactId(), coords.getClassifier(),
