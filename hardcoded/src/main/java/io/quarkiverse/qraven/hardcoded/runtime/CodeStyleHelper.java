@@ -201,7 +201,10 @@ public class CodeStyleHelper {
             groups.get(matchedGroup).add(imp);
         }
 
-        java.util.Comparator<String> importComparator = (a, b) -> {
+        java.util.Comparator<String> regularComparator = (a, b) -> {
+            return extractImportPath(a).compareTo(extractImportPath(b));
+        };
+        java.util.Comparator<String> staticComparator = (a, b) -> {
             String pa = extractImportPath(a);
             String pb = extractImportPath(b);
             int lastDotA = pa.lastIndexOf('.');
@@ -215,9 +218,9 @@ public class CodeStyleHelper {
             return memberA.compareTo(memberB);
         };
         for (List<String> group : groups.values()) {
-            group.sort(importComparator);
+            group.sort(regularComparator);
         }
-        staticImports.sort(importComparator);
+        staticImports.sort(staticComparator);
 
         StringBuilder newImports = new StringBuilder();
         boolean first = true;

@@ -83,7 +83,9 @@ public class BuildOrchestrator {
             }
         }
 
-        ProgressDisplay progress = new ProgressDisplay(modules.size(), threadCount);
+        boolean noProgress = "true".equals(System.getProperty("no-progress"))
+                || System.getProperties().containsKey("no-progress");
+        ProgressDisplay progress = noProgress ? null : new ProgressDisplay(modules.size(), threadCount);
 
         AtomicInteger threadIndexCounter = new AtomicInteger();
         ConcurrentHashMap<Long, Integer> threadIndices = new ConcurrentHashMap<>();
@@ -170,7 +172,7 @@ public class BuildOrchestrator {
             if (!modules.isEmpty()) {
                 modules.get(0).runtime.close();
             }
-            progress.stop();
+            if (progress != null) progress.stop();
         }
 
         long elapsed = System.currentTimeMillis() - start;
