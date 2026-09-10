@@ -109,6 +109,7 @@ public abstract class ModuleBuild {
     public abstract boolean hasQuarkusBuildPlugin();
     public abstract String quarkusBuildSkipWhen();
     public abstract boolean hasGenerateCodeGoal();
+    public abstract boolean hasCodeGenProviders();
     public abstract String generateCodeSkipWhen();
     public abstract Map<String, String> quarkusBuildProperties();
     public abstract List<String> deploymentClasspath();
@@ -260,8 +261,8 @@ public abstract class ModuleBuild {
                 }
 
                 Path generatedSourcesDir = null;
-                if (hasGenerateCodeGoal() && !evaluateSkip(generateCodeSkipWhen())
-                        && QuarkusBuildHelper.hasCodeGenProviders(this)) {
+                if (hasGenerateCodeGoal() && hasCodeGenProviders()
+                        && !evaluateSkip(generateCodeSkipWhen())) {
                     if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "generate-code", 0);
                     t = System.currentTimeMillis();
                     Files.createDirectories(classesDir());
@@ -274,6 +275,7 @@ public abstract class ModuleBuild {
                             cause = cause.getCause();
                         }
                         System.err.println("[" + artifactId() + "] generate-code failed: " + cause.getMessage());
+                        cause.printStackTrace(System.err);
                     }
                     recordPhase("generate-code", t);
                 }

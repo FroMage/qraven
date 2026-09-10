@@ -342,6 +342,8 @@ public class BuildFileGenerator {
                 .append(quoteOrNull(module.getQuarkusBuildSkipWhen())).append("; }\n");
         sb.append("    @Override public boolean hasGenerateCodeGoal() { return ")
                 .append(module.isHasGenerateCodeGoal()).append("; }\n");
+        sb.append("    @Override public boolean hasCodeGenProviders() { return ")
+                .append(module.isHasCodeGenProviders()).append("; }\n");
         sb.append("    @Override public String generateCodeSkipWhen() { return ")
                 .append(quoteOrNull(module.getGenerateCodeSkipWhen())).append("; }\n\n");
 

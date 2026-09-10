@@ -57,6 +57,7 @@ public class ModuleInfo {
     private Set<String> optionalClasspathEntries = new LinkedHashSet<>();
     private Set<String> optionalReactorDependencies = new LinkedHashSet<>();
     private boolean apCacheable;
+    private boolean hasCodeGenProviders;
     private Map<String, Set<String>> reactorDependencyExclusions = new LinkedHashMap<>();
 
     public record ResourceDir(String directory, boolean filtering, String targetPath) {}
@@ -209,6 +210,9 @@ public class ModuleInfo {
 
     public boolean isApCacheable() { return apCacheable; }
     public void setApCacheable(boolean apCacheable) { this.apCacheable = apCacheable; }
+
+    public boolean isHasCodeGenProviders() { return hasCodeGenProviders; }
+    public void setHasCodeGenProviders(boolean hasCodeGenProviders) { this.hasCodeGenProviders = hasCodeGenProviders; }
 
     @Override
     public String toString() {

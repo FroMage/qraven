@@ -800,6 +800,39 @@ public class PomParser {
         List<String> deploymentClasspath = resolveDeploymentClasspath(deploymentGAVs, info,
                 reactorGAs, allModules, excludedDeploymentGAs);
         info.setDeploymentClasspath(deploymentClasspath);
+        info.setHasCodeGenProviders(
+                checkHasCodeGenProviders(deploymentClasspath, deploymentGAVs, reactorGAs, allModules));
+    }
+
+    private static final String CODEGEN_SERVICE = "META-INF/services/io.quarkus.deployment.CodeGenProvider";
+
+    private boolean checkHasCodeGenProviders(List<String> deploymentClasspath,
+            Set<String> deploymentGAVs, Set<String> reactorGAs, List<ModuleInfo> allModules) {
+        // Check reactor modules via their source trees
+        for (String gav : deploymentGAVs) {
+            String[] parts = gav.split(":");
+            if (parts.length < 2) continue;
+            String ga = parts[0] + ":" + parts[1];
+            if (!reactorGAs.contains(ga)) continue;
+            for (ModuleInfo m : allModules) {
+                if (m.getArtifactId().equals(parts[1]) && m.getGroupId().equals(parts[0])) {
+                    java.nio.file.Path resourcesService = m.getBaseDir().resolve("src/main/resources/" + CODEGEN_SERVICE);
+                    if (java.nio.file.Files.exists(resourcesService)) return true;
+                    break;
+                }
+            }
+        }
+        // Check external jars
+        for (String jarPath : deploymentClasspath) {
+            java.nio.file.Path p = java.nio.file.Path.of(jarPath);
+            if (!java.nio.file.Files.exists(p) || java.nio.file.Files.isDirectory(p)) continue;
+            try (java.util.jar.JarFile jar = new java.util.jar.JarFile(p.toFile())) {
+                if (jar.getEntry(CODEGEN_SERVICE) != null) return true;
+            } catch (Exception e) {
+                // skip
+            }
+        }
+        return false;
     }
 
     private void buildReactorExtensionProps(ModuleInfo m, List<String> extensionArtifacts,
