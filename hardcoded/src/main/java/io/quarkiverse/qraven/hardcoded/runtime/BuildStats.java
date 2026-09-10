@@ -10,7 +10,7 @@ import java.util.concurrent.atomic.LongAdder;
 public class BuildStats {
 
     private static final String[] PHASE_ORDER = {
-            "compile", "kotlin", "jar", "install", "ext-descriptor",
+            "compile", "compile+apt", "kotlin", "jar", "install", "ext-descriptor",
             "jandex", "quarkus-build", "resources", "protobuf"
     };
 

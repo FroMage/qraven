@@ -408,30 +408,32 @@ public class BuildRuntime {
             options.add("ALL-MODULE-PATH");
         }
 
-        JavaFileManager taskFileManager = new ForwardingJavaFileManager<>(fileManager) {
-            @Override
-            public ClassLoader getClassLoader(Location location) {
-                if (location == StandardLocation.ANNOTATION_PROCESSOR_PATH) {
-                    Iterable<? extends File> path = fileManager.getLocation(
-                            StandardLocation.ANNOTATION_PROCESSOR_PATH);
-                    if (path != null) {
-                        List<URL> urls = new ArrayList<>();
-                        for (File f : path) {
-                            try {
-                                urls.add(f.toURI().toURL());
-                            } catch (Exception e) {
-                                // skip
+        JavaFileManager taskFileManager;
+        if (!annotationProcessorPaths.isEmpty()) {
+            String apKey = String.join(File.pathSeparator, annotationProcessorPaths);
+            taskFileManager = new ForwardingJavaFileManager<>(fileManager) {
+                @Override
+                public ClassLoader getClassLoader(Location location) {
+                    if (location == StandardLocation.ANNOTATION_PROCESSOR_PATH) {
+                        return apClassLoaderCache.computeIfAbsent(apKey, k -> {
+                            List<URL> urls = new ArrayList<>();
+                            for (String jar : annotationProcessorPaths) {
+                                try {
+                                    urls.add(new File(jar).toURI().toURL());
+                                } catch (Exception e) {
+                                    // skip
+                                }
                             }
-                        }
-                        if (!urls.isEmpty()) {
                             return new URLClassLoader(urls.toArray(new URL[0]),
                                     ClassLoader.getPlatformClassLoader());
-                        }
+                        });
                     }
+                    return super.getClassLoader(location);
                 }
-                return super.getClassLoader(location);
-            }
-        };
+            };
+        } else {
+            taskFileManager = fileManager;
+        }
 
         JavaCompiler.CompilationTask task = compiler.getTask(
                 null, taskFileManager, diagnostics, options, null, compilationUnits);
@@ -447,6 +449,8 @@ public class BuildRuntime {
             throw new RuntimeException(sb.toString());
         }
     }
+
+    private final ConcurrentHashMap<String, ClassLoader> apClassLoaderCache = new ConcurrentHashMap<>();
 
     private volatile org.jetbrains.kotlin.cli.jvm.K2JVMCompiler kotlinCompiler;
 

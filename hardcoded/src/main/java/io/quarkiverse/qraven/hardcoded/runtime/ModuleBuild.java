@@ -337,8 +337,10 @@ public abstract class ModuleBuild {
                 boolean hasGenSources = generatedSourcesDir != null && Files.isDirectory(generatedSourcesDir);
                 if (hasJavaSources() || hasKotlinJava || generatedProtoDir != null
                         || generatedAntlrDir != null || hasGenSources) {
+                    List<String> apPaths = resolvedAnnotationProcessorPaths();
+                    String compilePhase = apPaths.isEmpty() ? "compile" : "compile+apt";
                     int sourceCount = countSources();
-                    if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "compile", sourceCount);
+                    if (progress != null) progress.phaseChanged(threadIdx, artifactId(), compilePhase, sourceCount);
                     t = System.currentTimeMillis();
                     List<Path> extraDirs = new ArrayList<>();
                     if (generatedProtoDir != null) {
@@ -356,9 +358,9 @@ public abstract class ModuleBuild {
                         extraDirs.add(kotlinSourceDir());
                     }
                     runtime.compile(sourceDir(), classesDir(), fullClasspath,
-                            resolvedAnnotationProcessorPaths(), compilerArgs(),
+                            apPaths, compilerArgs(),
                             extraDirs.toArray(new Path[0]));
-                    recordPhase("compile", t);
+                    recordPhase(compilePhase, t);
                 }
 
                 if (needsJandexIndex()) {

@@ -62,6 +62,7 @@ public class ProgressDisplay {
     public void moduleStarted(int threadIndex, String artifactId, String phase, int detail) {
         String status = switch (phase) {
             case "compile" -> artifactId + " │ compiling " + detail + " files";
+            case "compile+apt" -> artifactId + " │ compiling " + detail + " files (apt)";
             case "resources" -> artifactId + " │ copying resources";
             case "jandex" -> artifactId + " │ indexing classes";
             case "jar" -> artifactId + " │ packaging jar";
