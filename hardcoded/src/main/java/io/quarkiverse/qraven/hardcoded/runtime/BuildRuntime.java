@@ -57,6 +57,8 @@ public class BuildRuntime {
     private final boolean jrtUnavailable;
     private final List<File> platformClasspath;
     private final ConcurrentHashMap<Long, StandardJavaFileManager> fileManagers = new ConcurrentHashMap<>();
+    private volatile CodeStyleHelper codeStyleHelper;
+    private volatile BannedDependencyChecker bannedDepChecker;
 
     public BuildRuntime(Path projectRoot) {
         this.projectRoot = projectRoot;
@@ -174,7 +176,30 @@ public class BuildRuntime {
         System.out.println("Classpath warmup: " + classpathTime + "ms (" + allJars.size() + " jars), ct.sym: " + ctSymTime + "ms");
     }
 
+    public CodeStyleHelper getCodeStyleHelper() {
+        if (codeStyleHelper == null) {
+            synchronized (this) {
+                if (codeStyleHelper == null) {
+                    codeStyleHelper = new CodeStyleHelper(projectRoot);
+                }
+            }
+        }
+        return codeStyleHelper;
+    }
+
+    public BannedDependencyChecker getBannedDependencyChecker() {
+        if (bannedDepChecker == null) {
+            synchronized (this) {
+                if (bannedDepChecker == null) {
+                    bannedDepChecker = new BannedDependencyChecker(projectRoot);
+                }
+            }
+        }
+        return bannedDepChecker;
+    }
+
     public void close() {
+        if (codeStyleHelper != null) codeStyleHelper.close();
         for (StandardJavaFileManager fm : fileManagers.values()) {
             try { fm.close(); } catch (IOException e) { /* ignore */ }
         }

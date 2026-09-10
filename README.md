@@ -238,6 +238,16 @@ Qraven replicates the behavior of the following Maven plugins during build:
 ### Quarkus extension development
 - **quarkus-extension-maven-plugin** -- Generates `META-INF/quarkus-extension.properties` and `META-INF/quarkus-extension.yaml` for Quarkus extension modules.
 
+### Code style
+- **formatter-maven-plugin** (Eclipse JDT) -- Formats Java source files in-place using the project's `eclipse-format.xml` config. The Eclipse JDT formatter and its dependencies (`org.eclipse.jdt.core`, `ecj`, `org.eclipse.text`, `org.eclipse.equinox.common`) are loaded at runtime from `~/.m2/repository` via a separate classloader, keeping the build.jar small. Disabled with `-Dno-format`.
+- **impsort-maven-plugin** -- Sorts Java imports into groups: `java.`, `javax.`, `jakarta.`, `org.`, `com.`, other, then static imports. Normalizes blank lines between groups. Implemented natively (no external dependencies). Disabled with `-Dno-format`.
+- **spotless-maven-plugin** (ktfmt) -- Formats Kotlin source files using ktfmt with `KOTLINLANG` style. The ktfmt library and its dependencies are loaded at runtime from `~/.m2/repository`. Disabled with `-Dno-format`.
+
+### Dependency enforcement
+- **maven-enforcer-plugin** (simple) -- Checks compile classpath against Quarkus banned dependency lists (`quarkus-banned-dependencies.xml`, `quarkus-banned-dependencies-okhttp.xml`). Supports exact GA matches (`groupId:artifactId`), group wildcards (`groupId:*`), and prefix patterns (`groupId:prefix-*`). Reports violations as warnings. Disabled with `-Dno-format`.
+
+**Note:** Custom Quarkus enforcer rules are not implemented: `BansRuntimeDependency`, `RequiresMinimalDeploymentDependency`, `DependencyAlignmentRule`, and `dependencyConvergence`. These rules require deep analysis of deployment vs runtime module boundaries and BOM version alignment that goes beyond simple GA pattern matching.
+
 ### Not yet supported
 - **avro-maven-plugin** -- Avro schema (`.avsc`) to Java code generation (Avro codegen runs via the Quarkus `generate-code` step instead)
 - **maven-surefire-plugin / maven-failsafe-plugin** -- Test execution

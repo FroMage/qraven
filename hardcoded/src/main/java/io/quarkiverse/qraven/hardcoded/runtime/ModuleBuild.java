@@ -205,6 +205,17 @@ public abstract class ModuleBuild {
                 Set<String> added = new HashSet<>();
                 addReactorJars(this, fullClasspath, added);
 
+                boolean skipFormat = evaluateSkip("${no-format}");
+
+                if (!skipFormat) {
+                    List<String> violations = runtime.getBannedDependencyChecker().check(fullClasspath);
+                    if (!violations.isEmpty()) {
+                        for (String v : violations) {
+                            System.err.println("WARN: [" + artifactId() + "] banned dependency: " + v);
+                        }
+                    }
+                }
+
                 if (progress != null) progress.moduleStarted(threadIdx, artifactId(), "resources", 0);
                 long t = System.currentTimeMillis();
                 for (String[] rd : resourceDirs()) {
@@ -279,6 +290,10 @@ public abstract class ModuleBuild {
                     recordPhase("antlr", t);
                 }
 
+                if (hasKotlinSources() && !skipFormat) {
+                    runtime.getCodeStyleHelper().formatKotlinFiles(kotlinSourceDir());
+                }
+
                 if (hasKotlinSources()) {
                     if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "kotlin", 0);
                     t = System.currentTimeMillis();
@@ -298,6 +313,12 @@ public abstract class ModuleBuild {
                             kotlinExtraRoots.toArray(new Path[0]));
                     fullClasspath.add(0, classesDir().toString());
                     recordPhase("kotlin", t);
+                }
+
+                if (hasJavaSources() && !skipFormat) {
+                    CodeStyleHelper codeStyle = runtime.getCodeStyleHelper();
+                    codeStyle.formatJavaFiles(sourceDir());
+                    codeStyle.sortImports(sourceDir());
                 }
 
                 boolean hasKotlinJava = hasKotlinSources() && hasJavaInKotlinDir();
