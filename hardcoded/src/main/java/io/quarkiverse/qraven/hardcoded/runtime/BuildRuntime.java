@@ -453,6 +453,24 @@ public class BuildRuntime {
     public void warmupKotlin() {
         long start = System.currentTimeMillis();
         kotlinCompiler = new org.jetbrains.kotlin.cli.jvm.K2JVMCompiler();
+        try {
+            Path tmpDir = Files.createTempDirectory("qraven-kt-warmup");
+            Path dummyKt = tmpDir.resolve("Dummy.kt");
+            Path outDir = tmpDir.resolve("out");
+            Files.createDirectories(outDir);
+            Files.writeString(dummyKt, "class Dummy");
+            kotlinCompiler.exec(
+                    new PrintStream(OutputStream.nullOutputStream()),
+                    "-d", outDir.toString(),
+                    "-no-stdlib", "-no-reflect",
+                    dummyKt.toString());
+            try (var walk = Files.walk(tmpDir)) {
+                walk.sorted(java.util.Comparator.reverseOrder())
+                        .forEach(p -> { try { Files.delete(p); } catch (Exception e) { } });
+            }
+        } catch (Exception e) {
+            // warmup failure is non-fatal
+        }
         long elapsed = System.currentTimeMillis() - start;
         System.out.println("Kotlin compiler warmup: " + elapsed + "ms");
     }
