@@ -204,7 +204,15 @@ public class CodeStyleHelper {
         java.util.Comparator<String> importComparator = (a, b) -> {
             String pa = extractImportPath(a);
             String pb = extractImportPath(b);
-            return pa.compareTo(pb);
+            int lastDotA = pa.lastIndexOf('.');
+            int lastDotB = pb.lastIndexOf('.');
+            String containerA = lastDotA >= 0 ? pa.substring(0, lastDotA) : "";
+            String containerB = lastDotB >= 0 ? pb.substring(0, lastDotB) : "";
+            int cmp = containerA.compareTo(containerB);
+            if (cmp != 0) return cmp;
+            String memberA = lastDotA >= 0 ? pa.substring(lastDotA + 1) : pa;
+            String memberB = lastDotB >= 0 ? pb.substring(lastDotB + 1) : pb;
+            return memberA.compareTo(memberB);
         };
         for (List<String> group : groups.values()) {
             group.sort(importComparator);

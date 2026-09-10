@@ -207,17 +207,22 @@ public abstract class ModuleBuild {
 
                 boolean skipFormat = evaluateSkip("${no-format}");
 
+                if (progress != null) progress.moduleStarted(threadIdx, artifactId(), "resources", 0);
+                long t = System.currentTimeMillis();
+
                 if (!skipFormat) {
+                    if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "enforcer", 0);
+                    t = System.currentTimeMillis();
                     List<String> violations = runtime.getBannedDependencyChecker().check(fullClasspath);
                     if (!violations.isEmpty()) {
                         for (String v : violations) {
                             System.err.println("WARN: [" + artifactId() + "] banned dependency: " + v);
                         }
                     }
+                    recordPhase("enforcer", t);
                 }
 
-                if (progress != null) progress.moduleStarted(threadIdx, artifactId(), "resources", 0);
-                long t = System.currentTimeMillis();
+                t = System.currentTimeMillis();
                 for (String[] rd : resourceDirs()) {
                     Path dir = runtime.getProjectRoot().resolve(baseDir()).resolve(rd[0]);
                     boolean filtering = "true".equals(rd[1]);
@@ -291,7 +296,10 @@ public abstract class ModuleBuild {
                 }
 
                 if (hasKotlinSources() && !skipFormat) {
+                    if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "ktfmt", 0);
+                    t = System.currentTimeMillis();
                     runtime.getCodeStyleHelper().formatKotlinFiles(kotlinSourceDir());
+                    recordPhase("ktfmt", t);
                 }
 
                 if (hasKotlinSources()) {
@@ -316,9 +324,12 @@ public abstract class ModuleBuild {
                 }
 
                 if (hasJavaSources() && !skipFormat) {
+                    if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "format", 0);
+                    t = System.currentTimeMillis();
                     CodeStyleHelper codeStyle = runtime.getCodeStyleHelper();
                     codeStyle.formatJavaFiles(sourceDir());
                     codeStyle.sortImports(sourceDir());
+                    recordPhase("format", t);
                 }
 
                 boolean hasKotlinJava = hasKotlinSources() && hasJavaInKotlinDir();

@@ -24,12 +24,39 @@ public class ProgressDisplay {
     private final PrintStream out;
     private volatile boolean stopped;
     private int lastLineCount;
+    private final int termWidth;
 
     public ProgressDisplay(int totalModules, int threadCount) {
         this.totalModules = totalModules;
         this.threadCount = threadCount;
         this.startTime = System.currentTimeMillis();
         this.out = System.err;
+        this.termWidth = detectTerminalWidth();
+    }
+
+    private static int detectTerminalWidth() {
+        String cols = System.getenv("COLUMNS");
+        if (cols != null) {
+            try {
+                int w = Integer.parseInt(cols.trim());
+                if (w > 0) return w;
+            } catch (NumberFormatException e) {
+                // fall through
+            }
+        }
+        try {
+            Process p = new ProcessBuilder("tput", "cols")
+                    .redirectErrorStream(true).start();
+            String output = new String(p.getInputStream().readAllBytes()).trim();
+            p.waitFor();
+            if (p.exitValue() == 0) {
+                int w = Integer.parseInt(output);
+                if (w > 0) return w;
+            }
+        } catch (Exception e) {
+            // fall through
+        }
+        return 120;
     }
 
     public void moduleStarted(int threadIndex, String artifactId, String phase, int detail) {
@@ -107,16 +134,16 @@ public class ProgressDisplay {
         if (fail > 0) bar.append(" (").append(RED).append(fail).append(" failed").append(RESET).append(BOLD).append(')');
         bar.append(' ').append(elapsedStr).append(eta);
         bar.append(RESET);
-        out.println(bar);
+        out.println(truncate(bar.toString()));
 
         int linesWritten = 1;
         for (int i = 0; i < threadCount; i++) {
             String status = threadStatus.get(i);
             String prefix = threadCount > 1 ? "  T" + i + " " : "  ";
             if (status == null) {
-                out.println(prefix + DIM + "idle" + RESET);
+                out.println(truncate(prefix + DIM + "idle" + RESET));
             } else {
-                out.println(prefix + CYAN + status + RESET);
+                out.println(truncate(prefix + CYAN + status + RESET));
             }
             linesWritten++;
         }
@@ -127,6 +154,29 @@ public class ProgressDisplay {
         for (int i = 0; i < lastLineCount; i++) {
             out.print(CURSOR_UP + ERASE_LINE);
         }
+    }
+
+    private String truncate(String line) {
+        int maxVisible = termWidth - 1;
+        if (maxVisible <= 0) return line;
+        int visible = 0;
+        boolean inEscape = false;
+        int cutIndex = -1;
+        for (int i = 0; i < line.length(); i++) {
+            char c = line.charAt(i);
+            if (c == '\u001b') {
+                inEscape = true;
+            } else if (inEscape) {
+                if (c == 'm') inEscape = false;
+            } else {
+                visible++;
+                if (visible >= maxVisible && cutIndex < 0) {
+                    cutIndex = i + 1;
+                }
+            }
+        }
+        if (cutIndex < 0) return line;
+        return line.substring(0, cutIndex) + RESET;
     }
 
     private static String formatTime(long ms) {
