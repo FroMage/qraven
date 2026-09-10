@@ -150,6 +150,10 @@ public class ProgressDisplay {
         lastLineCount = linesWritten;
     }
 
+    public synchronized void adjustForStrayOutput(int extraLines) {
+        lastLineCount += extraLines;
+    }
+
     private void clearLines() {
         for (int i = 0; i < lastLineCount; i++) {
             out.print(CURSOR_UP + ERASE_LINE);

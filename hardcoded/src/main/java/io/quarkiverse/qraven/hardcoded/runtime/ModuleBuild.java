@@ -319,6 +319,7 @@ public abstract class ModuleBuild {
                     }
                     runtime.compileKotlin(kotlinSourceDir(), sourceDir(), classesDir(), fullClasspath,
                             kotlinExtraRoots.toArray(new Path[0]));
+                    if (progress != null) progress.adjustForStrayOutput(6);
                     fullClasspath.add(0, classesDir().toString());
                     recordPhase("kotlin", t);
                 }
