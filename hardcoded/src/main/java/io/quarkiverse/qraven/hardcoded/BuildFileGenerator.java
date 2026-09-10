@@ -60,6 +60,9 @@ public class BuildFileGenerator {
 
     public void generate(List<ModuleInfo> modules) throws IOException {
         Path srcDir = outputDir.resolve("src");
+        Path classesDir = outputDir.resolve("classes");
+        deleteDirectory(srcDir);
+        deleteDirectory(classesDir);
         Files.createDirectories(srcDir);
 
         hasKotlinModules = modules.stream().anyMatch(ModuleInfo::isHasKotlinSources);
@@ -917,5 +920,22 @@ public class BuildFileGenerator {
 
     private String sanitizeClassName(String artifactId) {
         return artifactId.replace('-', '_').replace('.', '_');
+    }
+
+    private static void deleteDirectory(Path dir) throws IOException {
+        if (!Files.exists(dir)) return;
+        Files.walkFileTree(dir, new SimpleFileVisitor<>() {
+            @Override
+            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                Files.delete(file);
+                return FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public FileVisitResult postVisitDirectory(Path d, IOException exc) throws IOException {
+                Files.delete(d);
+                return FileVisitResult.CONTINUE;
+            }
+        });
     }
 }
