@@ -10,6 +10,8 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 import java.util.function.Consumer;
+import java.util.jar.JarFile;
+import java.util.zip.ZipEntry;
 
 import io.quarkus.bootstrap.app.CuratedApplication;
 import io.quarkus.bootstrap.app.QuarkusBootstrap;
@@ -119,6 +121,27 @@ public class QuarkusBuildHelper {
             }
         }
         return generatedSourcesDir;
+    }
+
+    static boolean hasCodeGenProviders(ModuleBuild module) {
+        List<String> deploymentCp = ModuleBuild.resolvePaths(module.deploymentClasspath());
+        for (String jarPath : deploymentCp) {
+            Path p = Path.of(jarPath);
+            if (!Files.exists(p)) continue;
+            if (Files.isDirectory(p)) {
+                if (Files.exists(p.resolve("META-INF/services/io.quarkus.deployment.CodeGenProvider"))) {
+                    return true;
+                }
+            } else {
+                try (JarFile jar = new JarFile(p.toFile())) {
+                    ZipEntry entry = jar.getEntry("META-INF/services/io.quarkus.deployment.CodeGenProvider");
+                    if (entry != null) return true;
+                } catch (Exception e) {
+                    // skip unreadable jars
+                }
+            }
+        }
+        return false;
     }
 
     private static void addRuntimeDep(String jarPath, Set<String> extensionGAs,

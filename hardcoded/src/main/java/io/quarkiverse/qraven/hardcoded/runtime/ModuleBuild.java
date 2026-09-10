@@ -259,7 +259,8 @@ public abstract class ModuleBuild {
                 }
 
                 Path generatedSourcesDir = null;
-                if (hasGenerateCodeGoal() && !evaluateSkip(generateCodeSkipWhen())) {
+                if (hasGenerateCodeGoal() && !evaluateSkip(generateCodeSkipWhen())
+                        && QuarkusBuildHelper.hasCodeGenProviders(this)) {
                     if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "generate-code", 0);
                     t = System.currentTimeMillis();
                     Files.createDirectories(classesDir());
