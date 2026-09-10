@@ -411,19 +411,27 @@ public class BuildRuntime {
         JavaFileManager taskFileManager;
         if (!annotationProcessorPaths.isEmpty()) {
             boolean quarkusOnly = isQuarkusExtensionProcessorOnly(annotationProcessorPaths);
-            taskFileManager = new ForwardingJavaFileManager<>(fileManager) {
-                @Override
-                public ClassLoader getClassLoader(Location location) {
-                    if (location == StandardLocation.ANNOTATION_PROCESSOR_PATH) {
-                        if (quarkusOnly) {
-                            String apKey = String.join(File.pathSeparator, annotationProcessorPaths);
+            if (quarkusOnly) {
+                String apKey = String.join(File.pathSeparator, annotationProcessorPaths);
+                boolean existed = apClassLoaderCache.containsKey(apKey);
+                taskFileManager = new ForwardingJavaFileManager<>(fileManager) {
+                    @Override
+                    public ClassLoader getClassLoader(Location location) {
+                        if (location == StandardLocation.ANNOTATION_PROCESSOR_PATH) {
                             return apClassLoaderCache.computeIfAbsent(apKey, k -> newApClassLoader(annotationProcessorPaths));
                         }
-                        return newApClassLoader(annotationProcessorPaths);
+                        return super.getClassLoader(location);
                     }
-                    return super.getClassLoader(location);
+                };
+                if (existed) {
+                    apCacheHits.incrementAndGet();
+                } else {
+                    apCacheMisses.incrementAndGet();
                 }
-            };
+            } else {
+                apNonCacheable.incrementAndGet();
+                taskFileManager = fileManager;
+            }
         } else {
             taskFileManager = fileManager;
         }
@@ -444,6 +452,16 @@ public class BuildRuntime {
     }
 
     private final ConcurrentHashMap<String, ClassLoader> apClassLoaderCache = new ConcurrentHashMap<>();
+    private final java.util.concurrent.atomic.AtomicInteger apCacheHits = new java.util.concurrent.atomic.AtomicInteger();
+    private final java.util.concurrent.atomic.AtomicInteger apCacheMisses = new java.util.concurrent.atomic.AtomicInteger();
+    private final java.util.concurrent.atomic.AtomicInteger apNonCacheable = new java.util.concurrent.atomic.AtomicInteger();
+
+    public String apCacheStats() {
+        return "AP classloader cache: " + apCacheHits.get() + " hits, "
+                + apCacheMisses.get() + " misses, "
+                + apNonCacheable.get() + " non-cacheable, "
+                + apClassLoaderCache.size() + " distinct keys";
+    }
 
     private static boolean isQuarkusExtensionProcessorOnly(List<String> apPaths) {
         for (String path : apPaths) {

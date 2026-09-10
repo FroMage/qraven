@@ -197,6 +197,9 @@ public class BuildOrchestrator {
         if (!phaseSummary.isEmpty()) {
             System.out.println(phaseSummary);
         }
+        if (!modules.isEmpty()) {
+            System.out.println(modules.get(0).runtime.apCacheStats());
+        }
         if (!directFailures.isEmpty()) {
             System.err.println("Direct failures: " + String.join(", ", directFailures));
             if (logFile != null) {
