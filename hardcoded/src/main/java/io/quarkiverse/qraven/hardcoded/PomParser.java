@@ -1162,6 +1162,27 @@ public class PomParser {
 
         info.setCompilerArgs(compilerArgs);
         info.setAnnotationProcessorPaths(annotationProcessorPaths);
+        info.setApCacheable(checkApCacheable(annotationProcessorPaths));
+    }
+
+    private static boolean checkApCacheable(List<String> apPaths) {
+        if (apPaths.isEmpty()) return false;
+        boolean foundQuarkusProcessor = false;
+        for (String path : apPaths) {
+            String name = java.nio.file.Path.of(path).getFileName().toString().toLowerCase();
+            if (name.startsWith("quarkus-extension-processor-")) {
+                foundQuarkusProcessor = true;
+                continue;
+            }
+            try (java.util.jar.JarFile jar = new java.util.jar.JarFile(new java.io.File(path))) {
+                if (jar.getEntry("META-INF/services/javax.annotation.processing.Processor") != null) {
+                    return false;
+                }
+            } catch (Exception e) {
+                // unreadable jar — treat as non-processor
+            }
+        }
+        return foundQuarkusProcessor;
     }
 
     private void extractCompilerConfigFromPlugins(List<Plugin> plugins,

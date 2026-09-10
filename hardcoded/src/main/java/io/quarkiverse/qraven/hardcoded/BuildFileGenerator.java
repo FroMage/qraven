@@ -222,6 +222,9 @@ public class BuildFileGenerator {
         sb.append("        );\n");
         sb.append("    }\n\n");
 
+        sb.append("    @Override public boolean isApCacheable() { return ")
+                .append(module.isApCacheable()).append("; }\n\n");
+
         sb.append("    @Override\n");
         sb.append("    public List<String> compilerArgs() {\n");
         sb.append("        return List.of(\n");

@@ -87,6 +87,7 @@ public abstract class ModuleBuild {
     public abstract List<String> compileClasspath();
     public abstract List<String> optionalCompileClasspath();
     public abstract List<String> annotationProcessorPaths();
+    public abstract boolean isApCacheable();
     public abstract List<String> compilerArgs();
     public abstract List<String> moduleDependencyIds();
     public abstract List<String> optionalModuleDependencyIds();
@@ -358,7 +359,7 @@ public abstract class ModuleBuild {
                         extraDirs.add(kotlinSourceDir());
                     }
                     runtime.compile(sourceDir(), classesDir(), fullClasspath,
-                            apPaths, compilerArgs(),
+                            apPaths, isApCacheable(), compilerArgs(),
                             extraDirs.toArray(new Path[0]));
                     recordPhase(compilePhase, t);
                 }

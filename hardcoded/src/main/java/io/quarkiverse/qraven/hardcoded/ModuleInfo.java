@@ -56,6 +56,7 @@ public class ModuleInfo {
     private Map<String, String> extensionDevProperties = new LinkedHashMap<>();
     private Set<String> optionalClasspathEntries = new LinkedHashSet<>();
     private Set<String> optionalReactorDependencies = new LinkedHashSet<>();
+    private boolean apCacheable;
     private Map<String, Set<String>> reactorDependencyExclusions = new LinkedHashMap<>();
 
     public record ResourceDir(String directory, boolean filtering, String targetPath) {}
@@ -205,6 +206,9 @@ public class ModuleInfo {
     public Set<String> getReactorDependencyExclusionsFor(String depArtifactId) {
         return reactorDependencyExclusions.getOrDefault(depArtifactId, Set.of());
     }
+
+    public boolean isApCacheable() { return apCacheable; }
+    public void setApCacheable(boolean apCacheable) { this.apCacheable = apCacheable; }
 
     @Override
     public String toString() {
