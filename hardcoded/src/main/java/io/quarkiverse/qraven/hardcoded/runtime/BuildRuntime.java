@@ -463,14 +463,30 @@ public class BuildRuntime {
                 + apClassLoaderCache.size() + " distinct keys";
     }
 
-    private static boolean isQuarkusExtensionProcessorOnly(List<String> apPaths) {
+    private final ConcurrentHashMap<String, Boolean> apCacheableCache = new ConcurrentHashMap<>();
+
+    private boolean isQuarkusExtensionProcessorOnly(List<String> apPaths) {
+        String key = String.join(File.pathSeparator, apPaths);
+        return apCacheableCache.computeIfAbsent(key, k -> checkQuarkusExtensionProcessorOnly(apPaths));
+    }
+
+    private static boolean checkQuarkusExtensionProcessorOnly(List<String> apPaths) {
+        boolean foundQuarkusProcessor = false;
         for (String path : apPaths) {
             String name = Path.of(path).getFileName().toString().toLowerCase();
-            if (!name.startsWith("quarkus-extension-processor-")) {
-                return false;
+            if (name.startsWith("quarkus-extension-processor-")) {
+                foundQuarkusProcessor = true;
+                continue;
+            }
+            try (java.util.jar.JarFile jar = new java.util.jar.JarFile(new File(path))) {
+                if (jar.getEntry("META-INF/services/javax.annotation.processing.Processor") != null) {
+                    return false;
+                }
+            } catch (Exception e) {
+                // unreadable jar — treat as non-processor
             }
         }
-        return true;
+        return foundQuarkusProcessor;
     }
 
     private static URLClassLoader newApClassLoader(List<String> apPaths) {
