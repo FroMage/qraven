@@ -410,23 +410,16 @@ public class BuildRuntime {
 
         JavaFileManager taskFileManager;
         if (!annotationProcessorPaths.isEmpty()) {
-            String apKey = String.join(File.pathSeparator, annotationProcessorPaths);
+            boolean quarkusOnly = isQuarkusExtensionProcessorOnly(annotationProcessorPaths);
             taskFileManager = new ForwardingJavaFileManager<>(fileManager) {
                 @Override
                 public ClassLoader getClassLoader(Location location) {
                     if (location == StandardLocation.ANNOTATION_PROCESSOR_PATH) {
-                        return apClassLoaderCache.computeIfAbsent(apKey, k -> {
-                            List<URL> urls = new ArrayList<>();
-                            for (String jar : annotationProcessorPaths) {
-                                try {
-                                    urls.add(new File(jar).toURI().toURL());
-                                } catch (Exception e) {
-                                    // skip
-                                }
-                            }
-                            return new URLClassLoader(urls.toArray(new URL[0]),
-                                    ClassLoader.getPlatformClassLoader());
-                        });
+                        if (quarkusOnly) {
+                            String apKey = String.join(File.pathSeparator, annotationProcessorPaths);
+                            return apClassLoaderCache.computeIfAbsent(apKey, k -> newApClassLoader(annotationProcessorPaths));
+                        }
+                        return newApClassLoader(annotationProcessorPaths);
                     }
                     return super.getClassLoader(location);
                 }
@@ -451,6 +444,28 @@ public class BuildRuntime {
     }
 
     private final ConcurrentHashMap<String, ClassLoader> apClassLoaderCache = new ConcurrentHashMap<>();
+
+    private static boolean isQuarkusExtensionProcessorOnly(List<String> apPaths) {
+        for (String path : apPaths) {
+            String name = Path.of(path).getFileName().toString().toLowerCase();
+            if (!name.startsWith("quarkus-extension-processor-")) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static URLClassLoader newApClassLoader(List<String> apPaths) {
+        List<URL> urls = new ArrayList<>();
+        for (String jar : apPaths) {
+            try {
+                urls.add(new File(jar).toURI().toURL());
+            } catch (Exception e) {
+                // skip
+            }
+        }
+        return new URLClassLoader(urls.toArray(new URL[0]), ClassLoader.getPlatformClassLoader());
+    }
 
     private volatile org.jetbrains.kotlin.cli.jvm.K2JVMCompiler kotlinCompiler;
 
