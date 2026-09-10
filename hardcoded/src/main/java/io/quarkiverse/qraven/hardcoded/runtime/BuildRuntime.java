@@ -2,7 +2,9 @@ package io.quarkiverse.qraven.hardcoded.runtime;
 
 import javax.tools.Diagnostic;
 import javax.tools.DiagnosticCollector;
+import javax.tools.ForwardingJavaFileManager;
 import javax.tools.JavaCompiler;
+import javax.tools.JavaFileManager;
 import javax.tools.JavaFileObject;
 import javax.tools.StandardJavaFileManager;
 import javax.tools.ToolProvider;
@@ -13,6 +15,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.PrintStream;
+import java.net.URL;
+import java.net.URLClassLoader;
 import java.nio.file.DirectoryStream;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
@@ -347,22 +351,10 @@ public class BuildRuntime {
         }
 
         if (!annotationProcessorPaths.isEmpty()) {
-            List<File> apFiles = annotationProcessorPaths.stream()
-                    .map(File::new)
-                    .filter(File::exists)
-                    .toList();
-            try {
-                fileManager.setLocation(StandardLocation.ANNOTATION_PROCESSOR_PATH, apFiles);
-            } catch (IOException e) {
-                throw new RuntimeException("Failed to set annotation processor path", e);
-            }
+            options.add("-processorpath");
+            options.add(String.join(File.pathSeparator, annotationProcessorPaths));
         } else {
             options.add("-proc:none");
-            try {
-                fileManager.setLocation(StandardLocation.ANNOTATION_PROCESSOR_PATH, List.of());
-            } catch (IOException e) {
-                // best effort clear
-            }
         }
 
         for (int i = 0; i < compilerArgs.size(); i++) {
@@ -391,8 +383,33 @@ public class BuildRuntime {
             options.add("ALL-MODULE-PATH");
         }
 
+        JavaFileManager taskFileManager = new ForwardingJavaFileManager<>(fileManager) {
+            @Override
+            public ClassLoader getClassLoader(Location location) {
+                if (location == StandardLocation.ANNOTATION_PROCESSOR_PATH) {
+                    Iterable<? extends File> path = fileManager.getLocation(
+                            StandardLocation.ANNOTATION_PROCESSOR_PATH);
+                    if (path != null) {
+                        List<URL> urls = new ArrayList<>();
+                        for (File f : path) {
+                            try {
+                                urls.add(f.toURI().toURL());
+                            } catch (Exception e) {
+                                // skip
+                            }
+                        }
+                        if (!urls.isEmpty()) {
+                            return new URLClassLoader(urls.toArray(new URL[0]),
+                                    ClassLoader.getPlatformClassLoader());
+                        }
+                    }
+                }
+                return super.getClassLoader(location);
+            }
+        };
+
         JavaCompiler.CompilationTask task = compiler.getTask(
-                null, fileManager, diagnostics, options, null, compilationUnits);
+                null, taskFileManager, diagnostics, options, null, compilationUnits);
 
         boolean success = task.call();
         if (!success) {
