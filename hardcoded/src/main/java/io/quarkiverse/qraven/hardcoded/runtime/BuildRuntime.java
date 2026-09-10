@@ -429,7 +429,15 @@ public class BuildRuntime {
                 }
             } else {
                 apNonCacheable.incrementAndGet();
-                taskFileManager = fileManager;
+                taskFileManager = new ForwardingJavaFileManager<>(fileManager) {
+                    @Override
+                    public ClassLoader getClassLoader(Location location) {
+                        if (location == StandardLocation.ANNOTATION_PROCESSOR_PATH) {
+                            return newApClassLoader(annotationProcessorPaths);
+                        }
+                        return super.getClassLoader(location);
+                    }
+                };
             }
         } else {
             taskFileManager = fileManager;
