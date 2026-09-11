@@ -256,13 +256,21 @@ public class ExtensionDescriptorHelper {
         String fileName = Path.of(jarPath).getFileName().toString();
         if (!fileName.endsWith(".jar")) return null;
         String baseName = fileName.substring(0, fileName.length() - 4);
+        String bestAid = null;
+        String bestGroup = null;
         for (Map.Entry<String, String> entry : artifactToGroup.entrySet()) {
             String aid = entry.getKey();
             if (baseName.startsWith(aid + "-")) {
-                String ver = baseName.substring(aid.length() + 1);
-                if (!ver.isEmpty()) {
-                    return new GavFromPath(entry.getValue(), aid, ver);
+                if (bestAid == null || aid.length() > bestAid.length()) {
+                    bestAid = aid;
+                    bestGroup = entry.getValue();
                 }
+            }
+        }
+        if (bestAid != null) {
+            String ver = baseName.substring(bestAid.length() + 1);
+            if (!ver.isEmpty()) {
+                return new GavFromPath(bestGroup, bestAid, ver);
             }
         }
         return null;

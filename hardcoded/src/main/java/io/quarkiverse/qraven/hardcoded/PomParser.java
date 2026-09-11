@@ -1059,6 +1059,36 @@ public class PomParser {
         }
 
         Set<String> runtimePaths = new LinkedHashSet<>(info.getCompileClasspath());
+        String ownJar = resolver.resolveArtifactPath(info.getGroupId(), info.getArtifactId(), info.getVersion());
+        if (ownJar != null) {
+            runtimePaths.add(ownJar);
+        }
+        Set<String> deploymentArtifactIds = new LinkedHashSet<>();
+        for (String gav : deploymentGAVs) {
+            String[] dp = gav.split(":");
+            if (dp.length >= 2) {
+                deploymentArtifactIds.add(dp[1]);
+            }
+        }
+        Set<String> runtimeReactorDeps = new LinkedHashSet<>();
+        for (String depId : info.getReactorDependencies()) {
+            if (!deploymentArtifactIds.contains(depId)) {
+                runtimeReactorDeps.add(depId);
+            }
+        }
+        collectTransitiveReactorDeps(runtimeReactorDeps, allModules, new LinkedHashSet<>());
+        for (String depId : runtimeReactorDeps) {
+            for (ModuleInfo m : allModules) {
+                if (!m.getArtifactId().equals(depId)) continue;
+                if ("pom".equals(m.getPackaging())) continue;
+                String jarPath = resolver.resolveArtifactPath(m.getGroupId(), m.getArtifactId(), m.getVersion());
+                if (jarPath != null) {
+                    runtimePaths.add(jarPath);
+                }
+                runtimePaths.addAll(m.getCompileClasspath());
+                break;
+            }
+        }
         List<String> deploymentOnly = new ArrayList<>();
 
         // Resolve external deployment deps via Aether
