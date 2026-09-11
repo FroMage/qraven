@@ -27,7 +27,9 @@ public class ExtensionDescriptorHelper {
                                 List<String> providesCapabilities,
                                 List<String> requiresCapabilities,
                                 boolean skipExtensionValidation,
-                                List<String> deploymentClasspath) {
+                                List<String> deploymentClasspath,
+                                Set<String> extensionGAs,
+                                Map<String, String> extensionProps) {
         String deployment = properties.get("deployment-artifact");
         if (deployment == null) {
             throw new RuntimeException("Missing deployment-artifact in extension descriptor properties");
@@ -42,7 +44,8 @@ public class ExtensionDescriptorHelper {
         List<ExtensionDescriptorGenerator.ModelDependency> modelDependencies = parseModelDeps(modelDeps);
 
         ExtensionDescriptorGenerator.DependencyResolver resolver = createResolver(
-                groupId, artifactId, version, classpath, reactorModuleGAs, deploymentClasspath);
+                groupId, artifactId, version, classpath, reactorModuleGAs, deploymentClasspath,
+                extensionGAs, extensionProps);
 
         try {
             ExtensionDescriptorGenerator generator = new ExtensionDescriptorGenerator.Builder()
@@ -99,7 +102,8 @@ public class ExtensionDescriptorHelper {
     private static ExtensionDescriptorGenerator.DependencyResolver createResolver(
             String groupId, String artifactId, String version,
             List<String> classpath, List<String> reactorModuleGAs,
-            List<String> deploymentClasspath) {
+            List<String> deploymentClasspath,
+            Set<String> extensionGAs, Map<String, String> extensionProps) {
 
         Map<String, String> reactorArtifactToGroup = new java.util.HashMap<>();
         for (String ga : reactorModuleGAs) {
@@ -139,6 +143,8 @@ public class ExtensionDescriptorHelper {
                 }
             }
         }
+
+        discoverMissingDeploymentDeps(children, deploymentChildren, extensionGAs, extensionProps);
 
         Set<String> deploymentGAs = new HashSet<>();
         for (ExtensionDescriptorGenerator.DepNode dc : deploymentChildren) {
@@ -231,6 +237,48 @@ public class ExtensionDescriptorHelper {
                 System.err.println("ERROR: " + msg);
             }
         };
+    }
+
+    private static void discoverMissingDeploymentDeps(
+            List<ExtensionDescriptorGenerator.DepNode> runtimeChildren,
+            List<ExtensionDescriptorGenerator.DepNode> deploymentChildren,
+            Set<String> extensionGAs, Map<String, String> extensionProps) {
+        Set<String> deploymentKeys = new HashSet<>();
+        for (ExtensionDescriptorGenerator.DepNode dc : deploymentChildren) {
+            deploymentKeys.add(dc.getGroupId() + ":" + dc.getArtifactId());
+        }
+
+        Path m2 = Path.of(System.getProperty("user.home"), ".m2", "repository");
+
+        for (ExtensionDescriptorGenerator.DepNode child : runtimeChildren) {
+            String ga = child.getGroupId() + ":" + child.getArtifactId();
+            if (!extensionGAs.contains(ga)) continue;
+
+            String packed = extensionProps.get(ga);
+            if (packed == null) continue;
+
+            String deploymentArtifact = null;
+            for (String line : packed.split("\\\\n|\\n")) {
+                if (line.startsWith("deployment-artifact=")) {
+                    deploymentArtifact = line.substring("deployment-artifact=".length());
+                    break;
+                }
+            }
+            if (deploymentArtifact == null) continue;
+
+            String[] parts = deploymentArtifact.split(":");
+            if (parts.length < 3) continue;
+            String dg = parts[0], da = parts[1], dv = parts[parts.length - 1];
+            if (deploymentKeys.contains(dg + ":" + da)) continue;
+
+            Path deployJar = m2.resolve(dg.replace('.', '/'))
+                    .resolve(da).resolve(dv).resolve(da + "-" + dv + ".jar");
+            if (Files.exists(deployJar)) {
+                deploymentChildren.add(new ExtensionDescriptorGenerator.DepNode(
+                        dg, da, "", "jar", dv, deployJar, List.of()));
+                deploymentKeys.add(dg + ":" + da);
+            }
+        }
     }
 
     private record GavFromPath(String groupId, String artifactId, String version) {}

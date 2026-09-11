@@ -259,7 +259,9 @@ public abstract class ModuleBuild {
                             extensionProvidesCapabilities(),
                             extensionRequiresCapabilities(),
                             evaluateSkip(extensionValidationSkipWhen()),
-                            resolvePaths(deploymentClasspath()));
+                            resolvePaths(deploymentClasspath()),
+                            new HashSet<>(runtimeExtensionArtifacts()),
+                            extensionDevProperties());
                     recordPhase("ext-descriptor", t);
                 }
 
