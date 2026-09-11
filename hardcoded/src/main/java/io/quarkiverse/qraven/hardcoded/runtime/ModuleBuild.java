@@ -118,6 +118,7 @@ public abstract class ModuleBuild {
     public abstract String protocVersion();
     public abstract String grpcVersion();
     public abstract String quarkusGrpcVersion();
+    public abstract Map<String, String> allReactorExtensionDeployments();
 
     public void setDependencies(List<ModuleBuild> dependencies) {
         this.dependencies = dependencies;
@@ -261,7 +262,8 @@ public abstract class ModuleBuild {
                             evaluateSkip(extensionValidationSkipWhen()),
                             resolvePaths(deploymentClasspath()),
                             new HashSet<>(runtimeExtensionArtifacts()),
-                            extensionDevProperties());
+                            extensionDevProperties(),
+                            allReactorExtensionDeployments());
                     recordPhase("ext-descriptor", t);
                 }
 

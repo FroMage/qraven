@@ -402,6 +402,21 @@ public class BuildFileGenerator {
         sb.append("    @Override public String quarkusGrpcVersion() { return ")
                 .append(quoteOrNull(module.getQuarkusGrpcVersion())).append("; }\n");
 
+        Map<String, String> reactorExtDeploy = module.getAllReactorExtensionDeployments();
+        if (reactorExtDeploy.isEmpty()) {
+            sb.append("    @Override\n");
+            sb.append("    public Map<String, String> allReactorExtensionDeployments() { return Map.of(); }\n");
+        } else {
+            sb.append("    private static final String REACTOR_EXT_DEPLOYMENTS = \"\"\"\n");
+            for (Map.Entry<String, String> entry : reactorExtDeploy.entrySet()) {
+                sb.append("            ").append(escapeTextBlock(entry.getKey()))
+                        .append("=").append(escapeTextBlock(entry.getValue())).append("\n");
+            }
+            sb.append("            \"\"\";\n\n");
+            sb.append("    @Override\n");
+            sb.append("    public Map<String, String> allReactorExtensionDeployments() { return parseProps(REACTOR_EXT_DEPLOYMENTS); }\n");
+        }
+
         sb.append("}\n");
         return sb.toString();
     }

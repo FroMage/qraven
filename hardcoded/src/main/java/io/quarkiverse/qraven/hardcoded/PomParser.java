@@ -243,6 +243,20 @@ public class PomParser {
             }
         }
 
+        Map<String, String> allReactorExtDeployments = new LinkedHashMap<>();
+        for (ModuleInfo m : modules) {
+            if (!m.isHasExtensionPlugin()) continue;
+            String deployArtifact = m.getExtensionDescriptorProperties().get("deployment-artifact");
+            if (deployArtifact != null) {
+                allReactorExtDeployments.put(m.getGroupId() + ":" + m.getArtifactId(), deployArtifact);
+            }
+        }
+        for (ModuleInfo m : modules) {
+            if (m.isHasExtensionPlugin()) {
+                m.setAllReactorExtensionDeployments(allReactorExtDeployments);
+            }
+        }
+
         return modules;
     }
 

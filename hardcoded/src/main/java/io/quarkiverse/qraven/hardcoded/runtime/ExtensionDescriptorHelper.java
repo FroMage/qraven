@@ -29,7 +29,8 @@ public class ExtensionDescriptorHelper {
                                 boolean skipExtensionValidation,
                                 List<String> deploymentClasspath,
                                 Set<String> extensionGAs,
-                                Map<String, String> extensionProps) {
+                                Map<String, String> extensionProps,
+                                Map<String, String> allReactorExtDeployments) {
         String deployment = properties.get("deployment-artifact");
         if (deployment == null) {
             throw new RuntimeException("Missing deployment-artifact in extension descriptor properties");
@@ -45,7 +46,7 @@ public class ExtensionDescriptorHelper {
 
         ExtensionDescriptorGenerator.DependencyResolver resolver = createResolver(
                 groupId, artifactId, version, classpath, reactorModuleGAs, deploymentClasspath,
-                extensionGAs, extensionProps);
+                extensionGAs, extensionProps, allReactorExtDeployments);
 
         try {
             ExtensionDescriptorGenerator generator = new ExtensionDescriptorGenerator.Builder()
@@ -103,7 +104,8 @@ public class ExtensionDescriptorHelper {
             String groupId, String artifactId, String version,
             List<String> classpath, List<String> reactorModuleGAs,
             List<String> deploymentClasspath,
-            Set<String> extensionGAs, Map<String, String> extensionProps) {
+            Set<String> extensionGAs, Map<String, String> extensionProps,
+            Map<String, String> allReactorExtDeployments) {
 
         Map<String, String> reactorArtifactToGroup = new java.util.HashMap<>();
         for (String ga : reactorModuleGAs) {
@@ -144,7 +146,8 @@ public class ExtensionDescriptorHelper {
             }
         }
 
-        discoverMissingDeploymentDeps(children, deploymentChildren, extensionGAs, extensionProps);
+        discoverMissingDeploymentDeps(children, deploymentChildren, extensionGAs, extensionProps,
+                allReactorExtDeployments);
 
         Set<String> deploymentGAs = new HashSet<>();
         for (ExtensionDescriptorGenerator.DepNode dc : deploymentChildren) {
@@ -242,7 +245,8 @@ public class ExtensionDescriptorHelper {
     private static void discoverMissingDeploymentDeps(
             List<ExtensionDescriptorGenerator.DepNode> runtimeChildren,
             List<ExtensionDescriptorGenerator.DepNode> deploymentChildren,
-            Set<String> extensionGAs, Map<String, String> extensionProps) {
+            Set<String> extensionGAs, Map<String, String> extensionProps,
+            Map<String, String> allReactorExtDeployments) {
         Set<String> deploymentKeys = new HashSet<>();
         for (ExtensionDescriptorGenerator.DepNode dc : deploymentChildren) {
             deploymentKeys.add(dc.getGroupId() + ":" + dc.getArtifactId());
@@ -252,18 +256,25 @@ public class ExtensionDescriptorHelper {
 
         for (ExtensionDescriptorGenerator.DepNode child : runtimeChildren) {
             String ga = child.getGroupId() + ":" + child.getArtifactId();
-            if (!extensionGAs.contains(ga)) continue;
-
-            String packed = extensionProps.get(ga);
-            if (packed == null) continue;
 
             String deploymentArtifact = null;
-            for (String line : packed.split("\\\\n|\\n")) {
-                if (line.startsWith("deployment-artifact=")) {
-                    deploymentArtifact = line.substring("deployment-artifact=".length());
-                    break;
+
+            if (extensionGAs.contains(ga)) {
+                String packed = extensionProps.get(ga);
+                if (packed != null) {
+                    for (String line : packed.split("\\\\n|\\n")) {
+                        if (line.startsWith("deployment-artifact=")) {
+                            deploymentArtifact = line.substring("deployment-artifact=".length());
+                            break;
+                        }
+                    }
                 }
             }
+
+            if (deploymentArtifact == null) {
+                deploymentArtifact = allReactorExtDeployments.get(ga);
+            }
+
             if (deploymentArtifact == null) continue;
 
             String[] parts = deploymentArtifact.split(":");

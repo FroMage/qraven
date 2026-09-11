@@ -61,6 +61,7 @@ public class ModuleInfo {
     private String protocVersion;
     private String grpcVersion;
     private String quarkusGrpcVersion;
+    private Map<String, String> allReactorExtensionDeployments = new LinkedHashMap<>();
     private Map<String, Set<String>> reactorDependencyExclusions = new LinkedHashMap<>();
 
     public record ResourceDir(String directory, boolean filtering, String targetPath) {}
@@ -225,6 +226,9 @@ public class ModuleInfo {
 
     public String getQuarkusGrpcVersion() { return quarkusGrpcVersion; }
     public void setQuarkusGrpcVersion(String quarkusGrpcVersion) { this.quarkusGrpcVersion = quarkusGrpcVersion; }
+
+    public Map<String, String> getAllReactorExtensionDeployments() { return allReactorExtensionDeployments; }
+    public void setAllReactorExtensionDeployments(Map<String, String> m) { this.allReactorExtensionDeployments = m; }
 
     @Override
     public String toString() {
