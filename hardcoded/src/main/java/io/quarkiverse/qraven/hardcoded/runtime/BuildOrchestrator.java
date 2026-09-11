@@ -48,6 +48,15 @@ public class BuildOrchestrator {
 
         if (projectsFilter != null) {
             modules = filterProjects(modules, byId, projectsFilter, alsoMake);
+            Set<String> included = new LinkedHashSet<>();
+            for (ModuleBuild m : modules) {
+                included.add(m.artifactId());
+            }
+            for (ModuleBuild m : modules) {
+                m.setDependencies(m.getDependencies().stream()
+                        .filter(dep -> included.contains(dep.artifactId()))
+                        .toList());
+            }
         }
 
         Map<String, Integer> forwardReach = computeForwardReach(modules);
