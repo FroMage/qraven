@@ -4,6 +4,7 @@ import java.io.StringReader;
 import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -252,7 +253,11 @@ public class QuarkusBuildHelper {
             }
         }
 
-        for (String jar : module.resolvedClasspath()) {
+        List<String> allClasspath = new ArrayList<>(module.resolvedClasspath());
+        Set<String> visited = new HashSet<>();
+        collectReactorClasspaths(module, allClasspath, visited);
+
+        for (String jar : allClasspath) {
             GAV gav = parseGAVFromM2Path(jar);
             if (gav == null) continue;
             if (protocVersion == null && "com.google.protobuf".equals(gav.groupId)
@@ -337,6 +342,20 @@ public class QuarkusBuildHelper {
             return null;
         }
         return osName + "-" + archName;
+    }
+
+    private static void collectReactorClasspaths(ModuleBuild module, List<String> classpath, Set<String> visited) {
+        for (ModuleBuild dep : module.getDependencies()) {
+            if (!visited.add(dep.artifactId())) continue;
+            if (dep.didSucceed()) {
+                for (String cp : dep.resolvedClasspath()) {
+                    if (!classpath.contains(cp)) {
+                        classpath.add(cp);
+                    }
+                }
+            }
+            collectReactorClasspaths(dep, classpath, visited);
+        }
     }
 
     private static String findProtocPluginVersionInReactorDeps(List<ModuleBuild> deps, Set<String> visited) {
