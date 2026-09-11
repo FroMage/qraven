@@ -1143,8 +1143,14 @@ public class PomParser {
             Set<String> optionalReactorDeps = m.getOptionalReactorDependencies();
             for (String depId : m.getReactorDependencies()) {
                 if (!optionalReactorDeps.contains(depId)) {
+                    Set<String> depExclusions = m.getReactorDependencyExclusionsFor(depId);
+                    Set<String> mergedExclusions = excludedArtifactIds;
+                    if (!depExclusions.isEmpty()) {
+                        mergedExclusions = new HashSet<>(excludedArtifactIds);
+                        mergedExclusions.addAll(depExclusions);
+                    }
                     collectReactorModuleClasspath(depId, allModules, result, exclude, visited,
-                            excludedArtifactIds);
+                            mergedExclusions);
                 }
             }
             break;
