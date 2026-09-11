@@ -90,6 +90,7 @@ public class BuildOrchestrator {
         AtomicInteger threadIndexCounter = new AtomicInteger();
         ConcurrentHashMap<Long, Integer> threadIndices = new ConcurrentHashMap<>();
 
+        long orchestratorStart = System.currentTimeMillis();
         System.out.println("Building " + modules.size() + " modules with " + threadCount + " threads");
 
         // Redirect System.out, System.err and JUL to build log so they don't break the progress bar.
@@ -170,12 +171,18 @@ public class BuildOrchestrator {
             }
 
             if (!modules.isEmpty()) {
+                long closeStart = System.currentTimeMillis();
                 modules.get(0).runtime.close();
+                long closeElapsed = System.currentTimeMillis() - closeStart;
+                if (closeElapsed > 50) {
+                    originalErr.println("[timing] runtime.close(): " + closeElapsed + "ms");
+                }
             }
             if (progress != null) progress.stop();
         }
 
         long elapsed = System.currentTimeMillis() - start;
+        System.out.println("[timing] orchestrator wall clock: " + (System.currentTimeMillis() - orchestratorStart) + "ms");
         List<String> directFailures = new ArrayList<>();
         List<String> cascadeFailures = new ArrayList<>();
         int succeeded = 0;

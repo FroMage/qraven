@@ -138,6 +138,7 @@ public abstract class ModuleBuild {
         this.maxThreadIndex = maxThreadIndex;
     }
 
+    private volatile long buildScheduledAt;
     private volatile boolean buildSucceeded = false;
     private volatile String failureMessage;
 
@@ -156,6 +157,7 @@ public abstract class ModuleBuild {
         CompletableFuture<?>[] depFutures = dependencies.stream()
                 .map(dep -> dep.buildAsync(executor))
                 .toArray(CompletableFuture[]::new);
+        buildScheduledAt = System.currentTimeMillis();
         buildFuture = CompletableFuture.allOf(depFutures)
                 .handleAsync((v, ex) -> { doBuild(); return null; }, executor);
         return buildFuture;
@@ -182,6 +184,7 @@ public abstract class ModuleBuild {
 
     protected void doBuild() {
         long start = System.currentTimeMillis();
+        System.err.println("[timing] [" + artifactId() + "] doBuild started at T+" + (start - buildScheduledAt) + "ms after scheduling");
 
         List<String> failedDeps = new ArrayList<>();
         for (ModuleBuild dep : dependencies) {
@@ -205,13 +208,22 @@ public abstract class ModuleBuild {
                 runtime.install(null, pomFile(), groupId(), artifactId(), version(), packaging());
                 recordPhase("install", t);
             } else {
+                long prePhaseStart = System.currentTimeMillis();
                 runtime.clean(targetDir());
+                long cleanElapsed = System.currentTimeMillis() - prePhaseStart;
 
                 List<String> fullClasspath = new ArrayList<>(resolvedClasspath());
                 Set<String> added = new HashSet<>();
                 addReactorJars(this, fullClasspath, added);
+                long cpElapsed = System.currentTimeMillis() - prePhaseStart - cleanElapsed;
 
                 boolean skipFormat = evaluateSkip("${no-format}");
+
+                long prePhaseTotal = System.currentTimeMillis() - prePhaseStart;
+                if (prePhaseTotal > 50) {
+                    System.err.println("[timing] [" + artifactId() + "] pre-phase: " + prePhaseTotal
+                            + "ms (clean=" + cleanElapsed + "ms, classpath=" + cpElapsed + "ms)");
+                }
 
                 if (progress != null) progress.moduleStarted(threadIdx, artifactId(), "resources", 0);
                 long t = System.currentTimeMillis();
@@ -264,7 +276,11 @@ public abstract class ModuleBuild {
                             new HashSet<>(runtimeExtensionArtifacts()),
                             extensionDevProperties(),
                             allReactorExtensionDeployments());
+                    long edElapsed = System.currentTimeMillis() - t;
                     recordPhase("ext-descriptor", t);
+                    if (edElapsed > 100) {
+                        System.err.println("[timing] [" + artifactId() + "] ext-descriptor: " + edElapsed + "ms");
+                    }
                 }
 
                 Path generatedSourcesDir = null;
@@ -284,7 +300,9 @@ public abstract class ModuleBuild {
                         System.err.println("[" + artifactId() + "] generate-code failed: " + cause.getMessage());
                         cause.printStackTrace(System.err);
                     }
+                    long gcElapsed = System.currentTimeMillis() - t;
                     recordPhase("generate-code", t);
+                    System.err.println("[timing] [" + artifactId() + "] generate-code: " + gcElapsed + "ms");
                 }
 
                 Path generatedProtoDir = null;
@@ -400,6 +418,10 @@ public abstract class ModuleBuild {
             }
 
             buildSucceeded = true;
+            long totalElapsed = System.currentTimeMillis() - start;
+            if (totalElapsed > 500) {
+                System.err.println("[timing] [" + artifactId() + "] doBuild total: " + totalElapsed + "ms");
+            }
             if (progress != null) {
                 progress.moduleCompleted(threadIdx, true);
             }

@@ -112,8 +112,11 @@ public class QuarkusBuildHelper {
     static Path generateCode(ModuleBuild module, List<ModuleBuild> reactorDeps) throws Exception {
         Path generatedSourcesDir = module.targetDir().resolve("generated-sources");
         ClassLoader originalTccl = Thread.currentThread().getContextClassLoader();
+        long t0 = System.currentTimeMillis();
         try (CuratedApplication app = bootstrap(module, reactorDeps)) {
+            long t1 = System.currentTimeMillis();
             QuarkusClassLoader deploymentCl = app.createDeploymentClassLoader();
+            long t2 = System.currentTimeMillis();
             Thread.currentThread().setContextClassLoader(deploymentCl);
             try {
                 Class<?> codeGenerator = deploymentCl.loadClass("io.quarkus.deployment.CodeGenerator");
@@ -128,10 +131,15 @@ public class QuarkusBuildHelper {
                 Properties buildProps = new Properties();
                 buildProps.putAll(module.quarkusBuildProperties());
 
+                long t3 = System.currentTimeMillis();
                 initAndRun.invoke(null, deploymentCl, sourceParentDirs,
                         generatedSourcesDir, module.targetDir(),
                         (Consumer<Path>) p -> {}, app.getApplicationModel(), buildProps,
                         "NORMAL", false);
+                long t4 = System.currentTimeMillis();
+                System.err.println("[timing] [" + module.artifactId() + "] generateCode breakdown: "
+                        + "bootstrap=" + (t1 - t0) + "ms, createDeploymentCL=" + (t2 - t1)
+                        + "ms, initAndRun=" + (t4 - t3) + "ms, total=" + (t4 - t0) + "ms");
             } finally {
                 Thread.currentThread().setContextClassLoader(originalTccl);
                 deploymentCl.close();
