@@ -68,16 +68,35 @@ public class QuarkusBuildHelper {
         var appModel = modelBuilder.build();
 
         Properties buildSystemProps = new Properties();
-        buildSystemProps.putAll(module.quarkusBuildProperties());
+        for (Map.Entry<String, String> e : module.quarkusBuildProperties().entrySet()) {
+            String val = e.getValue();
+            if (val.contains("${")) {
+                // Resolve Maven-style property expressions from system properties
+                String resolved = val;
+                int start;
+                while ((start = resolved.indexOf("${")) >= 0) {
+                    int end = resolved.indexOf("}", start);
+                    if (end < 0) break;
+                    String propName = resolved.substring(start + 2, end);
+                    String propVal = System.getProperty(propName, "");
+                    resolved = resolved.substring(0, start) + propVal + resolved.substring(end + 1);
+                }
+                if (!resolved.isEmpty()) {
+                    buildSystemProps.put(e.getKey(), resolved);
+                }
+            } else {
+                buildSystemProps.put(e.getKey(), val);
+            }
+        }
 
         return QuarkusBootstrap.builder()
                 .setBaseClassLoader(QuarkusBuildHelper.class.getClassLoader())
                 .setExistingModel(appModel)
+                .setAppArtifact(appModel.getAppArtifact())
                 .setProjectRoot(module.targetDir().getParent())
                 .setTargetDirectory(module.targetDir())
                 .setBaseName(module.artifactId() + "-" + module.version())
                 .setBuildSystemProperties(buildSystemProps)
-                .setAppArtifact(appModel.getAppArtifact())
                 .setLocalProjectDiscovery(false)
                 .setIsolateDeployment(true)
                 .build()

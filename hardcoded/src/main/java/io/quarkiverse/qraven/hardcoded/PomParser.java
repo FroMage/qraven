@@ -801,14 +801,15 @@ public class PomParser {
                 reactorGAs, allModules, excludedDeploymentGAs);
         info.setDeploymentClasspath(deploymentClasspath);
         info.setHasCodeGenProviders(
-                checkHasCodeGenProviders(deploymentClasspath, deploymentGAVs, reactorGAs, allModules));
+                checkHasCodeGenProviders(deploymentClasspath, deploymentGAVs, reactorGAs, allModules, info));
     }
 
     private static final String CODEGEN_SERVICE = "META-INF/services/io.quarkus.deployment.CodeGenProvider";
 
     private boolean checkHasCodeGenProviders(List<String> deploymentClasspath,
-            Set<String> deploymentGAVs, Set<String> reactorGAs, List<ModuleInfo> allModules) {
-        // Check reactor modules via their source trees
+            Set<String> deploymentGAVs, Set<String> reactorGAs, List<ModuleInfo> allModules,
+            ModuleInfo module) {
+        // Check reactor deployment modules via their source trees
         for (String gav : deploymentGAVs) {
             String[] parts = gav.split(":");
             if (parts.length < 2) continue;
@@ -820,6 +821,17 @@ public class PomParser {
                     if (java.nio.file.Files.exists(resourcesService)) return true;
                     break;
                 }
+            }
+        }
+        // Check module's reactor dependencies (e.g. quarkus-grpc-codegen)
+        Set<String> reactorDepIds = new LinkedHashSet<>(module.getReactorDependencies());
+        collectTransitiveReactorDeps(reactorDepIds, allModules, new LinkedHashSet<>());
+        for (String depId : reactorDepIds) {
+            for (ModuleInfo m : allModules) {
+                if (!m.getArtifactId().equals(depId)) continue;
+                java.nio.file.Path resourcesService = m.getBaseDir().resolve("src/main/resources/" + CODEGEN_SERVICE);
+                if (java.nio.file.Files.exists(resourcesService)) return true;
+                break;
             }
         }
         // Check external jars

@@ -24,6 +24,7 @@ import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.util.Enumeration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -417,7 +418,8 @@ public class BuildRuntime {
                     @Override
                     public ClassLoader getClassLoader(Location location) {
                         if (location == StandardLocation.ANNOTATION_PROCESSOR_PATH) {
-                            return apClassLoaderCache.computeIfAbsent(apKey, k -> newApClassLoader(annotationProcessorPaths));
+                            URLClassLoader cached = apClassLoaderCache.computeIfAbsent(apKey, k -> newApClassLoader(annotationProcessorPaths));
+                            return unclosableClassLoader(cached);
                         }
                         return super.getClassLoader(location);
                     }
@@ -458,7 +460,7 @@ public class BuildRuntime {
         }
     }
 
-    private final ConcurrentHashMap<String, ClassLoader> apClassLoaderCache = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, URLClassLoader> apClassLoaderCache = new ConcurrentHashMap<>();
     private final java.util.concurrent.atomic.AtomicInteger apCacheHits = new java.util.concurrent.atomic.AtomicInteger();
     private final java.util.concurrent.atomic.AtomicInteger apCacheMisses = new java.util.concurrent.atomic.AtomicInteger();
     private final java.util.concurrent.atomic.AtomicInteger apNonCacheable = new java.util.concurrent.atomic.AtomicInteger();
@@ -480,6 +482,18 @@ public class BuildRuntime {
             }
         }
         return new URLClassLoader(urls.toArray(new URL[0]), ClassLoader.getPlatformClassLoader());
+    }
+
+    // javac closes the classloader returned by getClassLoader(ANNOTATION_PROCESSOR_PATH)
+    // after each compilation task. Wrapping prevents it from closing the cached instance.
+    private static URLClassLoader unclosableClassLoader(URLClassLoader delegate) {
+        return new URLClassLoader(delegate.getURLs(), delegate.getParent()) {
+            @Override public void close() { }
+            @Override public Class<?> loadClass(String name) throws ClassNotFoundException { return delegate.loadClass(name); }
+            @Override public URL getResource(String name) { return delegate.getResource(name); }
+            @Override public Enumeration<URL> getResources(String name) throws IOException { return delegate.getResources(name); }
+            @Override public InputStream getResourceAsStream(String name) { return delegate.getResourceAsStream(name); }
+        };
     }
 
     private volatile org.jetbrains.kotlin.cli.jvm.K2JVMCompiler kotlinCompiler;
