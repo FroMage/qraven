@@ -395,6 +395,13 @@ public class BuildFileGenerator {
             sb.append("    public Map<String, String> extensionDevProperties() { return parseProps(EXT_DEV_PROPS); }\n");
         }
 
+        sb.append("    @Override public String protocVersion() { return ")
+                .append(quoteOrNull(module.getProtocVersion())).append("; }\n");
+        sb.append("    @Override public String grpcVersion() { return ")
+                .append(quoteOrNull(module.getGrpcVersion())).append("; }\n");
+        sb.append("    @Override public String quarkusGrpcVersion() { return ")
+                .append(quoteOrNull(module.getQuarkusGrpcVersion())).append("; }\n");
+
         sb.append("}\n");
         return sb.toString();
     }

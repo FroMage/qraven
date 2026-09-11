@@ -4,7 +4,6 @@ import java.io.StringReader;
 import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -237,46 +236,9 @@ public class QuarkusBuildHelper {
         if (classifier == null) return;
 
         String m2 = System.getProperty("user.home") + "/.m2/repository/";
-        String protocVersion = null;
-        String grpcVersion = null;
-        String quarkusGrpcVersion = null;
-
-        for (String jar : deploymentCp) {
-            GAV gav = parseGAVFromM2Path(jar);
-            if (gav == null) continue;
-            if ("com.google.protobuf".equals(gav.groupId) && "protobuf-java".equals(gav.artifactId)) {
-                protocVersion = gav.version;
-            } else if ("io.grpc".equals(gav.groupId) && "grpc-core".equals(gav.artifactId)) {
-                grpcVersion = gav.version;
-            } else if ("io.quarkus".equals(gav.groupId) && "quarkus-grpc-protoc-plugin".equals(gav.artifactId)) {
-                quarkusGrpcVersion = gav.version;
-            }
-        }
-
-        List<String> allClasspath = new ArrayList<>(module.resolvedClasspath());
-        Set<String> visited = new HashSet<>();
-        collectReactorClasspaths(module, allClasspath, visited);
-
-        for (String jar : allClasspath) {
-            GAV gav = parseGAVFromM2Path(jar);
-            if (gav == null) continue;
-            if (protocVersion == null && "com.google.protobuf".equals(gav.groupId)
-                    && "protobuf-java".equals(gav.artifactId)) {
-                protocVersion = gav.version;
-            }
-            if (grpcVersion == null && "io.grpc".equals(gav.groupId)
-                    && "grpc-core".equals(gav.artifactId)) {
-                grpcVersion = gav.version;
-            }
-            if (quarkusGrpcVersion == null && "io.quarkus".equals(gav.groupId)
-                    && "quarkus-grpc-protoc-plugin".equals(gav.artifactId)) {
-                quarkusGrpcVersion = gav.version;
-            }
-        }
-
-        if (quarkusGrpcVersion == null) {
-            quarkusGrpcVersion = findProtocPluginVersionInReactorDeps(reactorDeps, new HashSet<>());
-        }
+        String protocVersion = module.protocVersion();
+        String grpcVersion = module.grpcVersion();
+        String quarkusGrpcVersion = module.quarkusGrpcVersion();
 
         if (protocVersion != null) {
             Path protocPath = Path.of(m2, "com/google/protobuf/protoc/" + protocVersion
@@ -342,32 +304,6 @@ public class QuarkusBuildHelper {
             return null;
         }
         return osName + "-" + archName;
-    }
-
-    private static void collectReactorClasspaths(ModuleBuild module, List<String> classpath, Set<String> visited) {
-        for (ModuleBuild dep : module.getDependencies()) {
-            if (!visited.add(dep.artifactId())) continue;
-            if (dep.didSucceed()) {
-                for (String cp : dep.resolvedClasspath()) {
-                    if (!classpath.contains(cp)) {
-                        classpath.add(cp);
-                    }
-                }
-            }
-            collectReactorClasspaths(dep, classpath, visited);
-        }
-    }
-
-    private static String findProtocPluginVersionInReactorDeps(List<ModuleBuild> deps, Set<String> visited) {
-        for (ModuleBuild dep : deps) {
-            if (!visited.add(dep.artifactId())) continue;
-            if ("quarkus-grpc-protoc-plugin".equals(dep.artifactId())) {
-                return dep.version();
-            }
-            String found = findProtocPluginVersionInReactorDeps(dep.getDependencies(), visited);
-            if (found != null) return found;
-        }
-        return null;
     }
 
     private record GAV(String groupId, String artifactId, String version) {}

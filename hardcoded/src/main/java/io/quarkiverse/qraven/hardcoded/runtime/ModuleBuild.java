@@ -115,6 +115,9 @@ public abstract class ModuleBuild {
     public abstract List<String> deploymentClasspath();
     public abstract List<String> runtimeExtensionArtifacts();
     public abstract Map<String, String> extensionDevProperties();
+    public abstract String protocVersion();
+    public abstract String grpcVersion();
+    public abstract String quarkusGrpcVersion();
 
     public void setDependencies(List<ModuleBuild> dependencies) {
         this.dependencies = dependencies;

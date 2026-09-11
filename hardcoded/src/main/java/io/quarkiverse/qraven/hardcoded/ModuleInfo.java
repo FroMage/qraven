@@ -58,6 +58,9 @@ public class ModuleInfo {
     private Set<String> optionalReactorDependencies = new LinkedHashSet<>();
     private boolean apCacheable;
     private boolean hasCodeGenProviders;
+    private String protocVersion;
+    private String grpcVersion;
+    private String quarkusGrpcVersion;
     private Map<String, Set<String>> reactorDependencyExclusions = new LinkedHashMap<>();
 
     public record ResourceDir(String directory, boolean filtering, String targetPath) {}
@@ -213,6 +216,15 @@ public class ModuleInfo {
 
     public boolean isHasCodeGenProviders() { return hasCodeGenProviders; }
     public void setHasCodeGenProviders(boolean hasCodeGenProviders) { this.hasCodeGenProviders = hasCodeGenProviders; }
+
+    public String getProtocVersion() { return protocVersion; }
+    public void setProtocVersion(String protocVersion) { this.protocVersion = protocVersion; }
+
+    public String getGrpcVersion() { return grpcVersion; }
+    public void setGrpcVersion(String grpcVersion) { this.grpcVersion = grpcVersion; }
+
+    public String getQuarkusGrpcVersion() { return quarkusGrpcVersion; }
+    public void setQuarkusGrpcVersion(String quarkusGrpcVersion) { this.quarkusGrpcVersion = quarkusGrpcVersion; }
 
     @Override
     public String toString() {

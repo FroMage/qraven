@@ -816,6 +816,88 @@ public class PomParser {
         info.setDeploymentClasspath(deploymentClasspath);
         info.setHasCodeGenProviders(
                 checkHasCodeGenProviders(deploymentClasspath, deploymentGAVs, reactorGAs, allModules, info));
+
+        scanCodegenToolVersions(info, deploymentClasspath, reactorDepIds, allModules);
+    }
+
+    private void scanCodegenToolVersions(ModuleInfo info, List<String> deploymentClasspath,
+                                          Set<String> reactorDepIds, List<ModuleInfo> allModules) {
+        String protocVersion = null;
+        String grpcVersion = null;
+        String quarkusGrpcVersion = null;
+
+        for (String jarPath : deploymentClasspath) {
+            String[] gav = parseGAVFromM2Path3(jarPath);
+            if (gav == null) continue;
+            if ("com.google.protobuf".equals(gav[0]) && "protobuf-java".equals(gav[1])) {
+                protocVersion = gav[2];
+            } else if ("io.grpc".equals(gav[0]) && "grpc-core".equals(gav[1])) {
+                grpcVersion = gav[2];
+            } else if ("io.quarkus".equals(gav[0]) && "quarkus-grpc-protoc-plugin".equals(gav[1])) {
+                quarkusGrpcVersion = gav[2];
+            }
+        }
+
+        for (String jarPath : info.getCompileClasspath()) {
+            String[] gav = parseGAVFromM2Path3(jarPath);
+            if (gav == null) continue;
+            if (protocVersion == null && "com.google.protobuf".equals(gav[0]) && "protobuf-java".equals(gav[1])) {
+                protocVersion = gav[2];
+            }
+            if (grpcVersion == null && "io.grpc".equals(gav[0]) && "grpc-core".equals(gav[1])) {
+                grpcVersion = gav[2];
+            }
+            if (quarkusGrpcVersion == null && "io.quarkus".equals(gav[0]) && "quarkus-grpc-protoc-plugin".equals(gav[1])) {
+                quarkusGrpcVersion = gav[2];
+            }
+        }
+
+        for (String depId : reactorDepIds) {
+            if (protocVersion != null && grpcVersion != null && quarkusGrpcVersion != null) break;
+            for (ModuleInfo m : allModules) {
+                if (!m.getArtifactId().equals(depId)) continue;
+                if ("pom".equals(m.getPackaging())) continue;
+                if (quarkusGrpcVersion == null && "quarkus-grpc-protoc-plugin".equals(m.getArtifactId())) {
+                    quarkusGrpcVersion = m.getVersion();
+                }
+                for (String jarPath : m.getCompileClasspath()) {
+                    String[] gav = parseGAVFromM2Path3(jarPath);
+                    if (gav == null) continue;
+                    if (protocVersion == null && "com.google.protobuf".equals(gav[0]) && "protobuf-java".equals(gav[1])) {
+                        protocVersion = gav[2];
+                    }
+                    if (grpcVersion == null && "io.grpc".equals(gav[0]) && "grpc-core".equals(gav[1])) {
+                        grpcVersion = gav[2];
+                    }
+                    if (quarkusGrpcVersion == null && "io.quarkus".equals(gav[0]) && "quarkus-grpc-protoc-plugin".equals(gav[1])) {
+                        quarkusGrpcVersion = gav[2];
+                    }
+                }
+                break;
+            }
+        }
+
+        info.setProtocVersion(protocVersion);
+        info.setGrpcVersion(grpcVersion);
+        info.setQuarkusGrpcVersion(quarkusGrpcVersion);
+    }
+
+    private static String[] parseGAVFromM2Path3(String jarPath) {
+        String m2 = System.getProperty("user.home") + "/.m2/repository/";
+        if (!jarPath.startsWith(m2)) return null;
+        String relative = jarPath.substring(m2.length());
+        int lastSlash = relative.lastIndexOf('/');
+        if (lastSlash < 0) return null;
+        String beforeFile = relative.substring(0, lastSlash);
+        int versionSlash = beforeFile.lastIndexOf('/');
+        if (versionSlash < 0) return null;
+        String version = beforeFile.substring(versionSlash + 1);
+        String beforeVersion = beforeFile.substring(0, versionSlash);
+        int artifactSlash = beforeVersion.lastIndexOf('/');
+        if (artifactSlash < 0) return null;
+        String artifactId = beforeVersion.substring(artifactSlash + 1);
+        String groupId = beforeVersion.substring(0, artifactSlash).replace('/', '.');
+        return new String[] { groupId, artifactId, version };
     }
 
     private static final String CODEGEN_SERVICE = "META-INF/services/io.quarkus.deployment.CodeGenProvider";
