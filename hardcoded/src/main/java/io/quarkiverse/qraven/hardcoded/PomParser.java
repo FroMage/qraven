@@ -756,9 +756,10 @@ public class PomParser {
         }
 
         // also scan reactor dependencies for extension properties
+        // include optional transitive deps to match what addReactorJars adds at build time
         Set<String> reactorDepIds = new LinkedHashSet<>(info.getReactorDependencies());
         Set<String> excludedReactorDeps = new LinkedHashSet<>();
-        collectTransitiveReactorDeps(reactorDepIds, allModules, excludedReactorDeps);
+        collectTransitiveReactorDeps(reactorDepIds, allModules, excludedReactorDeps, true);
         for (String depId : reactorDepIds) {
             for (ModuleInfo m : allModules) {
                 if (!m.getArtifactId().equals(depId)) continue;
@@ -891,6 +892,11 @@ public class PomParser {
 
     private void collectTransitiveReactorDeps(Set<String> result, List<ModuleInfo> allModules,
                                                 Set<String> excludedDeps) {
+        collectTransitiveReactorDeps(result, allModules, excludedDeps, false);
+    }
+
+    private void collectTransitiveReactorDeps(Set<String> result, List<ModuleInfo> allModules,
+                                                Set<String> excludedDeps, boolean includeOptional) {
         Map<String, ModuleInfo> modulesByArtifactId = new LinkedHashMap<>();
         for (ModuleInfo m : allModules) {
             modulesByArtifactId.put(m.getArtifactId(), m);
@@ -910,7 +916,7 @@ public class PomParser {
             Set<String> optionalDeps = m.getOptionalReactorDependencies();
 
             for (String dep : m.getReactorDependencies()) {
-                if (optionalDeps.contains(dep)) continue;
+                if (!includeOptional && optionalDeps.contains(dep)) continue;
                 if (myExclusions.contains(dep)) {
                     skippedByExclusion.add(dep);
                     continue;
@@ -1076,7 +1082,7 @@ public class PomParser {
                 runtimeReactorDeps.add(depId);
             }
         }
-        collectTransitiveReactorDeps(runtimeReactorDeps, allModules, new LinkedHashSet<>());
+        collectTransitiveReactorDeps(runtimeReactorDeps, allModules, new LinkedHashSet<>(), true);
         for (String depId : runtimeReactorDeps) {
             for (ModuleInfo m : allModules) {
                 if (!m.getArtifactId().equals(depId)) continue;
