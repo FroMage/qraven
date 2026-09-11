@@ -52,10 +52,10 @@ public class BuildOrchestrator {
             for (ModuleBuild m : modules) {
                 included.add(m.artifactId());
             }
-            for (ModuleBuild m : modules) {
-                m.setDependencies(m.getDependencies().stream()
-                        .filter(dep -> included.contains(dep.artifactId()))
-                        .toList());
+            for (ModuleBuild m : byId.values()) {
+                if (!included.contains(m.artifactId())) {
+                    m.markPreBuilt();
+                }
             }
         }
 

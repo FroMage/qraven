@@ -150,6 +150,11 @@ public abstract class ModuleBuild {
         return failureMessage;
     }
 
+    public void markPreBuilt() {
+        buildSucceeded = true;
+        buildFuture = CompletableFuture.completedFuture(null);
+    }
+
     public synchronized CompletableFuture<Void> buildAsync(ExecutorService executor) {
         if (buildFuture != null) {
             return buildFuture;
