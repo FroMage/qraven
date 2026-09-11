@@ -777,6 +777,19 @@ public class PomParser {
             }
         }
 
+        // Also scan reactor deps' external classpath jars for extensions
+        // At build time, addReactorJars() adds these to the full classpath
+        for (String depId : reactorDepIds) {
+            for (ModuleInfo m : allModules) {
+                if (!m.getArtifactId().equals(depId)) continue;
+                if ("pom".equals(m.getPackaging())) continue;
+                for (String jarPath : m.getCompileClasspath()) {
+                    scanExtensionJar(jarPath, extensionArtifacts, extensionDevProps, deploymentGAVs);
+                }
+                break;
+            }
+        }
+
         // Build excluded deployment artifact set from excluded reactor deps
         Set<String> excludedDeploymentGAs = new LinkedHashSet<>();
         for (String excludedId : excludedReactorDeps) {

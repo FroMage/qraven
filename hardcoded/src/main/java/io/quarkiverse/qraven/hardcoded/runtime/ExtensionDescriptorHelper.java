@@ -5,14 +5,12 @@ import io.quarkus.maven.capabilities.CapabilitiesConfig;
 import io.quarkus.maven.capabilities.CapabilityConfig;
 import io.quarkus.maven.dependency.ArtifactCoords;
 
-import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Properties;
 import java.util.Set;
 
 public class ExtensionDescriptorHelper {
@@ -113,7 +111,7 @@ public class ExtensionDescriptorHelper {
 
         List<ExtensionDescriptorGenerator.DepNode> children = new ArrayList<>();
         for (String jarPath : classpath) {
-            GavFromPath gav = parseGav(jarPath);
+            GavFromPath gav = parseGavFromM2Path(jarPath);
             if (gav == null) {
                 gav = parseGavFromFilename(jarPath, reactorArtifactToGroup);
             }
@@ -130,7 +128,10 @@ public class ExtensionDescriptorHelper {
         List<ExtensionDescriptorGenerator.DepNode> deploymentChildren = new ArrayList<>();
         if (deploymentClasspath != null) {
             for (String jarPath : deploymentClasspath) {
-                GavFromPath gav = parseGav(jarPath);
+                GavFromPath gav = parseGavFromM2Path(jarPath);
+                if (gav == null) {
+                    gav = parseGavFromFilename(jarPath, reactorArtifactToGroup);
+                }
                 if (gav != null) {
                     deploymentChildren.add(new ExtensionDescriptorGenerator.DepNode(
                             gav.groupId, gav.artifactId, "", "jar",
@@ -138,8 +139,6 @@ public class ExtensionDescriptorHelper {
                 }
             }
         }
-
-        autoDiscoverMissingDeploymentDeps(children, deploymentChildren, version);
 
         Set<String> deploymentGAs = new HashSet<>();
         for (ExtensionDescriptorGenerator.DepNode dc : deploymentChildren) {
@@ -234,55 +233,7 @@ public class ExtensionDescriptorHelper {
         };
     }
 
-    private static void autoDiscoverMissingDeploymentDeps(
-            List<ExtensionDescriptorGenerator.DepNode> runtimeChildren,
-            List<ExtensionDescriptorGenerator.DepNode> deploymentChildren,
-            String fallbackVersion) {
-        Set<String> deploymentKeys = new HashSet<>();
-        for (ExtensionDescriptorGenerator.DepNode dc : deploymentChildren) {
-            deploymentKeys.add(dc.getGroupId() + ":" + dc.getArtifactId());
-        }
-
-        Path m2 = Path.of(System.getProperty("user.home"), ".m2", "repository");
-
-        for (ExtensionDescriptorGenerator.DepNode child : runtimeChildren) {
-            Path jarFile = child.getResolvedPath();
-            if (jarFile == null || !Files.exists(jarFile) || Files.isDirectory(jarFile)) continue;
-            try (java.util.jar.JarFile jf = new java.util.jar.JarFile(jarFile.toFile())) {
-                var entry = jf.getJarEntry("META-INF/quarkus-extension.properties");
-                if (entry == null) continue;
-                Properties props = new Properties();
-                try (InputStream is = jf.getInputStream(entry)) {
-                    props.load(is);
-                }
-                String deploymentArtifact = props.getProperty("deployment-artifact");
-                if (deploymentArtifact == null) continue;
-                String[] parts = deploymentArtifact.split(":");
-                if (parts.length < 3) continue;
-                String dg = parts[0];
-                String da = parts[1];
-                String dv = parts[parts.length - 1];
-                if (deploymentKeys.contains(dg + ":" + da)) continue;
-                Path deployJar = m2.resolve(dg.replace('.', '/'))
-                        .resolve(da).resolve(dv).resolve(da + "-" + dv + ".jar");
-                if (Files.exists(deployJar)) {
-                    deploymentChildren.add(new ExtensionDescriptorGenerator.DepNode(
-                            dg, da, "", "jar", dv, deployJar, List.of()));
-                    deploymentKeys.add(dg + ":" + da);
-                }
-            } catch (java.io.IOException e) {
-                // skip unreadable jars
-            }
-        }
-    }
-
     private record GavFromPath(String groupId, String artifactId, String version) {}
-
-    static GavFromPath parseGav(String jarPath) {
-        GavFromPath gav = parseGavFromM2Path(jarPath);
-        if (gav != null) return gav;
-        return parseGavFromJar(jarPath);
-    }
 
     private static GavFromPath parseGavFromM2Path(String jarPath) {
         String m2 = System.getProperty("user.home") + "/.m2/repository/";
@@ -330,30 +281,4 @@ public class ExtensionDescriptorHelper {
         return null;
     }
 
-    private static GavFromPath parseGavFromJar(String jarPath) {
-        Path path = Path.of(jarPath);
-        if (!Files.exists(path) || Files.isDirectory(path)) return null;
-        try (java.util.jar.JarFile jf = new java.util.jar.JarFile(path.toFile())) {
-            var entries = jf.entries();
-            while (entries.hasMoreElements()) {
-                var entry = entries.nextElement();
-                if (entry.getName().endsWith("/pom.properties")
-                        && entry.getName().startsWith("META-INF/maven/")) {
-                    java.util.Properties props = new java.util.Properties();
-                    try (java.io.InputStream is = jf.getInputStream(entry)) {
-                        props.load(is);
-                    }
-                    String g = props.getProperty("groupId");
-                    String a = props.getProperty("artifactId");
-                    String v = props.getProperty("version");
-                    if (g != null && a != null && v != null) {
-                        return new GavFromPath(g, a, v);
-                    }
-                }
-            }
-        } catch (java.io.IOException e) {
-            // skip
-        }
-        return null;
-    }
 }
