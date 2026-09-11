@@ -99,9 +99,20 @@ public class ExtensionDescriptorHelper {
             List<String> classpath, List<String> reactorModuleGAs,
             List<String> deploymentClasspath) {
 
+        Map<String, String> reactorArtifactToGroup = new java.util.HashMap<>();
+        for (String ga : reactorModuleGAs) {
+            int colon = ga.indexOf(':');
+            if (colon > 0) {
+                reactorArtifactToGroup.put(ga.substring(colon + 1), ga.substring(0, colon));
+            }
+        }
+
         List<ExtensionDescriptorGenerator.DepNode> children = new ArrayList<>();
         for (String jarPath : classpath) {
-            GavFromPath gav = parseGavFromM2Path(jarPath);
+            GavFromPath gav = parseGav(jarPath);
+            if (gav == null) {
+                gav = parseGavFromFilename(jarPath, reactorArtifactToGroup);
+            }
             if (gav != null) {
                 children.add(new ExtensionDescriptorGenerator.DepNode(
                         gav.groupId, gav.artifactId, "", "jar",
@@ -115,7 +126,7 @@ public class ExtensionDescriptorHelper {
         List<ExtensionDescriptorGenerator.DepNode> deploymentChildren = new ArrayList<>();
         if (deploymentClasspath != null) {
             for (String jarPath : deploymentClasspath) {
-                GavFromPath gav = parseGavFromM2Path(jarPath);
+                GavFromPath gav = parseGav(jarPath);
                 if (gav != null) {
                     deploymentChildren.add(new ExtensionDescriptorGenerator.DepNode(
                             gav.groupId, gav.artifactId, "", "jar",
@@ -213,14 +224,18 @@ public class ExtensionDescriptorHelper {
 
     private record GavFromPath(String groupId, String artifactId, String version) {}
 
-    static GavFromPath parseGavFromM2Path(String jarPath) {
+    static GavFromPath parseGav(String jarPath) {
+        GavFromPath gav = parseGavFromM2Path(jarPath);
+        if (gav != null) return gav;
+        return parseGavFromJar(jarPath);
+    }
+
+    private static GavFromPath parseGavFromM2Path(String jarPath) {
         String m2 = System.getProperty("user.home") + "/.m2/repository/";
         if (!jarPath.startsWith(m2)) return null;
         String relative = jarPath.substring(m2.length());
-        // e.g. io/quarkus/quarkus-core/3.35.3/quarkus-core-3.35.3.jar
         int lastSlash = relative.lastIndexOf('/');
         if (lastSlash < 0) return null;
-        String afterLastSlash = relative.substring(lastSlash + 1); // filename
         String beforeLastSlash = relative.substring(0, lastSlash);
 
         int versionSlash = beforeLastSlash.lastIndexOf('/');
@@ -235,5 +250,48 @@ public class ExtensionDescriptorHelper {
         String groupId = groupPath.replace('/', '.');
 
         return new GavFromPath(groupId, artifactId, version);
+    }
+
+    private static GavFromPath parseGavFromFilename(String jarPath, Map<String, String> artifactToGroup) {
+        String fileName = Path.of(jarPath).getFileName().toString();
+        if (!fileName.endsWith(".jar")) return null;
+        String baseName = fileName.substring(0, fileName.length() - 4);
+        for (Map.Entry<String, String> entry : artifactToGroup.entrySet()) {
+            String aid = entry.getKey();
+            if (baseName.startsWith(aid + "-")) {
+                String ver = baseName.substring(aid.length() + 1);
+                if (!ver.isEmpty()) {
+                    return new GavFromPath(entry.getValue(), aid, ver);
+                }
+            }
+        }
+        return null;
+    }
+
+    private static GavFromPath parseGavFromJar(String jarPath) {
+        Path path = Path.of(jarPath);
+        if (!Files.exists(path) || Files.isDirectory(path)) return null;
+        try (java.util.jar.JarFile jf = new java.util.jar.JarFile(path.toFile())) {
+            var entries = jf.entries();
+            while (entries.hasMoreElements()) {
+                var entry = entries.nextElement();
+                if (entry.getName().endsWith("/pom.properties")
+                        && entry.getName().startsWith("META-INF/maven/")) {
+                    java.util.Properties props = new java.util.Properties();
+                    try (java.io.InputStream is = jf.getInputStream(entry)) {
+                        props.load(is);
+                    }
+                    String g = props.getProperty("groupId");
+                    String a = props.getProperty("artifactId");
+                    String v = props.getProperty("version");
+                    if (g != null && a != null && v != null) {
+                        return new GavFromPath(g, a, v);
+                    }
+                }
+            }
+        } catch (java.io.IOException e) {
+            // skip
+        }
+        return null;
     }
 }

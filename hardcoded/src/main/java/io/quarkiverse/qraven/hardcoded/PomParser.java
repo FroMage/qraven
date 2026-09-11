@@ -235,7 +235,7 @@ public class PomParser {
         }
 
         for (ModuleInfo info : modules) {
-            if (info.isHasQuarkusBuildPlugin()) {
+            if (info.isHasQuarkusBuildPlugin() || info.isHasExtensionPlugin()) {
                 Model model = effectiveModels.get(info.getGroupId() + ":" + info.getArtifactId());
                 if (model != null) {
                     collectQuarkusBuildMetadata(model, info, reactorGAs, modules);
