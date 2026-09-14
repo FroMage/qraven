@@ -33,6 +33,10 @@ public class BuildOrchestrator {
     }
 
     public void buildAll(List<ModuleBuild> modules, String projectsFilter, boolean alsoMake) {
+        buildAll(modules, projectsFilter, alsoMake, false);
+    }
+
+    public void buildAll(List<ModuleBuild> modules, String projectsFilter, boolean alsoMake, boolean incremental) {
         Map<String, ModuleBuild> byId = new LinkedHashMap<>();
         for (ModuleBuild m : modules) {
             byId.put(m.artifactId(), m);
@@ -100,7 +104,8 @@ public class BuildOrchestrator {
         ConcurrentHashMap<Long, Integer> threadIndices = new ConcurrentHashMap<>();
 
         long orchestratorStart = System.currentTimeMillis();
-        System.out.println("Building " + modules.size() + " modules with " + threadCount + " threads");
+        System.out.println("Building " + modules.size() + " modules with " + threadCount + " threads"
+                + (incremental ? " (incremental)" : ""));
 
         // Redirect System.out, System.err and JUL to build log so they don't break the progress bar.
         // ProgressDisplay already captured the original System.err at construction.
@@ -154,7 +159,7 @@ public class BuildOrchestrator {
         ExecutorService executor = Executors.newFixedThreadPool(threadCount);
         try {
             for (ModuleBuild m : modules) {
-                m.setProgress(progress, stats, threadIndices, threadIndexCounter, threadCount);
+                m.setProgress(progress, stats, threadIndices, threadIndexCounter, threadCount, incremental);
             }
             CompletableFuture<?>[] allFutures = modules.stream()
                     .map(m -> m.buildAsync(executor))
@@ -195,9 +200,13 @@ public class BuildOrchestrator {
         List<String> directFailures = new ArrayList<>();
         List<String> cascadeFailures = new ArrayList<>();
         int succeeded = 0;
+        int skippedIncremental = 0;
         for (ModuleBuild m : modules) {
             if (m.didSucceed()) {
                 succeeded++;
+                if (m.wasSkippedIncremental()) {
+                    skippedIncremental++;
+                }
             } else {
                 boolean hasFailed = m.getDependencies().stream().anyMatch(d -> !d.didSucceed());
                 if (hasFailed) {
@@ -207,8 +216,15 @@ public class BuildOrchestrator {
                 }
             }
         }
-        System.out.println("Build completed in " + elapsed + "ms: " + succeeded + " succeeded, "
-                + directFailures.size() + " failed, " + cascadeFailures.size() + " skipped (cascade)");
+        StringBuilder summary = new StringBuilder();
+        summary.append("Build completed in ").append(elapsed).append("ms: ")
+                .append(succeeded).append(" succeeded");
+        if (skippedIncremental > 0) {
+            summary.append(" (").append(skippedIncremental).append(" up-to-date)");
+        }
+        summary.append(", ").append(directFailures.size()).append(" failed, ")
+                .append(cascadeFailures.size()).append(" skipped (cascade)");
+        System.out.println(summary);
         String phaseSummary = stats.summary();
         if (!phaseSummary.isEmpty()) {
             System.out.println(phaseSummary);

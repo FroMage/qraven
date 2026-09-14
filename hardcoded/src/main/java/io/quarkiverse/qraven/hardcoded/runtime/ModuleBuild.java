@@ -3,6 +3,7 @@ package io.quarkiverse.qraven.hardcoded.runtime;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -26,6 +27,7 @@ public abstract class ModuleBuild {
     private ConcurrentHashMap<Long, Integer> threadIndices;
     private AtomicInteger threadIndexCounter;
     private int maxThreadIndex;
+    private boolean incremental;
     private List<String> resolvedClasspath;
     private Set<String> resolvedOptionalClasspath;
     private List<String> resolvedAnnotationProcessorPaths;
@@ -131,20 +133,27 @@ public abstract class ModuleBuild {
 
     public void setProgress(ProgressDisplay progress, BuildStats stats,
                            ConcurrentHashMap<Long, Integer> threadIndices,
-                           AtomicInteger threadIndexCounter, int maxThreadIndex) {
+                           AtomicInteger threadIndexCounter, int maxThreadIndex,
+                           boolean incremental) {
         this.progress = progress;
         this.stats = stats;
         this.threadIndices = threadIndices;
         this.threadIndexCounter = threadIndexCounter;
         this.maxThreadIndex = maxThreadIndex;
+        this.incremental = incremental;
     }
 
     private volatile long buildScheduledAt;
     private volatile boolean buildSucceeded = false;
+    private volatile boolean skippedIncremental = false;
     private volatile String failureMessage;
 
     public boolean didSucceed() {
         return buildSucceeded;
+    }
+
+    public boolean wasSkippedIncremental() {
+        return skippedIncremental;
     }
 
     public String getFailureMessage() {
@@ -153,6 +162,7 @@ public abstract class ModuleBuild {
 
     public void markPreBuilt() {
         buildSucceeded = true;
+        skippedIncremental = true;
         buildFuture = CompletableFuture.completedFuture(null);
     }
 
@@ -209,13 +219,34 @@ public abstract class ModuleBuild {
 
         try {
             if ("pom".equals(packaging())) {
+                if (incremental && isUpToDate()) {
+                    skippedIncremental = true;
+                    buildSucceeded = true;
+                    if (progress != null) {
+                        progress.moduleStarted(threadIdx, artifactId(), "up-to-date", 0);
+                        progress.moduleCompleted(threadIdx, true);
+                    }
+                    return;
+                }
                 if (progress != null) progress.moduleStarted(threadIdx, artifactId(), "pom", 0);
                 long t = System.currentTimeMillis();
                 runtime.install(null, pomFile(), groupId(), artifactId(), version(), packaging());
                 recordPhase("install", t);
             } else {
+                if (incremental && isUpToDate()) {
+                    skippedIncremental = true;
+                    buildSucceeded = true;
+                    if (progress != null) {
+                        progress.moduleStarted(threadIdx, artifactId(), "up-to-date", 0);
+                        progress.moduleCompleted(threadIdx, true);
+                    }
+                    return;
+                }
+
                 long prePhaseStart = System.currentTimeMillis();
-                runtime.clean(targetDir());
+                if (!incremental) {
+                    runtime.clean(targetDir());
+                }
                 long cleanElapsed = System.currentTimeMillis() - prePhaseStart;
 
                 List<String> fullClasspath = new ArrayList<>(resolvedClasspath());
@@ -564,6 +595,92 @@ public abstract class ModuleBuild {
             Files.writeString(sisuDir.resolve("javax.inject.Named"),
                     String.join("\n", namedClasses) + "\n");
         }
+    }
+
+    private boolean isUpToDate() {
+        Path installedArtifact = installedArtifactPath();
+        if (!Files.exists(installedArtifact)) return false;
+
+        long artifactMtime;
+        try {
+            artifactMtime = Files.getLastModifiedTime(installedArtifact).toMillis();
+        } catch (IOException e) {
+            return false;
+        }
+
+        for (ModuleBuild dep : dependencies) {
+            if (dep.didSucceed() && !dep.wasSkippedIncremental()) {
+                return false;
+            }
+        }
+
+        if ("pom".equals(packaging())) {
+            try {
+                return Files.getLastModifiedTime(pomFile()).toMillis() <= artifactMtime;
+            } catch (IOException e) {
+                return false;
+            }
+        }
+
+        long newestInput = newestMtime(sourceDir());
+        if (newestInput > artifactMtime) return false;
+
+        if (hasKotlinSources()) {
+            newestInput = newestMtime(kotlinSourceDir());
+            if (newestInput > artifactMtime) return false;
+        }
+
+        Path base = runtime.getProjectRoot().resolve(baseDir());
+        for (String[] rd : resourceDirs()) {
+            Path dir = base.resolve(rd[0]);
+            if (Files.isDirectory(dir)) {
+                newestInput = newestMtime(dir);
+                if (newestInput > artifactMtime) return false;
+            }
+        }
+
+        if (hasProtobufSources()) {
+            newestInput = newestMtime(protoSourceDir());
+            if (newestInput > artifactMtime) return false;
+        }
+
+        if (hasAntlrSources()) {
+            newestInput = newestMtime(antlrSourceDir());
+            if (newestInput > artifactMtime) return false;
+        }
+
+        try {
+            if (Files.getLastModifiedTime(pomFile()).toMillis() > artifactMtime) return false;
+        } catch (IOException e) {
+            return false;
+        }
+
+        return true;
+    }
+
+    private static long newestMtime(Path dir) {
+        if (!Files.isDirectory(dir)) return 0;
+        try (var stream = Files.walk(dir)) {
+            return stream.map(p -> {
+                try {
+                    return Files.readAttributes(p, BasicFileAttributes.class).lastModifiedTime().toMillis();
+                } catch (IOException e) {
+                    return 0L;
+                }
+            }).max(Long::compare).orElse(0L);
+        } catch (IOException e) {
+            return Long.MAX_VALUE;
+        }
+    }
+
+    private Path installedArtifactPath() {
+        Path localRepo = Path.of(System.getProperty("user.home"), ".m2", "repository");
+        String ext = "pom".equals(packaging()) ? ".pom" : ".jar";
+        return localRepo
+                .resolve(groupId().replace('.', '/'))
+                .resolve(artifactId())
+                .resolve(version())
+                .resolve(artifactId() + "-" + version() + ext);
     }
 
     private boolean hasCodeGenSourceFiles() {
