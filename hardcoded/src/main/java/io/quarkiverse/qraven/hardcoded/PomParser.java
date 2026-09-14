@@ -46,6 +46,7 @@ public class PomParser {
     }
 
     private record PomEntry(Path pomFile, Path baseDir) {}
+    private record RawGAV(String groupId, String artifactId, String version) {}
 
     private final Path projectRoot;
     private final DependencyResolver resolver;
@@ -92,10 +93,11 @@ public class PomParser {
     }
 
     public List<ModuleInfo> parseProject() {
-        // Phase 1: Quick discover all pom paths
+        // Phase 1: Quick discover all pom paths and build reactor GAV map
         long scanStart = System.currentTimeMillis();
         List<PomEntry> pomEntries = new ArrayList<>();
-        quickDiscoverPoms(projectRoot.resolve("pom.xml"), projectRoot, pomEntries);
+        Map<String, Path> reactorPoms = new LinkedHashMap<>();
+        quickDiscoverPoms(projectRoot.resolve("pom.xml"), projectRoot, pomEntries, reactorPoms);
 
         // Phase 2: Build effective models in parallel
         int totalPoms = pomEntries.size();
@@ -110,7 +112,7 @@ public class PomParser {
                 final int idx = i;
                 PomEntry entry = pomEntries.get(idx);
                 futures.add(executor.submit(() -> {
-                    Model model = buildEffectiveModel(entry.pomFile);
+                    Model model = buildEffectiveModel(entry.pomFile, reactorPoms);
                     if (model != null) {
                         ModuleInfo info = toModuleInfo(model, entry.baseDir);
                         moduleInfos[idx] = info;
@@ -260,17 +262,89 @@ public class PomParser {
         return modules;
     }
 
-    private void quickDiscoverPoms(Path pomFile, Path baseDir, List<PomEntry> result) {
+    private void quickDiscoverPoms(Path pomFile, Path baseDir, List<PomEntry> result,
+                                    Map<String, Path> reactorPoms) {
         result.add(new PomEntry(pomFile, baseDir));
+        RawGAV gav = quickParseGAV(pomFile);
+        if (gav != null && gav.groupId != null && gav.artifactId != null) {
+            reactorPoms.put(gav.groupId + ":" + gav.artifactId, pomFile);
+        }
         List<String> moduleNames = readModuleNames(pomFile);
         for (String moduleName : moduleNames) {
             Path moduleDir = baseDir.resolve(moduleName);
             Path modulePom = moduleDir.resolve("pom.xml");
             if (Files.exists(modulePom)) {
-                quickDiscoverPoms(modulePom, moduleDir, result);
+                quickDiscoverPoms(modulePom, moduleDir, result, reactorPoms);
             } else {
                 warnings.add("Module POM not found: " + modulePom);
             }
+        }
+    }
+
+    private RawGAV quickParseGAV(Path pomFile) {
+        try (InputStream is = Files.newInputStream(pomFile)) {
+            XMLInputFactory factory = XMLInputFactory.newInstance();
+            factory.setProperty(XMLInputFactory.IS_SUPPORTING_EXTERNAL_ENTITIES, false);
+            XMLStreamReader reader = factory.createXMLStreamReader(is);
+            try {
+                String groupId = null, artifactId = null, version = null;
+                String parentGroupId = null, parentVersion = null;
+                int depth = 0;
+                boolean inParent = false;
+                String currentElement = null;
+                StringBuilder text = null;
+                while (reader.hasNext()) {
+                    int event = reader.next();
+                    switch (event) {
+                        case XMLStreamConstants.START_ELEMENT -> {
+                            depth++;
+                            String name = reader.getLocalName();
+                            if (depth == 2 && "parent".equals(name)) {
+                                inParent = true;
+                            } else if (depth == 2 || (depth == 3 && inParent)) {
+                                if ("groupId".equals(name) || "artifactId".equals(name) || "version".equals(name)) {
+                                    currentElement = name;
+                                    text = new StringBuilder();
+                                }
+                            }
+                        }
+                        case XMLStreamConstants.END_ELEMENT -> {
+                            if (currentElement != null && text != null) {
+                                String val = text.toString().trim();
+                                if (inParent && depth == 3) {
+                                    switch (currentElement) {
+                                        case "groupId" -> parentGroupId = val;
+                                        case "version" -> parentVersion = val;
+                                    }
+                                } else if (!inParent && depth == 2) {
+                                    switch (currentElement) {
+                                        case "groupId" -> groupId = val;
+                                        case "artifactId" -> artifactId = val;
+                                        case "version" -> version = val;
+                                    }
+                                }
+                                currentElement = null;
+                                text = null;
+                            }
+                            if (depth == 2 && "parent".equals(reader.getLocalName())) {
+                                inParent = false;
+                            }
+                            depth--;
+                            if (depth <= 0 && artifactId != null) break;
+                        }
+                        case XMLStreamConstants.CHARACTERS, XMLStreamConstants.CDATA -> {
+                            if (text != null) text.append(reader.getText());
+                        }
+                    }
+                }
+                if (groupId == null) groupId = parentGroupId;
+                if (version == null) version = parentVersion;
+                return new RawGAV(groupId, artifactId, version);
+            } finally {
+                reader.close();
+            }
+        } catch (Exception e) {
+            return null;
         }
     }
 
@@ -438,7 +512,7 @@ public class PomParser {
         return false;
     }
 
-    private Model buildEffectiveModel(Path pomFile) {
+    private Model buildEffectiveModel(Path pomFile, Map<String, Path> reactorPoms) {
         try {
             DefaultModelBuildingRequest request = new DefaultModelBuildingRequest();
             request.setPomFile(pomFile.toFile());
@@ -447,7 +521,7 @@ public class PomParser {
             request.setTwoPhaseBuilding(false);
             request.setSystemProperties(System.getProperties());
             request.setUserProperties(new Properties());
-            request.setModelResolver(new LocalRepoModelResolver(localRepoDir, resolver));
+            request.setModelResolver(new LocalRepoModelResolver(localRepoDir, resolver, reactorPoms));
 
             ModelBuilder builder = threadLocalModelBuilder.get();
             ModelBuildingResult result = builder.build(request);

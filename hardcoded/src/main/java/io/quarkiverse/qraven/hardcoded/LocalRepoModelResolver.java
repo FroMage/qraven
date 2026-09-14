@@ -11,20 +11,32 @@ import org.apache.maven.model.resolution.UnresolvableModelException;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Map;
 
 public class LocalRepoModelResolver implements ModelResolver {
 
     private final Path localRepoDir;
     private final DependencyResolver resolver;
+    private final Map<String, Path> reactorPoms;
 
     public LocalRepoModelResolver(Path localRepoDir, DependencyResolver resolver) {
+        this(localRepoDir, resolver, Map.of());
+    }
+
+    public LocalRepoModelResolver(Path localRepoDir, DependencyResolver resolver,
+                                   Map<String, Path> reactorPoms) {
         this.localRepoDir = localRepoDir;
         this.resolver = resolver;
+        this.reactorPoms = reactorPoms;
     }
 
     @Override
     public ModelSource resolveModel(String groupId, String artifactId, String version)
             throws UnresolvableModelException {
+        Path reactorPom = reactorPoms.get(groupId + ":" + artifactId);
+        if (reactorPom != null && Files.exists(reactorPom)) {
+            return new FileModelSource(reactorPom.toFile());
+        }
         Path pomPath = localRepoDir
                 .resolve(groupId.replace('.', '/'))
                 .resolve(artifactId)
@@ -64,6 +76,6 @@ public class LocalRepoModelResolver implements ModelResolver {
 
     @Override
     public ModelResolver newCopy() {
-        return new LocalRepoModelResolver(localRepoDir, resolver);
+        return new LocalRepoModelResolver(localRepoDir, resolver, reactorPoms);
     }
 }
