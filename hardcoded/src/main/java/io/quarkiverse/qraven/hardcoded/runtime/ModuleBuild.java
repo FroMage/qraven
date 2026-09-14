@@ -290,7 +290,8 @@ public abstract class ModuleBuild {
 
                 Path generatedSourcesDir = null;
                 if (hasGenerateCodeGoal() && hasCodeGenProviders()
-                        && !evaluateSkip(generateCodeSkipWhen())) {
+                        && !evaluateSkip(generateCodeSkipWhen())
+                        && hasCodeGenSourceFiles()) {
                     if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "generate-code", 0);
                     t = System.currentTimeMillis();
                     Files.createDirectories(classesDir());
@@ -519,6 +520,34 @@ public abstract class ModuleBuild {
         } catch (IOException e) {
             return false;
         }
+    }
+
+    private boolean hasCodeGenSourceFiles() {
+        Path base = runtime.getProjectRoot().resolve(baseDir()).resolve("src/main");
+        Path protoDir = base.resolve("proto");
+        if (Files.isDirectory(protoDir)) {
+            try (var stream = Files.walk(protoDir)) {
+                if (stream.anyMatch(p -> p.getFileName().toString().endsWith(".proto"))) {
+                    return true;
+                }
+            } catch (IOException e) {
+                return true;
+            }
+        }
+        Path avroDir = base.resolve("avro");
+        if (Files.isDirectory(avroDir)) {
+            try (var stream = Files.walk(avroDir)) {
+                if (stream.anyMatch(p -> {
+                    String name = p.getFileName().toString();
+                    return name.endsWith(".avsc") || name.endsWith(".avpr") || name.endsWith(".avdl");
+                })) {
+                    return true;
+                }
+            } catch (IOException e) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public Path protoSourceDir() {
