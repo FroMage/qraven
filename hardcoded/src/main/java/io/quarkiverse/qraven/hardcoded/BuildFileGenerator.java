@@ -344,6 +344,8 @@ public class BuildFileGenerator {
                 .append(module.isHasGenerateCodeGoal()).append("; }\n");
         sb.append("    @Override public boolean hasCodeGenProviders() { return ")
                 .append(module.isHasCodeGenProviders()).append("; }\n");
+        sb.append("    @Override public boolean hasSisuPlugin() { return ")
+                .append(module.isHasSisuPlugin()).append("; }\n");
         sb.append("    @Override public String generateCodeSkipWhen() { return ")
                 .append(quoteOrNull(module.getGenerateCodeSkipWhen())).append("; }\n\n");
 

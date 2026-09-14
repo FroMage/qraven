@@ -9,11 +9,6 @@ import java.util.concurrent.atomic.LongAdder;
 
 public class BuildStats {
 
-    private static final String[] PHASE_ORDER = {
-            "compile", "compile+apt", "kotlin", "jar", "install", "ext-descriptor",
-            "jandex", "quarkus-build", "resources", "protobuf"
-    };
-
     private final ConcurrentHashMap<String, LongAdder> phaseTimes = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, AtomicInteger> phaseCounts = new ConcurrentHashMap<>();
 
@@ -25,17 +20,9 @@ public class BuildStats {
     public String summary() {
         if (phaseTimes.isEmpty()) return "";
 
-        List<String> phases = new ArrayList<>();
-        for (String p : PHASE_ORDER) {
-            if (phaseTimes.containsKey(p)) {
-                phases.add(p);
-            }
-        }
-        for (String p : phaseTimes.keySet()) {
-            if (!phases.contains(p)) {
-                phases.add(p);
-            }
-        }
+        List<String> phases = new ArrayList<>(phaseTimes.keySet());
+        phases.sort(Comparator.comparingLong(
+                (String p) -> phaseTimes.get(p).sum()).reversed());
 
         int maxNameLen = phases.stream().mapToInt(String::length).max().orElse(0);
 

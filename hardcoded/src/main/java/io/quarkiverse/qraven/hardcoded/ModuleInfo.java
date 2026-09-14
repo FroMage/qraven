@@ -58,6 +58,7 @@ public class ModuleInfo {
     private Set<String> optionalReactorDependencies = new LinkedHashSet<>();
     private boolean apCacheable;
     private boolean hasCodeGenProviders;
+    private boolean hasSisuPlugin;
     private String protocVersion;
     private String grpcVersion;
     private String quarkusGrpcVersion;
@@ -217,6 +218,8 @@ public class ModuleInfo {
 
     public boolean isHasCodeGenProviders() { return hasCodeGenProviders; }
     public void setHasCodeGenProviders(boolean hasCodeGenProviders) { this.hasCodeGenProviders = hasCodeGenProviders; }
+    public boolean isHasSisuPlugin() { return hasSisuPlugin; }
+    public void setHasSisuPlugin(boolean hasSisuPlugin) { this.hasSisuPlugin = hasSisuPlugin; }
 
     public String getProtocVersion() { return protocVersion; }
     public void setProtocVersion(String protocVersion) { this.protocVersion = protocVersion; }

@@ -480,6 +480,7 @@ public class PomParser {
         extractResourceDirs(model, baseDir, info);
         extractFilterProperties(model, info);
         detectJandexPlugin(model, info);
+        detectSisuPlugin(model, info);
         detectProtobufPlugin(model, baseDir, info);
         detectAntlrPlugin(model, baseDir, info);
         detectExtensionPlugin(model, info);
@@ -542,6 +543,16 @@ public class PomParser {
         for (Plugin plugin : model.getBuild().getPlugins()) {
             if ("jandex-maven-plugin".equals(plugin.getArtifactId())) {
                 info.setNeedsJandexIndex(true);
+                return;
+            }
+        }
+    }
+
+    private void detectSisuPlugin(Model model, ModuleInfo info) {
+        if (model.getBuild() == null) return;
+        for (Plugin plugin : model.getBuild().getPlugins()) {
+            if ("sisu-maven-plugin".equals(plugin.getArtifactId())) {
+                info.setHasSisuPlugin(true);
                 return;
             }
         }

@@ -110,6 +110,7 @@ public abstract class ModuleBuild {
     public abstract String quarkusBuildSkipWhen();
     public abstract boolean hasGenerateCodeGoal();
     public abstract boolean hasCodeGenProviders();
+    public abstract boolean hasSisuPlugin();
     public abstract String generateCodeSkipWhen();
     public abstract Map<String, String> quarkusBuildProperties();
     public abstract List<String> deploymentClasspath();
@@ -404,6 +405,13 @@ public abstract class ModuleBuild {
                     recordPhase("jandex", t);
                 }
 
+                if (hasSisuPlugin()) {
+                    if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "sisu-index", 0);
+                    t = System.currentTimeMillis();
+                    generateSisuIndex(sourceDir(), classesDir());
+                    recordPhase("sisu-index", t);
+                }
+
                 if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "jar", 0);
                 t = System.currentTimeMillis();
                 Files.createDirectories(classesDir());
@@ -519,6 +527,42 @@ public abstract class ModuleBuild {
             return stream.anyMatch(p -> p.toString().endsWith(".java"));
         } catch (IOException e) {
             return false;
+        }
+    }
+
+    private void generateSisuIndex(Path sourceDir, Path classesDir) throws IOException {
+        if (!Files.isDirectory(sourceDir)) return;
+        List<String> namedClasses = new ArrayList<>();
+        try (var stream = Files.walk(sourceDir)) {
+            stream.filter(p -> p.toString().endsWith(".java"))
+                    .forEach(p -> {
+                        try {
+                            String content = Files.readString(p);
+                            if (content.contains("@Named")) {
+                                String pkg = "";
+                                for (String line : content.split("\n")) {
+                                    String trimmed = line.trim();
+                                    if (trimmed.startsWith("package ") && trimmed.endsWith(";")) {
+                                        pkg = trimmed.substring(8, trimmed.length() - 1).trim();
+                                        break;
+                                    }
+                                }
+                                String fileName = p.getFileName().toString();
+                                String className = fileName.substring(0, fileName.length() - 5);
+                                String fqcn = pkg.isEmpty() ? className : pkg + "." + className;
+                                namedClasses.add(fqcn);
+                            }
+                        } catch (IOException e) {
+                            // skip
+                        }
+                    });
+        }
+        if (!namedClasses.isEmpty()) {
+            java.util.Collections.sort(namedClasses);
+            Path sisuDir = classesDir.resolve("META-INF/sisu");
+            Files.createDirectories(sisuDir);
+            Files.writeString(sisuDir.resolve("javax.inject.Named"),
+                    String.join("\n", namedClasses) + "\n");
         }
     }
 
