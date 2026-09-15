@@ -5,19 +5,14 @@ import javax.tools.ToolProvider;
 import java.io.File;
 import java.io.IOException;
 import java.io.OutputStream;
-import java.net.URI;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -38,7 +33,6 @@ public class BuildFileGenerator {
     private final Path outputDir;
     private final int threads;
     private final DependencyResolver resolver;
-    private boolean hasKotlinModules;
     private boolean hasProtobufModules;
     private boolean hasAntlrModules;
     private String protocPath;
@@ -69,7 +63,6 @@ public class BuildFileGenerator {
         deleteDirectory(classesDir);
         Files.createDirectories(srcDir);
 
-        hasKotlinModules = modules.stream().anyMatch(ModuleInfo::isHasKotlinSources);
         hasProtobufModules = modules.stream().anyMatch(ModuleInfo::isHasProtobufSources);
         if (hasProtobufModules) {
             resolveProtocPaths(modules);
@@ -556,91 +549,7 @@ public class BuildFileGenerator {
             }
         }
 
-        List<Path> runtimeDeps = runtimeClasspath.stream().map(Path::of).toList();
-        List<Path> kotlinJars = hasKotlinModules ? findKotlinCompilerJars() : List.of();
-        createBuildJar(classesDir, runtimeDeps, kotlinJars, buildJar);
-    }
-
-    private List<Path> findKotlinCompilerJars() {
-        java.util.Set<Path> seen = new java.util.LinkedHashSet<>();
-
-        String[] classNames = {
-                "org.jetbrains.kotlin.cli.jvm.K2JVMCompiler",
-                "kotlin.jvm.functions.Function0",
-                "kotlinx.coroutines.CoroutineScope",
-                "org.jetbrains.annotations.NotNull",
-        };
-        for (String className : classNames) {
-            try {
-                Class<?> cls = Class.forName(className);
-                URI location = cls.getProtectionDomain().getCodeSource().getLocation().toURI();
-                Path jar = Path.of(location);
-                if (Files.exists(jar) && !Files.isDirectory(jar)) {
-                    seen.add(jar);
-                }
-            } catch (Exception e) {
-                // class not on classpath — try fallback below
-            }
-        }
-
-        if (seen.isEmpty()) {
-            Path m2 = Path.of(System.getProperty("user.home"), ".m2", "repository");
-            Path kotlinBase = m2.resolve("org/jetbrains/kotlin");
-            Path compilerDir = kotlinBase.resolve("kotlin-compiler");
-            String version = findFirstVersionDir(compilerDir, "kotlin-compiler");
-            if (version != null) {
-                String[] artifacts = {
-                        "kotlin-compiler", "kotlin-stdlib", "kotlin-stdlib-jdk7", "kotlin-stdlib-jdk8",
-                        "kotlin-reflect", "kotlin-script-runtime", "kotlin-build-tools-api"
-                };
-                for (String artifact : artifacts) {
-                    Path jar = kotlinBase.resolve(artifact).resolve(version).resolve(artifact + "-" + version + ".jar");
-                    if (Files.exists(jar)) seen.add(jar);
-                }
-                addFirstVersionJar(seen, m2.resolve("org/jetbrains/kotlinx/kotlinx-coroutines-core-jvm"),
-                        "kotlinx-coroutines-core-jvm");
-                addFirstVersionJar(seen, m2.resolve("org/jetbrains/annotations"), "annotations");
-            }
-        }
-
-        return new java.util.ArrayList<>(seen);
-    }
-
-    private String findFirstVersionDir(Path artifactDir, String artifactName) {
-        if (!Files.isDirectory(artifactDir)) return null;
-        try (var versions = Files.list(artifactDir)) {
-            return versions.filter(Files::isDirectory)
-                    .filter(v -> Files.exists(v.resolve(artifactName + "-" + v.getFileName() + ".jar")))
-                    .map(v -> v.getFileName().toString())
-                    .max(BuildFileGenerator::compareVersions).orElse(null);
-        } catch (IOException e) {
-            return null;
-        }
-    }
-
-    private static int compareVersions(String a, String b) {
-        String[] pa = a.split("[.\\-]");
-        String[] pb = b.split("[.\\-]");
-        for (int i = 0; i < Math.max(pa.length, pb.length); i++) {
-            String sa = i < pa.length ? pa[i] : "0";
-            String sb = i < pb.length ? pb[i] : "0";
-            try {
-                int cmp = Integer.compare(Integer.parseInt(sa), Integer.parseInt(sb));
-                if (cmp != 0) return cmp;
-            } catch (NumberFormatException e) {
-                int cmp = sa.compareTo(sb);
-                if (cmp != 0) return cmp;
-            }
-        }
-        return 0;
-    }
-
-    private void addFirstVersionJar(java.util.Set<Path> jars, Path artifactDir, String artifactName) {
-        String ver = findFirstVersionDir(artifactDir, artifactName);
-        if (ver != null) {
-            Path jar = artifactDir.resolve(ver).resolve(artifactName + "-" + ver + ".jar");
-            if (Files.exists(jar)) jars.add(jar);
-        }
+        createBuildJar(classesDir, runtimeClasspath, buildJar);
     }
 
     private void resolveProtocPaths(List<ModuleInfo> modules) {
@@ -782,67 +691,19 @@ public class BuildFileGenerator {
         }
     }
 
-    private void createBuildJar(Path classesDir, List<Path> runtimeDeps,
-                               List<Path> kotlinJars, Path buildJar) throws IOException {
+    private void createBuildJar(Path classesDir, List<String> classpath, Path buildJar) throws IOException {
         Manifest manifest = new Manifest();
         manifest.getMainAttributes().put(Attributes.Name.MANIFEST_VERSION, "1.0");
         manifest.getMainAttributes().put(Attributes.Name.MAIN_CLASS, "Build");
 
-        Set<String> addedEntries = new HashSet<>();
-        Map<String, List<String>> serviceEntries = new LinkedHashMap<>();
-        addedEntries.add("META-INF/MANIFEST.MF");
+        String classPathValue = classpath.stream()
+                .map(p -> Path.of(p).toUri().toString())
+                .collect(Collectors.joining(" "));
+        manifest.getMainAttributes().put(Attributes.Name.CLASS_PATH, classPathValue);
 
         try (OutputStream fos = Files.newOutputStream(buildJar);
              JarOutputStream jos = new JarOutputStream(fos, manifest)) {
-
             addDirectoryToJar(classesDir, classesDir, jos);
-
-            List<Path> allJars = new ArrayList<>(runtimeDeps);
-            allJars.addAll(kotlinJars);
-
-            for (Path jar : allJars) {
-                addJarToFatJar(jar, jos, addedEntries, serviceEntries);
-            }
-
-            for (var entry : serviceEntries.entrySet()) {
-                jos.putNextEntry(new JarEntry(entry.getKey()));
-                for (String content : entry.getValue()) {
-                    jos.write(content.getBytes(StandardCharsets.UTF_8));
-                    if (!content.endsWith("\n")) {
-                        jos.write('\n');
-                    }
-                }
-                jos.closeEntry();
-            }
-        }
-    }
-
-    private void addJarToFatJar(Path jarPath, JarOutputStream jos,
-                                Set<String> addedEntries,
-                                Map<String, List<String>> serviceEntries) throws IOException {
-        try (java.util.jar.JarFile jf = new java.util.jar.JarFile(jarPath.toFile())) {
-            var entries = jf.entries();
-            while (entries.hasMoreElements()) {
-                var entry = entries.nextElement();
-                String name = entry.getName();
-                if (entry.isDirectory() || name.equals("META-INF/MANIFEST.MF")) {
-                    continue;
-                }
-                if (name.startsWith("META-INF/services/")) {
-                    try (var is = jf.getInputStream(entry)) {
-                        String content = new String(is.readAllBytes(), StandardCharsets.UTF_8);
-                        serviceEntries.computeIfAbsent(name, k -> new ArrayList<>()).add(content);
-                    }
-                    continue;
-                }
-                if (addedEntries.add(name)) {
-                    jos.putNextEntry(new JarEntry(name));
-                    try (var is = jf.getInputStream(entry)) {
-                        is.transferTo(jos);
-                    }
-                    jos.closeEntry();
-                }
-            }
         }
     }
 
