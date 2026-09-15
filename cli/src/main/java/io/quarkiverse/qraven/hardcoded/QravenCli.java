@@ -5,7 +5,6 @@
 //DEPS org.apache.maven.resolver:maven-resolver-connector-basic:1.9.18
 //DEPS org.apache.maven.resolver:maven-resolver-transport-file:1.9.18
 //DEPS org.apache.maven.resolver:maven-resolver-transport-http:1.9.18
-//DEPS org.jetbrains.kotlin:kotlin-compiler:2.4.10
 //DEPS org.slf4j:slf4j-nop:2.0.17
 //SOURCES BuildFileGenerator.java
 //SOURCES DependencyResolver.java
