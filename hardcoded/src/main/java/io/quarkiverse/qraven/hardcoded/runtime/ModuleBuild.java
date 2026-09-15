@@ -122,6 +122,8 @@ public abstract class ModuleBuild {
     public abstract String grpcVersion();
     public abstract String quarkusGrpcVersion();
     public abstract Map<String, String> allReactorExtensionDeployments();
+    public abstract String pluginName();
+    public abstract String pluginDescription();
 
     public void setDependencies(List<ModuleBuild> dependencies) {
         this.dependencies = dependencies;
@@ -441,6 +443,17 @@ public abstract class ModuleBuild {
                     t = System.currentTimeMillis();
                     generateSisuIndex(sourceDir(), classesDir());
                     recordPhase("sisu-index", t);
+                }
+
+                if ("maven-plugin".equals(packaging())) {
+                    if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "plugin-descriptor", 0);
+                    t = System.currentTimeMillis();
+                    List<String> descriptorCp = new ArrayList<>(resolvedClasspath());
+                    addReactorJars(this, descriptorCp, new HashSet<>());
+                    MavenPluginDescriptorGenerator.generate(
+                            classesDir(), groupId(), artifactId(), version(),
+                            pluginName(), pluginDescription(), descriptorCp);
+                    recordPhase("plugin-descriptor", t);
                 }
 
                 if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "jar", 0);

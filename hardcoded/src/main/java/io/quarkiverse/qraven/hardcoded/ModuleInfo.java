@@ -64,6 +64,8 @@ public class ModuleInfo {
     private String quarkusGrpcVersion;
     private Map<String, String> allReactorExtensionDeployments = new LinkedHashMap<>();
     private Map<String, Set<String>> reactorDependencyExclusions = new LinkedHashMap<>();
+    private String projectName;
+    private String projectDescription;
 
     public record ResourceDir(String directory, boolean filtering, String targetPath) {}
 
@@ -232,6 +234,12 @@ public class ModuleInfo {
 
     public Map<String, String> getAllReactorExtensionDeployments() { return allReactorExtensionDeployments; }
     public void setAllReactorExtensionDeployments(Map<String, String> m) { this.allReactorExtensionDeployments = m; }
+
+    public String getProjectName() { return projectName; }
+    public void setProjectName(String projectName) { this.projectName = projectName; }
+
+    public String getProjectDescription() { return projectDescription; }
+    public void setProjectDescription(String projectDescription) { this.projectDescription = projectDescription; }
 
     @Override
     public String toString() {

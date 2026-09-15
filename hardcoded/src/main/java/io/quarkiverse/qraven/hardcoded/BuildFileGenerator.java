@@ -419,6 +419,11 @@ public class BuildFileGenerator {
             sb.append("    public Map<String, String> allReactorExtensionDeployments() { return parseProps(REACTOR_EXT_DEPLOYMENTS); }\n");
         }
 
+        sb.append("    @Override public String pluginName() { return ")
+                .append(quoteOrNull(module.getProjectName())).append("; }\n");
+        sb.append("    @Override public String pluginDescription() { return ")
+                .append(quoteOrNull(module.getProjectDescription())).append("; }\n");
+
         sb.append("}\n");
         return sb.toString();
     }

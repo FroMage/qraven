@@ -501,11 +501,6 @@ public class PomParser {
     }
 
     private boolean shouldSkipModule(ModuleInfo info, Map<String, Model> effectiveModels) {
-        if ("maven-plugin".equals(info.getPackaging())) {
-            warnings.add("Skipping maven-plugin module: " + info.getArtifactId());
-            return true;
-        }
-
         Model model = effectiveModels.get(info.getGroupId() + ":" + info.getArtifactId());
         if (model == null || model.getBuild() == null) return false;
 
@@ -542,6 +537,8 @@ public class PomParser {
         info.setArtifactId(model.getArtifactId());
         info.setVersion(resolveVersion(model));
         info.setPackaging(model.getPackaging() != null ? model.getPackaging() : "jar");
+        info.setProjectName(model.getName());
+        info.setProjectDescription(model.getDescription());
         info.setBaseDir(projectRoot.relativize(baseDir));
         info.setPomFile(baseDir.resolve("pom.xml").toAbsolutePath());
 
