@@ -1,17 +1,3 @@
-///usr/bin/env jbang "$0" "$@" ; exit $?
-//JAVA 17+
-//JAVAC_OPTIONS --release 17
-//DEPS org.apache.maven:maven-resolver-provider:3.9.6
-//DEPS org.apache.maven.resolver:maven-resolver-connector-basic:1.9.18
-//DEPS org.apache.maven.resolver:maven-resolver-transport-file:1.9.18
-//DEPS org.apache.maven.resolver:maven-resolver-transport-http:1.9.18
-//DEPS org.slf4j:slf4j-nop:2.0.17
-//SOURCES BuildFileGenerator.java
-//SOURCES DependencyResolver.java
-//SOURCES LocalRepoModelResolver.java
-//SOURCES ModuleInfo.java
-//SOURCES PomParser.java
-
 package io.quarkiverse.qraven.hardcoded;
 
 import java.io.BufferedReader;
