@@ -1,25 +1,23 @@
 package io.quarkiverse.qraven.hardcoded;
 
-import io.quarkiverse.qraven.hardcoded.runtime.BuildRuntime;
-
 import javax.tools.JavaCompiler;
 import javax.tools.ToolProvider;
 import java.io.File;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.URI;
-import java.net.URISyntaxException;
-import java.nio.file.FileSystem;
-import java.nio.file.FileSystems;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
-import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -32,9 +30,14 @@ import java.util.stream.Collectors;
 
 public class BuildFileGenerator {
 
+    private static final String RUNTIME_GROUP_ID = "io.quarkiverse.qraven";
+    private static final String RUNTIME_ARTIFACT_ID = "qraven-runtime";
+    private static final String RUNTIME_VERSION = "1.0-SNAPSHOT";
+
     private final Path projectRoot;
     private final Path outputDir;
     private final int threads;
+    private final DependencyResolver resolver;
     private boolean hasKotlinModules;
     private boolean hasProtobufModules;
     private boolean hasAntlrModules;
@@ -42,10 +45,11 @@ public class BuildFileGenerator {
     private String grpcJavaPluginPath;
     private String antlrToolClasspath;
 
-    public BuildFileGenerator(Path projectRoot, Path outputDir, int threads) {
+    public BuildFileGenerator(Path projectRoot, Path outputDir, int threads, DependencyResolver resolver) {
         this.projectRoot = projectRoot;
         this.outputDir = outputDir;
         this.threads = threads;
+        this.resolver = resolver;
     }
 
     public interface ProgressListener {
@@ -512,9 +516,13 @@ public class BuildFileGenerator {
         Path buildJar = outputDir.resolve("build.jar");
         Files.createDirectories(classesDir);
 
-        Path runtimeJar = findRuntimeJar();
-
-        String jandexJar = findJandexJar(runtimeJar);
+        List<String> runtimeClasspath = resolver.resolveAnnotationProcessorPath(
+                RUNTIME_GROUP_ID, RUNTIME_ARTIFACT_ID, RUNTIME_VERSION, null);
+        if (runtimeClasspath.isEmpty()) {
+            throw new RuntimeException("Could not resolve " + RUNTIME_GROUP_ID + ":" +
+                    RUNTIME_ARTIFACT_ID + ":" + RUNTIME_VERSION + " from ~/.m2. " +
+                    "Build the runtime module first: mvn install -f runtime/");
+        }
 
         List<Path> sourceFiles;
         try (var stream = Files.walk(srcDir)) {
@@ -528,10 +536,7 @@ public class BuildFileGenerator {
             throw new RuntimeException("No Java compiler available");
         }
 
-        String classpath = runtimeJar.toString();
-        if (jandexJar != null) {
-            classpath += File.pathSeparator + jandexJar;
-        }
+        String classpath = String.join(File.pathSeparator, runtimeClasspath);
 
         var diagnostics = new javax.tools.DiagnosticCollector<javax.tools.JavaFileObject>();
         try (var fileManager = compiler.getStandardFileManager(diagnostics, null, null)) {
@@ -551,8 +556,9 @@ public class BuildFileGenerator {
             }
         }
 
+        List<Path> runtimeDeps = runtimeClasspath.stream().map(Path::of).toList();
         List<Path> kotlinJars = hasKotlinModules ? findKotlinCompilerJars() : List.of();
-        createBuildJar(classesDir, runtimeJar, jandexJar, kotlinJars, buildJar);
+        createBuildJar(classesDir, runtimeDeps, kotlinJars, buildJar);
     }
 
     private List<Path> findKotlinCompilerJars() {
@@ -776,66 +782,44 @@ public class BuildFileGenerator {
         }
     }
 
-    private String findJandexJar(Path runtimeJar) {
-        if (!Files.isDirectory(runtimeJar)) {
-            return null;
-        }
-        try {
-            URI jandexLocation = org.jboss.jandex.Indexer.class.getProtectionDomain()
-                    .getCodeSource().getLocation().toURI();
-            Path jandexPath = Path.of(jandexLocation);
-            if (Files.exists(jandexPath) && !Files.isDirectory(jandexPath)) {
-                return jandexPath.toString();
-            }
-        } catch (Exception e) {
-            // fall through to manual search
-        }
-        Path jandex = Path.of(System.getProperty("user.home"), ".m2", "repository",
-                "io", "smallrye", "jandex");
-        if (Files.isDirectory(jandex)) {
-            try (var versions = Files.list(jandex)) {
-                return versions.filter(Files::isDirectory)
-                        .findFirst()
-                        .map(v -> {
-                            String ver = v.getFileName().toString();
-                            Path jar = v.resolve("jandex-" + ver + ".jar");
-                            return Files.exists(jar) ? jar.toString() : null;
-                        })
-                        .orElse(null);
-            } catch (IOException e) {
-                return null;
-            }
-        }
-        return null;
-    }
-
-    private void createBuildJar(Path classesDir, Path runtimeJar, String jandexJar,
+    private void createBuildJar(Path classesDir, List<Path> runtimeDeps,
                                List<Path> kotlinJars, Path buildJar) throws IOException {
         Manifest manifest = new Manifest();
         manifest.getMainAttributes().put(Attributes.Name.MANIFEST_VERSION, "1.0");
         manifest.getMainAttributes().put(Attributes.Name.MAIN_CLASS, "Build");
 
+        Set<String> addedEntries = new HashSet<>();
+        Map<String, List<String>> serviceEntries = new LinkedHashMap<>();
+        addedEntries.add("META-INF/MANIFEST.MF");
+
         try (OutputStream fos = Files.newOutputStream(buildJar);
              JarOutputStream jos = new JarOutputStream(fos, manifest)) {
 
-            // Add generated compiled classes
             addDirectoryToJar(classesDir, classesDir, jos);
 
-            // Add runtime classes from our JAR
-            addRuntimeClassesToJar(runtimeJar, jos);
+            List<Path> allJars = new ArrayList<>(runtimeDeps);
+            allJars.addAll(kotlinJars);
 
-            // Add jandex classes if not already included
-            if (jandexJar != null) {
-                addJarClassesToJar(Path.of(jandexJar), jos);
+            for (Path jar : allJars) {
+                addJarToFatJar(jar, jos, addedEntries, serviceEntries);
             }
 
-            for (Path kotlinJar : kotlinJars) {
-                addJarClassesToJar(kotlinJar, jos);
+            for (var entry : serviceEntries.entrySet()) {
+                jos.putNextEntry(new JarEntry(entry.getKey()));
+                for (String content : entry.getValue()) {
+                    jos.write(content.getBytes(StandardCharsets.UTF_8));
+                    if (!content.endsWith("\n")) {
+                        jos.write('\n');
+                    }
+                }
+                jos.closeEntry();
             }
         }
     }
 
-    private void addJarClassesToJar(Path jarPath, JarOutputStream jos) throws IOException {
+    private void addJarToFatJar(Path jarPath, JarOutputStream jos,
+                                Set<String> addedEntries,
+                                Map<String, List<String>> serviceEntries) throws IOException {
         try (java.util.jar.JarFile jf = new java.util.jar.JarFile(jarPath.toFile())) {
             var entries = jf.entries();
             while (entries.hasMoreElements()) {
@@ -844,14 +828,19 @@ public class BuildFileGenerator {
                 if (entry.isDirectory() || name.equals("META-INF/MANIFEST.MF")) {
                     continue;
                 }
-                try {
+                if (name.startsWith("META-INF/services/")) {
+                    try (var is = jf.getInputStream(entry)) {
+                        String content = new String(is.readAllBytes(), StandardCharsets.UTF_8);
+                        serviceEntries.computeIfAbsent(name, k -> new ArrayList<>()).add(content);
+                    }
+                    continue;
+                }
+                if (addedEntries.add(name)) {
                     jos.putNextEntry(new JarEntry(name));
                     try (var is = jf.getInputStream(entry)) {
                         is.transferTo(jos);
                     }
                     jos.closeEntry();
-                } catch (java.util.zip.ZipException e) {
-                    // duplicate entry — skip
                 }
             }
         }
@@ -871,62 +860,6 @@ public class BuildFileGenerator {
                 return FileVisitResult.CONTINUE;
             }
         });
-    }
-
-    private void addRuntimeClassesToJar(Path runtimeJar, JarOutputStream jos) throws IOException {
-        if (Files.isDirectory(runtimeJar)) {
-            // Running from exploded classes (development mode)
-            Path runtimePkg = runtimeJar.resolve("io/quarkiverse/qraven/hardcoded/runtime");
-            if (Files.isDirectory(runtimePkg)) {
-                Files.walkFileTree(runtimePkg, new SimpleFileVisitor<>() {
-                    @Override
-                    public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
-                        String entryName = runtimeJar.relativize(file).toString().replace('\\', '/');
-                        jos.putNextEntry(new JarEntry(entryName));
-                        Files.copy(file, jos);
-                        jos.closeEntry();
-                        return FileVisitResult.CONTINUE;
-                    }
-                });
-            }
-        } else {
-            // Running from a JAR - copy all classes (includes shaded Jandex)
-            URI jarUri = URI.create("jar:" + runtimeJar.toUri());
-            try (FileSystem zipFs = FileSystems.newFileSystem(jarUri, java.util.Map.of())) {
-                Path root = zipFs.getPath("/");
-                Files.walkFileTree(root, new SimpleFileVisitor<>() {
-                    @Override
-                    public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
-                        String entryName = file.toString();
-                        if (entryName.startsWith("/")) {
-                            entryName = entryName.substring(1);
-                        }
-                        boolean isClass = entryName.endsWith(".class");
-                        boolean isRequiredResource = entryName.equals("META-INF/quarkus-extension-schema.json");
-                        if (!isClass && !isRequiredResource) {
-                            return FileVisitResult.CONTINUE;
-                        }
-                        try {
-                            jos.putNextEntry(new JarEntry(entryName));
-                            Files.copy(file, jos);
-                            jos.closeEntry();
-                        } catch (java.util.zip.ZipException e) {
-                            // duplicate entry - skip
-                        }
-                        return FileVisitResult.CONTINUE;
-                    }
-                });
-            }
-        }
-    }
-
-    private Path findRuntimeJar() {
-        try {
-            URI location = BuildRuntime.class.getProtectionDomain().getCodeSource().getLocation().toURI();
-            return Path.of(location);
-        } catch (URISyntaxException e) {
-            throw new RuntimeException("Cannot determine runtime JAR location", e);
-        }
     }
 
     private String formatStringList(List<String> items, String indent) {

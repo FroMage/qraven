@@ -5,7 +5,6 @@
 //DEPS org.apache.maven.resolver:maven-resolver-connector-basic:1.9.18
 //DEPS org.apache.maven.resolver:maven-resolver-transport-file:1.9.18
 //DEPS org.apache.maven.resolver:maven-resolver-transport-http:1.9.18
-//DEPS io.smallrye:jandex:3.5.3
 //DEPS org.jetbrains.kotlin:kotlin-compiler:2.4.10
 //DEPS org.slf4j:slf4j-nop:2.0.17
 //SOURCES BuildFileGenerator.java
@@ -13,10 +12,6 @@
 //SOURCES LocalRepoModelResolver.java
 //SOURCES ModuleInfo.java
 //SOURCES PomParser.java
-//SOURCES runtime/BuildOrchestrator.java
-//SOURCES runtime/BuildRuntime.java
-//SOURCES runtime/ModuleBuild.java
-//SOURCES runtime/ProgressDisplay.java
 
 package io.quarkiverse.qraven.hardcoded;
 
@@ -93,7 +88,7 @@ public class QravenCli {
 
         long stepStart = System.currentTimeMillis();
 
-        BuildFileGenerator generator = new BuildFileGenerator(projectDir, outputDir, threads);
+        BuildFileGenerator generator = new BuildFileGenerator(projectDir, outputDir, threads, resolver);
         generator.setProgressListener((detail, current, total) ->
                 System.err.print(ERASE_LINE + "  Generating " + current + "/" + total + " (" + detail + ")"));
         generator.generate(modules);
