@@ -1,4 +1,4 @@
-package io.quarkus.maven;
+package io.quarkiverse.qraven.hardcoded.runtime;
 
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
@@ -50,10 +50,11 @@ import tools.jackson.dataformat.yaml.YAMLMapper;
  * This class is decoupled from Maven APIs so it can be invoked by alternative
  * build tools (e.g. qraven) that have their own dependency resolution.
  * <p>
- * TEMPORARY COPY: this file is a copy of the class from the Quarkus
- * {@code quarkus-extension-maven-plugin} module, included here so that qraven
- * can be used before the upstream Quarkus PR is merged. Remove this file once
- * the class is available in the upstream dependency.
+ * TEMPORARY COPY: this file is a copy of {@code io.quarkus.maven.ExtensionDescriptorGenerator}
+ * from the Quarkus {@code quarkus-extension-maven-plugin} module, repackaged
+ * here to avoid classpath conflicts with the upstream jar. Remove this file
+ * once the class is available in the upstream dependency, and switch the import
+ * in {@code ExtensionDescriptorHelper} back to {@code io.quarkus.maven}.
  */
 public class ExtensionDescriptorGenerator {
 

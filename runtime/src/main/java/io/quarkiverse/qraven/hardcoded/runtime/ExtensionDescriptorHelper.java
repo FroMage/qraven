@@ -1,6 +1,5 @@
 package io.quarkiverse.qraven.hardcoded.runtime;
 
-import io.quarkus.maven.ExtensionDescriptorGenerator;
 import io.quarkus.maven.capabilities.CapabilitiesConfig;
 import io.quarkus.maven.capabilities.CapabilityConfig;
 import io.quarkus.maven.dependency.ArtifactCoords;
