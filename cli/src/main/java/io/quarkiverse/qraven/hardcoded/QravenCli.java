@@ -101,7 +101,14 @@ public class QravenCli {
         boolean needsBootstrapRun = false;
 
         // Phase 1: Generation
-        if (!noGenerate && (forceGenerate || needsRegeneration(projectDir, buildJar))) {
+        long regenCheckStart = System.currentTimeMillis();
+        boolean shouldGenerate = !noGenerate && (forceGenerate || needsRegeneration(projectDir, buildJar));
+        long regenCheckMs = System.currentTimeMillis() - regenCheckStart;
+
+        if (shouldGenerate) {
+            if (!forceGenerate) {
+                System.out.println("Pom changes detected (" + regenCheckMs + "ms)");
+            }
             long totalStart = System.currentTimeMillis();
 
             PomParser parser = new PomParser(projectDir, resolver);
@@ -191,7 +198,7 @@ public class QravenCli {
             System.out.println();
             System.out.println("Total generation time: " + (System.currentTimeMillis() - totalStart) + "ms");
         } else if (!noGenerate) {
-            System.out.println("Build files up to date, skipping generation");
+            System.out.println("Build files up to date, skipping generation (" + regenCheckMs + "ms)");
         }
 
         // Phase 2: Native image (optional)
