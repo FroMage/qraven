@@ -444,7 +444,8 @@ public class BuildFileGenerator {
         sb.append("        int threads = Runtime.getRuntime().availableProcessors();\n");
         sb.append("        String projects = null;\n");
         sb.append("        boolean alsoMake = false;\n");
-        sb.append("        boolean incremental = false;\n\n");
+        sb.append("        boolean incremental = false;\n");
+        sb.append("        boolean noKotlin = false;\n\n");
 
         sb.append("        for (int i = 0; i < args.length; i++) {\n");
         sb.append("            if (\"--help\".equals(args[i]) || \"-h\".equals(args[i])) {\n");
@@ -457,6 +458,7 @@ public class BuildFileGenerator {
         sb.append("                System.out.println(\"  -pl, --projects <list>    Comma-separated list of module artifactIds to build\");\n");
         sb.append("                System.out.println(\"  -am, --also-make          Build dependencies of modules specified by -pl\");\n");
         sb.append("                System.out.println(\"  -i, --incremental         Only rebuild modules with changed sources\");\n");
+        sb.append("                System.out.println(\"      --no-kotlin           Skip Kotlin modules and their dependents\");\n");
         sb.append("                System.out.println(\"  -D<key>=<value>           Set a system property\");\n");
         sb.append("                return;\n");
         sb.append("            } else if (args[i].startsWith(\"-D\")) {\n");
@@ -477,6 +479,8 @@ public class BuildFileGenerator {
         sb.append("                alsoMake = true;\n");
         sb.append("            } else if (\"--incremental\".equals(args[i]) || \"-i\".equals(args[i])) {\n");
         sb.append("                incremental = true;\n");
+        sb.append("            } else if (\"--no-kotlin\".equals(args[i])) {\n");
+        sb.append("                noKotlin = true;\n");
         sb.append("            } else {\n");
         sb.append("                System.err.println(\"Unknown option: \" + args[i]);\n");
         sb.append("                System.err.println(\"Run with --help for usage information.\");\n");
@@ -501,7 +505,7 @@ public class BuildFileGenerator {
             sb.append("        modules.add(new Build_").append(className).append("(runtime));\n");
         }
 
-        sb.append("\n        new BuildOrchestrator(threads).buildAll(modules, projects, alsoMake, incremental);\n");
+        sb.append("\n        new BuildOrchestrator(threads).buildAll(modules, projects, alsoMake, incremental, noKotlin);\n");
         sb.append("    }\n");
         sb.append("}\n");
         return sb.toString();
