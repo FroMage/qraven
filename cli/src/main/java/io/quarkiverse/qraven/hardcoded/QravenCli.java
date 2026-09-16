@@ -104,13 +104,12 @@ public class QravenCli {
 
         // Phase 1: Generation
         long regenCheckStart = System.currentTimeMillis();
-        boolean shouldGenerate = !noGenerate && (forceGenerate || needsRegeneration(projectDir, buildJar));
+        String regenReason = noGenerate ? null : (forceGenerate ? "forced" : regenerationReason(projectDir, buildJar));
         long regenCheckMs = System.currentTimeMillis() - regenCheckStart;
+        boolean shouldGenerate = regenReason != null;
 
         if (shouldGenerate) {
-            if (!forceGenerate) {
-                System.out.println("Pom changes detected (" + regenCheckMs + "ms)");
-            }
+            System.out.println("Regenerating: " + regenReason + " (" + regenCheckMs + "ms)");
             long totalStart = System.currentTimeMillis();
 
             PomParser parser = new PomParser(projectDir, resolver);
@@ -354,8 +353,8 @@ public class QravenCli {
         }
     }
 
-    private static boolean needsRegeneration(Path projectDir, Path buildJar) {
-        if (!Files.exists(buildJar)) return true;
+    private static String regenerationReason(Path projectDir, Path buildJar) {
+        if (!Files.exists(buildJar)) return "build.jar not found";
         try {
             long buildJarTime = Files.getLastModifiedTime(buildJar).toMillis();
 
@@ -367,27 +366,32 @@ public class QravenCli {
                     if (ts != null) {
                         long cliBuildTime = java.time.OffsetDateTime.parse(ts).toInstant().toEpochMilli();
                         if (cliBuildTime > buildJarTime) {
-                            System.out.println("  qraven CLI updated, regeneration needed");
-                            return true;
+                            return "qraven CLI updated";
                         }
                     }
                 }
             }
 
             try (var stream = Files.walk(projectDir)) {
-                return stream
+                var changed = stream
                         .filter(p -> p.getFileName().toString().equals("pom.xml"))
                         .filter(p -> !p.toString().contains("/target/"))
-                        .anyMatch(p -> {
+                        .filter(p -> {
                             try {
                                 return Files.getLastModifiedTime(p).toMillis() > buildJarTime;
                             } catch (IOException e) {
                                 return true;
                             }
-                        });
+                        })
+                        .findFirst();
+                if (changed.isPresent()) {
+                    Path relative = projectDir.relativize(changed.get());
+                    return "pom changed: " + relative;
+                }
             }
+            return null;
         } catch (IOException e) {
-            return true;
+            return "error checking: " + e.getMessage();
         }
     }
 
