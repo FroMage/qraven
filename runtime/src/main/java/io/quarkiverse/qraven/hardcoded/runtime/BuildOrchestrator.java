@@ -69,26 +69,19 @@ public class BuildOrchestrator {
         }
 
         if (noKotlin) {
-            Set<String> kotlinSkips = findKotlinAndDependents(byId);
-            if (!kotlinSkips.isEmpty()) {
-                List<String> kotlinNames = new ArrayList<>();
-                List<String> dependentNames = new ArrayList<>();
-                for (String id : kotlinSkips) {
-                    ModuleBuild m = byId.get(id);
-                    if (m != null) {
-                        m.markPreBuilt();
-                        if (m.hasKotlinSources()) kotlinNames.add(id);
-                        else dependentNames.add(id);
-                    }
+            List<String> kotlinNames = new ArrayList<>();
+            for (ModuleBuild m : byId.values()) {
+                if (m.hasKotlinSources()) {
+                    m.markPreBuilt();
+                    kotlinNames.add(m.artifactId());
                 }
+            }
+            if (!kotlinNames.isEmpty()) {
                 modules = new ArrayList<>(modules.stream()
-                        .filter(m -> !kotlinSkips.contains(m.artifactId()))
+                        .filter(m -> !m.hasKotlinSources())
                         .toList());
                 System.out.println("Skipping " + kotlinNames.size() + " Kotlin module(s): "
                         + String.join(", ", kotlinNames));
-                if (!dependentNames.isEmpty()) {
-                    System.out.println("Skipping " + dependentNames.size() + " dependent(s)");
-                }
             }
         }
 
@@ -305,35 +298,6 @@ public class BuildOrchestrator {
             System.err.println("Cascade failures (" + cascadeFailures.size() + "): "
                     + String.join(", ", cascadeFailures));
         }
-    }
-
-    private Set<String> findKotlinAndDependents(Map<String, ModuleBuild> byId) {
-        Set<String> kotlinIds = new LinkedHashSet<>();
-        for (ModuleBuild m : byId.values()) {
-            if (m.hasKotlinSources()) {
-                kotlinIds.add(m.artifactId());
-            }
-        }
-        if (kotlinIds.isEmpty()) return Set.of();
-
-        Map<String, List<String>> dependents = new HashMap<>();
-        for (ModuleBuild m : byId.values()) {
-            for (ModuleBuild dep : m.getDependencies()) {
-                dependents.computeIfAbsent(dep.artifactId(), k -> new ArrayList<>()).add(m.artifactId());
-            }
-        }
-
-        Set<String> toSkip = new LinkedHashSet<>(kotlinIds);
-        java.util.LinkedList<String> queue = new java.util.LinkedList<>(kotlinIds);
-        while (!queue.isEmpty()) {
-            String id = queue.poll();
-            for (String depId : dependents.getOrDefault(id, List.of())) {
-                if (toSkip.add(depId)) {
-                    queue.add(depId);
-                }
-            }
-        }
-        return toSkip;
     }
 
     private Map<String, Integer> computeForwardReach(List<ModuleBuild> modules) {
