@@ -1,102 +1,145 @@
 # Qraven
 
-A fast build tool that reads Maven `pom.xml` files and generates a self-contained Java build script (`build.jar`) that can be compiled to a native binary via GraalVM.
+A fast build tool that reads Maven `pom.xml` files and generates a self-contained Java build script (`build.jar`) that can be compiled to a native binary via GraalVM. Automatically detects POM changes, handles bootstrapping, and runs the build.
 
 ## How it works
 
-1. **Generate** -- Qraven parses all `pom.xml` files in a multi-module Maven project, resolves dependencies via Maven Resolver (Aether), and generates one Java source file per module plus a `Build.java` main class. These are compiled and packaged into `build.jar`.
+1. **Generate** -- Qraven parses all `pom.xml` files in a multi-module Maven project, resolves dependencies via Maven Resolver (Aether), and generates one Java source file per module plus a `Build.java` main class. These are compiled and packaged into a thin `build.jar` whose `Class-Path` manifest references `qraven-runtime` and its transitive dependencies in `~/.m2/repository`.
 
-2. **Build** -- Running `build.jar` (via `java -jar` or as a native binary) compiles all modules using the `javax.tools.JavaCompiler` API, copies resources, generates Jandex indexes, creates JARs, and installs artifacts to `~/.m2/repository`.
+2. **Build** -- Running `build.jar` compiles all modules using the `javax.tools.JavaCompiler` API, copies resources, generates Jandex indexes, creates JARs, and installs artifacts to `~/.m2/repository`.
+
+3. **Bootstrap** -- When building a project that contains qraven's own dependencies as reactor modules (e.g. Quarkus itself), qraven detects this and enters a two-phase bootstrap mode: it first builds and installs the dependency modules, then packages and runs the full build.
 
 ## Prerequisites
 
 - JDK 17+ (for building qraven itself)
-- Maven 3.9+
+- Maven 3.9+ (for building qraven itself)
+- [JBang](https://www.jbang.dev/) (for installing the CLI)
 - GraalVM JDK 21+ (for native image compilation, optional)
 
 ## Installation
 
-### From Maven coordinates (JBang)
-
-After building and installing to your local Maven repository:
+### Build and install
 
 ```bash
 cd qraven
-mvn install -DskipTests
-jbang app install --name qraven io.quarkiverse.qraven:qraven-hardcoded:1.0-SNAPSHOT
+mvn install
 ```
 
-### From GitHub (JBang)
+This produces two modules:
+- **`qraven-cli`** -- CLI tool (no Quarkus dependencies, installable via JBang)
+- **`qraven-runtime`** -- Build execution classes (depends on Quarkus bootstrap, Jandex, Kotlin compiler)
+
+### Install the CLI via JBang
+
+After the Maven build:
 
 ```bash
-jbang app install --name qraven qraven@FroMage/qraven
+jbang app install --name qraven --force io.quarkiverse.qraven:qraven-cli:1.0-SNAPSHOT
 ```
 
-### From a local clone (JBang)
-
-No Maven build needed -- JBang compiles and caches on first run:
-
-```bash
-jbang app install --name qraven qraven@/path/to/qraven
-```
-
-### Building from source (Maven only)
-
-```bash
-cd qraven
-mvn install -DskipTests
-```
+JBang resolves all dependencies from the POM automatically.
 
 ## Usage
 
-### Step 1: Generate build.jar for your project
+Run `qraven` from your Maven project root:
 
-**With JBang:**
 ```bash
-qraven --project /path/to/your/maven/project
+# Auto-generate if pom files changed, then build
+qraven
+
+# Build skipping tests
+qraven --quickly
+
+# Build a single module and its dependencies
+qraven -pl quarkus-arc -am
+
+# Incremental build (only changed modules)
+qraven -i
+
+# Generate only, don't run the build
+qraven --no-build
+
+# Force regeneration even if poms haven't changed
+qraven --force-generate
+
+# Skip Kotlin modules and their dependents
+qraven --no-kotlin
+
+# Pass system properties through to the build
+qraven -DskipTests -DskipITs
 ```
 
-**With Maven (from source):**
-```bash
-cd qraven
-mvn -pl hardcoded exec:java \
-  -Dexec.mainClass=io.quarkiverse.qraven.hardcoded.QravenCli \
-  -Dexec.args="--project /path/to/your/maven/project"
+### CLI reference
+
+```
+Usage: qraven [options]
+
+Generation options:
+  --force-generate, -fg     Force regeneration even if pom files haven't changed
+  --no-generate, -ng        Skip generation (use previously generated build.jar)
+  --force-bootstrap, -fb    Force bootstrap build even if bootstrap jars are fresh
+
+Build options:
+  --no-build, -nb           Skip build execution (generate only)
+  --quickly                 Alias for -DskipTests -DskipITs -Dquarkus.build.skip
+  -pl, --projects <list>    Comma-separated list of module artifactIds to build
+  -am, --also-make          Build dependencies of modules specified by -pl
+  -i, --incremental         Only rebuild modules with changed sources
+  --no-kotlin               Skip Kotlin modules and their dependents
+  -D<key>=<value>           Set a system property
+
+Other options:
+  -h, --help                Show this help message and exit
+  -p, --project <path>      Project root directory (default: current directory)
+  -t, --threads <n>         Thread count (default: available CPUs)
+  -o, --output <path>       Output directory (default: <project>/target/qraven)
+      --native              Compile build.jar to a native binary after generation
+      --graalvm-home <path> GraalVM path (also checks GRAALVM_HOME, JAVA_HOME, PATH)
 ```
 
-This creates `<project>/target/qraven/build.jar`.
+### Auto-generation
 
-Options:
-- `--project <path>` or `-p <path>` -- project root (default: current dir)
-- `--threads <n>` or `-t <n>` -- thread count (default: available processors)
-- `--output <path>` or `-o <path>` -- output directory (default: `<project>/target/qraven`)
-- `--native` -- compile build.jar to a native binary after generation
-- `--graalvm-home <path>` -- GraalVM installation path (for `--native`)
+Qraven automatically detects when regeneration is needed by comparing `pom.xml` timestamps against `build.jar`. Generation is triggered when:
+- `build.jar` doesn't exist, or
+- Any `pom.xml` in the project is newer than `build.jar`, or
+- `--force-generate` is passed
 
-### Step 2: Run the build
+Generation is skipped when:
+- `--no-generate` is passed, or
+- All `pom.xml` files are older than `build.jar`
 
-**JVM mode:**
+### Bootstrap mode
+
+When building a project that contains `qraven-runtime`'s own transitive dependencies as reactor modules (e.g. building Quarkus itself), qraven detects this and enters bootstrap mode:
+
+1. Reads `qraven-runtime`'s POM from `~/.m2` to identify its dependencies
+2. Matches them against reactor modules and expands transitively
+3. Checks if bootstrap jars are missing from `~/.m2` or have sources newer than the installed jars
+4. If bootstrap is needed:
+   - Generates and runs `bootstrap.jar` (bootstrap modules only)
+   - Once bootstrap jars are installed to `~/.m2`, packages `build.jar` (all remaining modules)
+   - Runs `build.jar`
+5. If bootstrap jars are fresh: packages all modules into a single `build.jar`
+
+Use `--force-bootstrap` to force a bootstrap build even when jars appear fresh.
+
+The key detail: `build.jar` packaging is **deferred** until after bootstrap runs, because its `Class-Path` manifest references jars in `~/.m2/repository` that don't exist until bootstrap installs them.
+
+### Running build.jar directly
+
+You can also run the generated build directly:
+
 ```bash
-java -jar target/qraven/build.jar
+java -jar target/qraven/build.jar                     # Build everything
+java -jar target/qraven/build.jar -pl my-module -am    # Build one module + deps
+java -jar target/qraven/build.jar -i                   # Incremental
+java -jar target/qraven/build.jar --no-kotlin           # Skip Kotlin modules
+java -jar target/qraven/build.jar -DskipTests           # Skip tests
 ```
 
-**Build specific modules:**
-```bash
-java -jar target/qraven/build.jar -pl my-module
-java -jar target/qraven/build.jar -pl my-module -am    # also build dependencies
-```
+### JVM AOT cache (JDK 25+)
 
-**Options:**
-- `--help` or `-h` -- Show usage information
-- `--project <path>` or `-p <path>` -- Project root directory (default: current dir)
-- `--threads <n>` or `-t <n>` -- Thread count (default: available processors)
-- `--projects <list>` or `-pl <list>` -- Comma-separated list of module artifactIds to build
-- `--also-make` or `-am` -- Build dependencies of modules specified by `-pl`
-- `-D<key>=<value>` -- Set a system property (e.g. `-DskipTests=true`)
-
-Unknown options are rejected with an error message.
-
-**JVM mode with AOT cache (JDK 25+):**
 ```bash
 # Training (one-time):
 java -XX:AOTCacheOutput=target/qraven/build.aot -jar target/qraven/build.jar
@@ -110,8 +153,12 @@ java -XX:AOTCache=target/qraven/build.aot -jar target/qraven/build.jar
 Compile `build.jar` to a native binary for maximum startup speed:
 
 ```bash
-GRAALVM_HOME=/path/to/graalvm-jdk-21
+qraven --native --graalvm-home /path/to/graalvm-jdk-21
+```
 
+Or manually:
+
+```bash
 $GRAALVM_HOME/bin/native-image \
   -jar target/qraven/build.jar \
   -H:IncludeResourceBundles=com.sun.tools.javac.resources.compiler,com.sun.tools.javac.resources.javac,com.sun.tools.javac.resources.launcher \
@@ -133,18 +180,12 @@ JAVA_HOME=/path/to/graalvm-jdk-21 ./target/qraven/build
 
 The native binary embeds a specific version of javac (from the GraalVM JDK used to build it). At runtime, `JAVA_HOME` **must point to a JDK of the same major version**.
 
-The native image bakes in some JDK artifacts statically (jrt filesystem content, javac internals), but at runtime javac still reads `$JAVA_HOME/lib/ct.sym` to resolve `--release N` platform classes. If `JAVA_HOME` points to a newer JDK (e.g. JDK 25), its `ct.sym` contains class files with a newer version number (69.0 for JDK 25) that the embedded older javac (JDK 21, max version 65.0) cannot read, producing:
+The native image bakes in some JDK artifacts statically (jrt filesystem content, javac internals), but at runtime javac still reads `$JAVA_HOME/lib/ct.sym` to resolve `--release N` platform classes. If `JAVA_HOME` points to a newer JDK (e.g. JDK 25), its `ct.sym` contains class files with a newer version number (69.0 for JDK 25) that the embedded older javac (JDK 21, max version 65.0) cannot read:
 
 ```
 bad class file: /L/java.base/module-info.sig
     class file has wrong version 69.0, should be 65.0
 ```
-
-For example, if you built the native image with GraalVM JDK 21:
-- `JAVA_HOME=/path/to/jdk-21` -- works
-- `JAVA_HOME=/path/to/jdk-25` -- fails (version 69.0 vs 65.0)
-
-This applies to both the `AllowJRTFileSystem` path and the jmod extraction fallback -- in both cases the embedded javac must be able to read the platform class metadata from the runtime JDK.
 
 #### Native image flags explained
 
@@ -157,7 +198,7 @@ This applies to both the `AllowJRTFileSystem` path and the jmod extraction fallb
 
 #### Without AllowJRTFileSystem (fallback)
 
-If `-H:+AllowJRTFileSystem` is unavailable (e.g. linking fails due to missing `libstdc++.a`), qraven has a built-in fallback: it extracts classes from `$JAVA_HOME/jmods/*.jmod` into temporary module JARs at startup, then passes `--system none --module-path <jars> --add-modules ALL-MODULE-PATH` to javac. This adds ~11s startup overhead but works without the flag. The fallback activates automatically when the jrt filesystem is not available.
+If `-H:+AllowJRTFileSystem` is unavailable (e.g. linking fails due to missing `libstdc++.a`), qraven has a built-in fallback: it extracts classes from `$JAVA_HOME/jmods/*.jmod` into temporary module JARs at startup, then passes `--system none --module-path <jars> --add-modules ALL-MODULE-PATH` to javac. This adds ~11s startup overhead but works without the flag.
 
 If linking fails with "libstdc++.a is missing", install:
 ```bash
@@ -167,6 +208,42 @@ dnf install libstdc++-static
 # Debian/Ubuntu
 apt install libstdc++-12-dev   # or the version matching your gcc
 ```
+
+## Architecture
+
+### Module layout
+
+```
+qraven/
+  pom.xml                              # Parent POM
+  cli/
+    pom.xml                            # CLI module (no Quarkus deps, jbang-installable)
+    src/main/java/.../
+      QravenCli.java                   # CLI entry point (generation + build orchestration)
+      PomParser.java                   # Parses pom.xml files recursively
+      DependencyResolver.java          # Resolves dependencies via Maven Resolver (Aether)
+      ModuleInfo.java                  # Module metadata (coords, deps, source dirs)
+      BuildFileGenerator.java          # Generates Build_*.java per module + Build.java
+  runtime/
+    pom.xml                            # Runtime module (depends on Quarkus bootstrap, Jandex, Kotlin)
+    src/main/java/.../runtime/
+      ModuleBuild.java                 # Per-module build logic (abstract base for generated classes)
+      BuildRuntime.java                # Compilation, resource copying, JAR creation
+      BuildOrchestrator.java           # Multi-threaded build execution
+      QuarkusBuildHelper.java          # Quarkus augmentation (quarkus:build goal)
+      ExtensionDescriptorHelper.java   # Extension descriptor generation
+      MavenPluginDescriptorGenerator.java  # Maven plugin descriptor generation
+      ProgressDisplay.java             # Terminal progress bar
+      BuildStats.java                  # Build timing statistics
+```
+
+### How the pieces fit together
+
+- **`qraven-cli`** has no Quarkus dependencies. It parses POMs, resolves dependencies, generates Java source files, compiles them, and packages them into a thin `build.jar`. JBang installs this module directly from its Maven GAV.
+
+- **`qraven-runtime`** depends on Quarkus bootstrap, Jandex, and the Kotlin compiler. It is NOT shaded into the CLI. Instead, `build.jar` references it (and its transitive dependencies) via `Class-Path` manifest entries pointing to jars in `~/.m2/repository`.
+
+- **Generated `Build_*.java` classes** extend `ModuleBuild` from `qraven-runtime`. Each generated class hardcodes one module's coordinates, classpath, compiler args, and plugin configuration. The generated `Build.java` main class instantiates all module classes and delegates to `BuildOrchestrator`.
 
 ## Performance
 
@@ -183,28 +260,6 @@ Benchmarked on quarkus-renarde (20 modules):
 Tested on Quarkus (1363 modules): native build completes in ~189s vs ~289s for JVM (1.5x speedup), with 95.4% module success rate matching JVM results.
 
 See `BENCHMARKS.txt` for detailed measurements and optimization notes.
-
-## Project structure
-
-```
-qraven/
-  pom.xml                          # Parent POM
-  hardcoded/
-    pom.xml                        # Main module
-    src/main/java/.../
-      QravenCli.java               # CLI entry point (generation)
-      PomParser.java               # Parses pom.xml files recursively
-      DependencyResolver.java      # Resolves dependencies via Maven Resolver
-      ModuleInfo.java              # Module metadata (coords, deps, source dirs)
-      BuildFileGenerator.java      # Generates Build_*.java per module + Build.java
-      runtime/
-        BuildRuntime.java          # Compilation, resource copying, JAR creation
-        BuildOrchestrator.java     # Multi-threaded build execution
-        ModuleBuild.java           # Per-module build logic
-        QuarkusBuildHelper.java    # Quarkus augmentation (quarkus:build goal)
-```
-
-The `runtime/` classes are bundled into the generated `build.jar` and execute at build time. The other classes are only used during generation.
 
 ## Supported Maven plugins
 
@@ -239,14 +294,12 @@ Qraven replicates the behavior of the following Maven plugins during build:
 - **quarkus-extension-maven-plugin** -- Generates `META-INF/quarkus-extension.properties` and `META-INF/quarkus-extension.yaml` for Quarkus extension modules.
 
 ### Code style
-- **formatter-maven-plugin** (Eclipse JDT) -- Formats Java source files in-place using the project's `eclipse-format.xml` config. The Eclipse JDT formatter and its dependencies (`org.eclipse.jdt.core`, `ecj`, `org.eclipse.text`, `org.eclipse.equinox.common`) are loaded at runtime from `~/.m2/repository` via a separate classloader, keeping the build.jar small. Disabled with `-Dno-format`.
+- **formatter-maven-plugin** (Eclipse JDT) -- Formats Java source files in-place using the project's `eclipse-format.xml` config. The Eclipse JDT formatter and its dependencies are loaded at runtime from `~/.m2/repository` via a separate classloader. Disabled with `-Dno-format`.
 - **impsort-maven-plugin** -- Sorts Java imports into groups: `java.`, `javax.`, `jakarta.`, `org.`, `com.`, other, then static imports. Normalizes blank lines between groups. Implemented natively (no external dependencies). Disabled with `-Dno-format`.
 - **spotless-maven-plugin** (ktfmt) -- Formats Kotlin source files using ktfmt with `KOTLINLANG` style. The ktfmt library and its dependencies are loaded at runtime from `~/.m2/repository`. Disabled with `-Dno-format`.
 
 ### Dependency enforcement
 - **maven-enforcer-plugin** (simple) -- Checks compile classpath against Quarkus banned dependency lists (`quarkus-banned-dependencies.xml`, `quarkus-banned-dependencies-okhttp.xml`). Supports exact GA matches (`groupId:artifactId`), group wildcards (`groupId:*`), and prefix patterns (`groupId:prefix-*`). Reports violations as warnings. Disabled with `-Dno-format`.
-
-**Note:** Custom Quarkus enforcer rules are not implemented: `BansRuntimeDependency`, `RequiresMinimalDeploymentDependency`, `DependencyAlignmentRule`, and `dependencyConvergence`. These rules require deep analysis of deployment vs runtime module boundaries and BOM version alignment that goes beyond simple GA pattern matching.
 
 ### Not yet supported
 - **avro-maven-plugin** -- Avro schema (`.avsc`) to Java code generation (Avro codegen runs via the Quarkus `generate-code` step instead)

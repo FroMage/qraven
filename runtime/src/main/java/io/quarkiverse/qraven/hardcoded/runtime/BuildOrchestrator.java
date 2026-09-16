@@ -81,9 +81,9 @@ public class BuildOrchestrator {
                         else dependentCount++;
                     }
                 }
-                modules = modules.stream()
+                modules = new ArrayList<>(modules.stream()
                         .filter(m -> !kotlinSkips.contains(m.artifactId()))
-                        .toList();
+                        .toList());
                 System.out.println("Skipping " + kotlinCount + " Kotlin module(s) and "
                         + dependentCount + " dependent(s)");
             }
