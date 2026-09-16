@@ -71,21 +71,24 @@ public class BuildOrchestrator {
         if (noKotlin) {
             Set<String> kotlinSkips = findKotlinAndDependents(byId);
             if (!kotlinSkips.isEmpty()) {
-                int kotlinCount = 0;
-                int dependentCount = 0;
+                List<String> kotlinNames = new ArrayList<>();
+                List<String> dependentNames = new ArrayList<>();
                 for (String id : kotlinSkips) {
                     ModuleBuild m = byId.get(id);
                     if (m != null) {
                         m.markPreBuilt();
-                        if (m.hasKotlinSources()) kotlinCount++;
-                        else dependentCount++;
+                        if (m.hasKotlinSources()) kotlinNames.add(id);
+                        else dependentNames.add(id);
                     }
                 }
                 modules = new ArrayList<>(modules.stream()
                         .filter(m -> !kotlinSkips.contains(m.artifactId()))
                         .toList());
-                System.out.println("Skipping " + kotlinCount + " Kotlin module(s) and "
-                        + dependentCount + " dependent(s)");
+                System.out.println("Skipping " + kotlinNames.size() + " Kotlin module(s): "
+                        + String.join(", ", kotlinNames));
+                if (!dependentNames.isEmpty()) {
+                    System.out.println("Skipping " + dependentNames.size() + " dependent(s)");
+                }
             }
         }
 
