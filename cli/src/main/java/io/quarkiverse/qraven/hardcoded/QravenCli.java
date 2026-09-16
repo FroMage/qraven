@@ -100,6 +100,7 @@ public class QravenCli {
         Path buildJar = outputDir.resolve("build.jar");
         Path bootstrapJar = outputDir.resolve("bootstrap.jar");
         boolean needsBootstrapRun = false;
+        BuildFileGenerator deferredMainGen = null;
 
         // Phase 1: Generation
         long regenCheckStart = System.currentTimeMillis();
@@ -164,14 +165,14 @@ public class QravenCli {
                         (System.currentTimeMillis() - stepStart) + "ms");
 
                 stepStart = System.currentTimeMillis();
-                BuildFileGenerator mainGen = new BuildFileGenerator(projectDir, outputDir, threads, resolver);
-                mainGen.setProgressListener((detail, current, total) ->
+                deferredMainGen = new BuildFileGenerator(projectDir, outputDir, threads, resolver);
+                deferredMainGen.setProgressListener((detail, current, total) ->
                         System.err.print(ERASE_LINE + "  Generating " + current + "/" + total + " (" + detail + ")"));
-                mainGen.generate(mainModules, "build");
+                deferredMainGen.generate(mainModules, "build");
                 System.err.print(ERASE_LINE);
-                mainGen.compileAndPackage("build");
-                System.out.println("Generated build.jar (" + mainModules.size() + " modules) in " +
+                System.out.println("Generated " + (mainModules.size() + 1) + " main build sources in " +
                         (System.currentTimeMillis() - stepStart) + "ms");
+                System.out.println("  (build.jar will be packaged after bootstrap runs)");
             } else {
                 if (!bootstrapModules.isEmpty()) {
                     System.out.println("Bootstrap modules found but jars are fresh — including in main build");
@@ -226,6 +227,15 @@ public class QravenCli {
                 }
                 System.out.println();
                 System.out.println("Bootstrap build completed");
+
+                if (deferredMainGen != null) {
+                    long stepStart = System.currentTimeMillis();
+                    System.err.print("  Packaging build.jar...");
+                    deferredMainGen.compileAndPackage("build");
+                    System.err.print(ERASE_LINE);
+                    System.out.println("Packaged build.jar in " + (System.currentTimeMillis() - stepStart) + "ms");
+                    deferredMainGen = null;
+                }
                 System.out.println();
             }
 
@@ -244,13 +254,20 @@ public class QravenCli {
             System.exit(exitCode);
         } else {
             System.out.println();
-            Path relativeJar = projectDir.relativize(buildJar);
-            if (buildNative) {
-                System.out.println("To build the project, run:");
-                System.out.println("  JAVA_HOME=$GRAALVM_HOME " + projectDir.relativize(outputDir.resolve("build")));
+            if (deferredMainGen != null) {
+                System.out.println("Bootstrap must run before build.jar can be packaged.");
+                System.out.println("Run without --no-build, or run bootstrap manually:");
+                System.out.println("  java -jar " + projectDir.relativize(bootstrapJar));
+                System.out.println("then re-run qraven to package build.jar.");
             } else {
-                System.out.println("To build the project, run:");
-                System.out.println("  java -jar " + relativeJar);
+                Path relativeJar = projectDir.relativize(buildJar);
+                if (buildNative) {
+                    System.out.println("To build the project, run:");
+                    System.out.println("  JAVA_HOME=$GRAALVM_HOME " + projectDir.relativize(outputDir.resolve("build")));
+                } else {
+                    System.out.println("To build the project, run:");
+                    System.out.println("  java -jar " + relativeJar);
+                }
             }
         }
     }
