@@ -358,6 +358,22 @@ public class QravenCli {
         if (!Files.exists(buildJar)) return true;
         try {
             long buildJarTime = Files.getLastModifiedTime(buildJar).toMillis();
+
+            try (var is = QravenCli.class.getResourceAsStream("/qraven-build.properties")) {
+                if (is != null) {
+                    var props = new java.util.Properties();
+                    props.load(is);
+                    String ts = props.getProperty("build.timestamp");
+                    if (ts != null) {
+                        long cliBuildTime = java.time.OffsetDateTime.parse(ts).toInstant().toEpochMilli();
+                        if (cliBuildTime > buildJarTime) {
+                            System.out.println("  qraven CLI updated, regeneration needed");
+                            return true;
+                        }
+                    }
+                }
+            }
+
             try (var stream = Files.walk(projectDir)) {
                 return stream
                         .filter(p -> p.getFileName().toString().equals("pom.xml"))
