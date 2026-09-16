@@ -1,15 +1,27 @@
 package io.quarkiverse.qraven.hardcoded;
 
 import java.io.BufferedReader;
+import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
+
+import org.apache.maven.model.Model;
+import org.apache.maven.model.io.xpp3.MavenXpp3Reader;
 
 public class QravenCli {
 
-    private static final String ERASE_LINE = "\r\u001b[2K";
+    private static final String ERASE_LINE = "\r[2K";
+    private static final String RUNTIME_GROUP_ID = "io.quarkiverse.qraven";
+    private static final String RUNTIME_ARTIFACT_ID = "qraven-runtime";
+    private static final String RUNTIME_VERSION = "1.0-SNAPSHOT";
 
     public static void main(String[] args) throws Exception {
         Path projectDir = Path.of(".").toAbsolutePath().normalize();
@@ -18,18 +30,49 @@ public class QravenCli {
         boolean buildNative = false;
         String graalvmHome = null;
 
+        boolean forceGenerate = false;
+        boolean noGenerate = false;
+        boolean noBuild = false;
+        boolean forceBootstrap = false;
+
+        List<String> commonBuildArgs = new ArrayList<>();
+        List<String> mainBuildArgs = new ArrayList<>();
+
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
                 case "--help", "-h" -> { printHelp(); return; }
                 case "--project", "-p" -> projectDir = Path.of(args[++i]).toAbsolutePath().normalize();
-                case "--threads", "-t" -> threads = Integer.parseInt(args[++i]);
+                case "--threads", "-t" -> {
+                    threads = Integer.parseInt(args[++i]);
+                    commonBuildArgs.add("-t");
+                    commonBuildArgs.add(String.valueOf(threads));
+                }
                 case "--output", "-o" -> outputDir = Path.of(args[++i]).toAbsolutePath().normalize();
                 case "--native" -> buildNative = true;
                 case "--graalvm-home" -> graalvmHome = args[++i];
+                case "--force-generate", "-fg" -> forceGenerate = true;
+                case "--no-generate", "-ng" -> noGenerate = true;
+                case "--no-build", "-nb" -> noBuild = true;
+                case "--force-bootstrap", "-fb" -> forceBootstrap = true;
+                case "--quickly" -> {
+                    commonBuildArgs.add("-DskipTests");
+                    commonBuildArgs.add("-DskipITs");
+                    commonBuildArgs.add("-Dquarkus.build.skip");
+                }
+                case "--projects", "-pl" -> {
+                    mainBuildArgs.add("-pl");
+                    mainBuildArgs.add(args[++i]);
+                }
+                case "--also-make", "-am" -> mainBuildArgs.add("-am");
+                case "--incremental", "-i" -> commonBuildArgs.add("-i");
                 default -> {
-                    System.err.println("Unknown option: " + args[i]);
-                    System.err.println("Run with --help for usage information.");
-                    System.exit(1);
+                    if (args[i].startsWith("-D")) {
+                        commonBuildArgs.add(args[i]);
+                    } else {
+                        System.err.println("Unknown option: " + args[i]);
+                        System.err.println("Run with --help for usage information.");
+                        System.exit(1);
+                    }
                 }
             }
         }
@@ -43,7 +86,7 @@ public class QravenCli {
             nativeImageBin = resolveNativeImage(graalvmHome);
         }
 
-        System.out.println("Qraven Build Generator");
+        System.out.println("Qraven Build Tool");
         System.out.println("Project:  " + projectDir);
         System.out.println("Threads:  " + threads);
         System.out.println("Output:   " + outputDir);
@@ -52,109 +95,313 @@ public class QravenCli {
         }
         System.out.println();
 
-        long totalStart = System.currentTimeMillis();
-
         DependencyResolver resolver = new DependencyResolver();
-        PomParser parser = new PomParser(projectDir, resolver);
-        parser.setThreads(threads);
-        parser.setProgressListener((phase, detail, current, total) -> {
-            String msg = switch (phase) {
-                case "scan" -> "Scanning modules... " + current + " found (" + detail + ")";
-                case "resolve" -> "Resolving " + current + "/" + total + " (" + detail + ")";
-                default -> phase + ": " + detail;
-            };
-            System.err.print(ERASE_LINE + "  " + msg);
-        });
-        List<ModuleInfo> modules = parser.parseProject();
-        System.err.print(ERASE_LINE);
+        Path buildJar = outputDir.resolve("build.jar");
+        Path bootstrapJar = outputDir.resolve("bootstrap.jar");
+        boolean needsBootstrapRun = false;
 
-        System.out.println("Scanned " + modules.size() + " modules in " + parser.getScanTimeMs() + "ms");
-        System.out.println("Resolved dependencies in " + parser.getResolveTimeMs() + "ms");
+        // Phase 1: Generation
+        if (!noGenerate && (forceGenerate || needsRegeneration(projectDir, buildJar))) {
+            long totalStart = System.currentTimeMillis();
 
-        long stepStart = System.currentTimeMillis();
+            PomParser parser = new PomParser(projectDir, resolver);
+            parser.setThreads(threads);
+            parser.setProgressListener((phase, detail, current, total) -> {
+                String msg = switch (phase) {
+                    case "scan" -> "Scanning modules... " + current + " found (" + detail + ")";
+                    case "resolve" -> "Resolving " + current + "/" + total + " (" + detail + ")";
+                    default -> phase + ": " + detail;
+                };
+                System.err.print(ERASE_LINE + "  " + msg);
+            });
+            List<ModuleInfo> modules = parser.parseProject();
+            System.err.print(ERASE_LINE);
 
-        BuildFileGenerator generator = new BuildFileGenerator(projectDir, outputDir, threads, resolver);
-        generator.setProgressListener((detail, current, total) ->
-                System.err.print(ERASE_LINE + "  Generating " + current + "/" + total + " (" + detail + ")"));
-        generator.generate(modules);
-        System.err.print(ERASE_LINE);
+            System.out.println("Scanned " + modules.size() + " modules in " + parser.getScanTimeMs() + "ms");
+            System.out.println("Resolved dependencies in " + parser.getResolveTimeMs() + "ms");
 
-        System.out.println("Generated " + (modules.size() + 1) + " source files in " +
-                (System.currentTimeMillis() - stepStart) + "ms");
-
-        stepStart = System.currentTimeMillis();
-        System.err.print("  Compiling and packaging build.jar...");
-
-        generator.compileAndPackage();
-
-        System.err.print(ERASE_LINE);
-        System.out.println("Packaged build.jar in " + (System.currentTimeMillis() - stepStart) + "ms");
-        System.out.println();
-
-        // Print any deferred warnings
-        List<String> warnings = parser.getWarnings();
-        if (!warnings.isEmpty()) {
-            System.err.println();
-            for (String w : warnings) {
-                System.err.println("WARNING: " + w);
+            List<String> warnings = parser.getWarnings();
+            if (!warnings.isEmpty()) {
+                for (String w : warnings) {
+                    System.err.println("WARNING: " + w);
+                }
             }
+
+            List<ModuleInfo> bootstrapModules = detectBootstrapModules(modules, resolver);
+
+            if (!bootstrapModules.isEmpty() && (forceBootstrap || bootstrapNeeded(bootstrapModules, resolver))) {
+                needsBootstrapRun = true;
+
+                Set<String> bootstrapIds = bootstrapModules.stream()
+                        .map(ModuleInfo::getArtifactId)
+                        .collect(Collectors.toSet());
+                List<ModuleInfo> mainModules = modules.stream()
+                        .filter(m -> !bootstrapIds.contains(m.getArtifactId()))
+                        .toList();
+
+                System.out.println();
+                System.out.println("Bootstrap needed: " + bootstrapModules.size() + " modules");
+                for (ModuleInfo m : bootstrapModules) {
+                    String status = resolver.resolveArtifactPath(
+                            m.getGroupId(), m.getArtifactId(), m.getVersion()) == null
+                            ? "MISSING" : "STALE";
+                    System.out.println("  " + m.getArtifactId() + " (" + status + ")");
+                }
+
+                long stepStart = System.currentTimeMillis();
+                BuildFileGenerator bootstrapGen = new BuildFileGenerator(projectDir, outputDir, threads, resolver);
+                bootstrapGen.generate(bootstrapModules, "bootstrap");
+                bootstrapGen.compileAndPackage("bootstrap");
+                System.out.println("Generated bootstrap.jar (" + bootstrapModules.size() + " modules) in " +
+                        (System.currentTimeMillis() - stepStart) + "ms");
+
+                stepStart = System.currentTimeMillis();
+                BuildFileGenerator mainGen = new BuildFileGenerator(projectDir, outputDir, threads, resolver);
+                mainGen.setProgressListener((detail, current, total) ->
+                        System.err.print(ERASE_LINE + "  Generating " + current + "/" + total + " (" + detail + ")"));
+                mainGen.generate(mainModules, "build");
+                System.err.print(ERASE_LINE);
+                mainGen.compileAndPackage("build");
+                System.out.println("Generated build.jar (" + mainModules.size() + " modules) in " +
+                        (System.currentTimeMillis() - stepStart) + "ms");
+            } else {
+                if (!bootstrapModules.isEmpty()) {
+                    System.out.println("Bootstrap modules found but jars are fresh — including in main build");
+                }
+
+                long stepStart = System.currentTimeMillis();
+                BuildFileGenerator generator = new BuildFileGenerator(projectDir, outputDir, threads, resolver);
+                generator.setProgressListener((detail, current, total) ->
+                        System.err.print(ERASE_LINE + "  Generating " + current + "/" + total + " (" + detail + ")"));
+                generator.generate(modules, "build");
+                System.err.print(ERASE_LINE);
+
+                System.out.println("Generated " + (modules.size() + 1) + " source files in " +
+                        (System.currentTimeMillis() - stepStart) + "ms");
+
+                stepStart = System.currentTimeMillis();
+                System.err.print("  Compiling and packaging build.jar...");
+                generator.compileAndPackage("build");
+                System.err.print(ERASE_LINE);
+                System.out.println("Packaged build.jar in " + (System.currentTimeMillis() - stepStart) + "ms");
+
+                Files.deleteIfExists(bootstrapJar);
+            }
+
+            System.out.println();
+            System.out.println("Total generation time: " + (System.currentTimeMillis() - totalStart) + "ms");
+        } else if (!noGenerate) {
+            System.out.println("Build files up to date, skipping generation");
         }
 
-        Path buildJar = outputDir.resolve("build.jar");
-        Path relativeJar = projectDir.relativize(buildJar);
-
+        // Phase 2: Native image (optional)
         if (buildNative) {
-            stepStart = System.currentTimeMillis();
-
+            long stepStart = System.currentTimeMillis();
             Path nativeBinary = outputDir.resolve("build");
-
             compileNativeImage(nativeImageBin, buildJar, nativeBinary);
-
             System.out.println("Native image compiled in " +
                     ((System.currentTimeMillis() - stepStart) / 1000) + "s");
             System.out.println("Binary: " + nativeBinary);
             System.out.println();
         }
 
-        long totalElapsed = System.currentTimeMillis() - totalStart;
-        System.out.println("Total time: " + totalElapsed + "ms");
-        System.out.println();
-        if (buildNative) {
-            System.out.println("To build the project, run:");
-            System.out.println("  JAVA_HOME=$GRAALVM_HOME " + projectDir.relativize(outputDir.resolve("build")));
+        // Phase 3: Build execution
+        if (!noBuild) {
+            if (needsBootstrapRun) {
+                System.out.println();
+                System.out.println("Running bootstrap build...");
+                System.out.println();
+                int exitCode = runBuild(bootstrapJar, projectDir, commonBuildArgs);
+                if (exitCode != 0) {
+                    System.err.println("Bootstrap build failed with exit code " + exitCode);
+                    System.exit(exitCode);
+                }
+                System.out.println();
+                System.out.println("Bootstrap build completed");
+                System.out.println();
+            }
+
+            if (!Files.exists(buildJar)) {
+                System.err.println("Error: build.jar not found at " + buildJar);
+                System.err.println("Run without --no-generate to create it.");
+                System.exit(1);
+            }
+
+            List<String> allBuildArgs = new ArrayList<>(commonBuildArgs);
+            allBuildArgs.addAll(mainBuildArgs);
+
+            System.out.println("Running build...");
+            System.out.println();
+            int exitCode = runBuild(buildJar, projectDir, allBuildArgs);
+            System.exit(exitCode);
         } else {
-            System.out.println("To build the project, run:");
-            System.out.println("  java -jar " + relativeJar);
+            System.out.println();
+            Path relativeJar = projectDir.relativize(buildJar);
+            if (buildNative) {
+                System.out.println("To build the project, run:");
+                System.out.println("  JAVA_HOME=$GRAALVM_HOME " + projectDir.relativize(outputDir.resolve("build")));
+            } else {
+                System.out.println("To build the project, run:");
+                System.out.println("  java -jar " + relativeJar);
+            }
         }
+    }
+
+    private static List<ModuleInfo> detectBootstrapModules(List<ModuleInfo> allModules, DependencyResolver resolver) {
+        Path runtimePom = resolver.resolvePom(RUNTIME_GROUP_ID, RUNTIME_ARTIFACT_ID, RUNTIME_VERSION);
+        if (runtimePom == null) {
+            return List.of();
+        }
+
+        Set<String> seedIds = new LinkedHashSet<>();
+        try (var input = Files.newInputStream(runtimePom)) {
+            Model model = new MavenXpp3Reader().read(input);
+            for (org.apache.maven.model.Dependency dep : model.getDependencies()) {
+                seedIds.add(dep.getArtifactId());
+            }
+        } catch (Exception e) {
+            return List.of();
+        }
+
+        Map<String, ModuleInfo> moduleMap = allModules.stream()
+                .collect(Collectors.toMap(ModuleInfo::getArtifactId, m -> m, (a, b) -> a));
+
+        Set<String> reactorSeeds = seedIds.stream()
+                .filter(moduleMap::containsKey)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        if (reactorSeeds.isEmpty()) {
+            return List.of();
+        }
+
+        Set<String> visited = new LinkedHashSet<>();
+        LinkedList<String> queue = new LinkedList<>(reactorSeeds);
+        while (!queue.isEmpty()) {
+            String id = queue.poll();
+            if (!visited.add(id)) continue;
+            ModuleInfo module = moduleMap.get(id);
+            if (module == null) continue;
+            for (String dep : module.getReactorDependencies()) {
+                if (!visited.contains(dep)) {
+                    queue.add(dep);
+                }
+            }
+        }
+
+        return allModules.stream()
+                .filter(m -> visited.contains(m.getArtifactId()))
+                .toList();
+    }
+
+    private static boolean bootstrapNeeded(List<ModuleInfo> bootstrapModules, DependencyResolver resolver) {
+        for (ModuleInfo module : bootstrapModules) {
+            String jarPath = resolver.resolveArtifactPath(
+                    module.getGroupId(), module.getArtifactId(), module.getVersion());
+            if (jarPath == null) {
+                return true;
+            }
+            try {
+                long jarTime = Files.getLastModifiedTime(Path.of(jarPath)).toMillis();
+                if (hasNewerSources(module.getBaseDir(), jarTime)) {
+                    return true;
+                }
+            } catch (IOException e) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean hasNewerSources(Path moduleDir, long referenceTime) {
+        Path srcDir = moduleDir.resolve("src");
+        if (!Files.isDirectory(srcDir)) return false;
+        try (var stream = Files.walk(srcDir)) {
+            return stream
+                    .filter(Files::isRegularFile)
+                    .anyMatch(p -> {
+                        try {
+                            return Files.getLastModifiedTime(p).toMillis() > referenceTime;
+                        } catch (IOException e) {
+                            return true;
+                        }
+                    });
+        } catch (IOException e) {
+            return true;
+        }
+    }
+
+    private static boolean needsRegeneration(Path projectDir, Path buildJar) {
+        if (!Files.exists(buildJar)) return true;
+        try {
+            long buildJarTime = Files.getLastModifiedTime(buildJar).toMillis();
+            try (var stream = Files.walk(projectDir)) {
+                return stream
+                        .filter(p -> p.getFileName().toString().equals("pom.xml"))
+                        .filter(p -> !p.toString().contains("/target/"))
+                        .anyMatch(p -> {
+                            try {
+                                return Files.getLastModifiedTime(p).toMillis() > buildJarTime;
+                            } catch (IOException e) {
+                                return true;
+                            }
+                        });
+            }
+        } catch (IOException e) {
+            return true;
+        }
+    }
+
+    private static int runBuild(Path jarFile, Path workDir, List<String> args) throws Exception {
+        List<String> cmd = new ArrayList<>();
+        cmd.add(ProcessHandle.current().info().command().orElse("java"));
+        cmd.add("-jar");
+        cmd.add(jarFile.toString());
+        cmd.addAll(args);
+
+        ProcessBuilder pb = new ProcessBuilder(cmd);
+        pb.inheritIO();
+        pb.directory(workDir.toFile());
+        return pb.start().waitFor();
     }
 
     private static void printHelp() {
         System.out.println("""
                 qraven - Fast build tool for Maven projects
 
-                Parses pom.xml files, resolves dependencies, and generates a self-contained
-                build.jar that compiles all modules using the javac API. The build.jar can
-                optionally be compiled to a native binary via GraalVM for maximum speed.
+                Generates a self-contained build.jar from pom.xml files, then executes the
+                build. Automatically detects when regeneration is needed (pom files changed)
+                and supports bootstrapping for projects that contain qraven's own dependencies.
 
                 Usage: qraven [options]
 
-                Options:
+                Generation options:
+                  --force-generate, -fg     Force regeneration even if pom files haven't changed
+                  --no-generate, -ng        Skip generation (use previously generated build.jar)
+                  --force-bootstrap, -fb    Force bootstrap build even if bootstrap jars are fresh
+
+                Build options:
+                  --no-build, -nb           Skip build execution (generate only)
+                  --quickly                 Alias for -DskipTests -DskipITs -Dquarkus.build.skip
+                  -pl, --projects <list>    Comma-separated list of module artifactIds to build
+                  -am, --also-make          Build dependencies of modules specified by -pl
+                  -i, --incremental         Only rebuild modules with changed sources
+                  -D<key>=<value>           Set a system property
+
+                Other options:
                   -h, --help                Show this help message and exit
                   -p, --project <path>      Project root directory (default: current directory)
-                  -t, --threads <n>         Thread count for parallel compilation (default: available CPUs)
-                  -o, --output <path>       Output directory for build.jar (default: <project>/target/qraven)
+                  -t, --threads <n>         Thread count (default: available CPUs)
+                  -o, --output <path>       Output directory (default: <project>/target/qraven)
                       --native              Compile build.jar to a native binary after generation
-                      --graalvm-home <path>  GraalVM installation path for native-image
-                                            (also checks GRAALVM_HOME, JAVA_HOME, and PATH)
+                      --graalvm-home <path>  GraalVM path (also checks GRAALVM_HOME, JAVA_HOME, PATH)
 
                 Examples:
-                  qraven                                    Generate build.jar for current directory
-                  qraven -p /path/to/project -t 8           Use 8 threads
-                  qraven --native --graalvm-home /opt/graalvm  Generate and compile to native binary
-
-                Running the generated build:
-                  java -jar target/qraven/build.jar          JVM mode
-                  JAVA_HOME=/path/to/jdk target/qraven/build  Native mode (JAVA_HOME must match build JDK)
+                  qraven                        Auto-generate if needed, then build
+                  qraven --quickly               Build skipping tests
+                  qraven -pl quarkus-arc -am     Build one module and its dependencies
+                  qraven --no-build              Generate only, don't run the build
+                  qraven --force-bootstrap       Force rebuild of bootstrap modules
+                  qraven -fg --quickly           Force regeneration, skip tests
+                  qraven -i                      Incremental build (only changed modules)
                 """);
     }
 

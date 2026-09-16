@@ -57,8 +57,12 @@ public class BuildFileGenerator {
     }
 
     public void generate(List<ModuleInfo> modules) throws IOException {
-        Path srcDir = outputDir.resolve("src");
-        Path classesDir = outputDir.resolve("classes");
+        generate(modules, "build");
+    }
+
+    public void generate(List<ModuleInfo> modules, String buildName) throws IOException {
+        Path srcDir = outputDir.resolve(buildName + "-src");
+        Path classesDir = outputDir.resolve(buildName + "-classes");
         deleteDirectory(srcDir);
         deleteDirectory(classesDir);
         Files.createDirectories(srcDir);
@@ -504,9 +508,13 @@ public class BuildFileGenerator {
     }
 
     public void compileAndPackage() throws IOException {
-        Path srcDir = outputDir.resolve("src");
-        Path classesDir = outputDir.resolve("classes");
-        Path buildJar = outputDir.resolve("build.jar");
+        compileAndPackage("build");
+    }
+
+    public void compileAndPackage(String buildName) throws IOException {
+        Path srcDir = outputDir.resolve(buildName + "-src");
+        Path classesDir = outputDir.resolve(buildName + "-classes");
+        Path buildJar = outputDir.resolve(buildName + ".jar");
         Files.createDirectories(classesDir);
 
         List<String> runtimeClasspath = resolver.resolveAnnotationProcessorPath(
