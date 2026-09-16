@@ -57,8 +57,6 @@ import tools.jackson.dataformat.yaml.YAMLMapper;
  */
 public class ExtensionDescriptorGenerator {
 
-    // ── Nested interfaces and data classes ──────────────────────────────
-
     public interface Logger {
         void debug(String msg);
 
@@ -257,14 +255,10 @@ public class ExtensionDescriptorGenerator {
         boolean isAttachedArtifact(ArtifactCoords coords);
     }
 
-    // ── Constants ───────────────────────────────────────────────────────
-
     private static final String GROUP_ID = "group-id";
     private static final String ARTIFACT_ID = "artifact-id";
     private static final String METADATA = "metadata";
     private static final String COMMA = ",";
-
-    // ── Configuration fields ────────────────────────────────────────────
 
     private final String groupId;
     private final String artifactId;
@@ -295,13 +289,9 @@ public class ExtensionDescriptorGenerator {
     private final DependencyResolver resolver;
     private final Logger logger;
 
-    // ── Cached state ────────────────────────────────────────────────────
-
     private ArtifactCoords deploymentCoords;
-    private DepNode cachedResolvedRuntimeDeps;
-    private DepNode cachedCollectedDeploymentDeps;
-
-    // ── Builder ─────────────────────────────────────────────────────────
+    private DepNode runtimeDeps;
+    private DepNode collectedDeploymentDeps;
 
     public static class Builder {
         private String groupId;
@@ -521,7 +511,7 @@ public class ExtensionDescriptorGenerator {
                 ? toVersionRange(quarkusCoreVersion)
                 : requiresQuarkusCore;
         if (quarkusCoreVersionRange != null) {
-            props.put("requires-quarkus-version", quarkusCoreVersionRange);
+            props.put(BootstrapConstants.PROP_REQUIRES_QUARKUS_VERSION, quarkusCoreVersionRange);
         }
 
         final Path output = outputDirectory.resolve(BootstrapConstants.META_INF);
@@ -567,7 +557,7 @@ public class ExtensionDescriptorGenerator {
                 extObject.put("name", projectName);
             } else {
                 JsonNode node = extObject.get(ARTIFACT_ID);
-                String defaultName = node != null ? node.asText() : artifactId;
+                String defaultName = node != null ? node.asString() : artifactId;
                 int i = 0;
                 if (defaultName.startsWith("quarkus-")) {
                     i = "quarkus-".length();
@@ -638,7 +628,7 @@ public class ExtensionDescriptorGenerator {
         if (devMode == null) {
             return;
         }
-        JvmOptions jvmArgs = devMode.getJvmOptions();
+        var jvmArgs = devMode.getJvmOptions();
         if (jvmArgs != null && !jvmArgs.isEmpty()) {
             jvmArgs.setAsExtensionDevModeProperties(props);
         }
@@ -761,14 +751,14 @@ public class ExtensionDescriptorGenerator {
         props.setProperty(propertyName, buf.toString());
     }
 
-    // if conditional dependencies haven't been configured
-    // we check whether there are direct optional dependencies on extensions
-    // that are configured with a dependency condition
-    // such dependencies will be registered as conditional
     private void lookForConditionalDeps() throws Exception {
         if (!conditionalDependencies.isEmpty()) {
             return;
         }
+        // if conditional dependencies haven't been configured
+        // we check whether there are direct optional dependencies on extensions
+        // that are configured with a dependency condition
+        // such dependencies will be registered as conditional
         StringBuilder buf = null;
         for (ModelDependency d : modelDependencies) {
             if (!d.isOptional()) {
@@ -885,6 +875,7 @@ public class ExtensionDescriptorGenerator {
         final ArtifactCoords codestartArtifactCoords = GACTV.fromString(codestartArtifact);
         codestartObject.put("artifact", codestartArtifactCoords.toString());
         if (!skipCodestartValidation) {
+            // first we look for it in the workspace, if it's in there we don't need to actually resolve the artifact, because it might not have been built yet
             if (resolver.isInWorkspace(codestartArtifactCoords.getGroupId(),
                     codestartArtifactCoords.getArtifactId())) {
                 return;
@@ -970,21 +961,6 @@ public class ExtensionDescriptorGenerator {
         return coreVersion[0];
     }
 
-    private static boolean findQuarkusCore(DepNode node, String[] result) {
-        if ("quarkus-core".equals(node.getArtifactId())) {
-            result[0] = node.getVersion();
-            if ("io.quarkus".equals(node.getGroupId())) {
-                return true;
-            }
-        }
-        for (DepNode child : node.getChildren()) {
-            if (findQuarkusCore(child, result)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     private void addExtensionDependencies(ObjectNode extObject) throws Exception {
         final DepNode root = resolvedRuntimeDeps();
         ArrayNode[] extensionDeps = new ArrayNode[1];
@@ -1018,6 +994,21 @@ public class ExtensionDescriptorGenerator {
         for (DepNode child : node.getChildren()) {
             walkForExtensionDeps(child, extObject, extensionDeps);
         }
+    }
+
+    private static boolean findQuarkusCore(DepNode node, String[] result) {
+        if ("quarkus-core".equals(node.getArtifactId())) {
+            result[0] = node.getVersion();
+            if ("io.quarkus".equals(node.getGroupId())) {
+                return true;
+            }
+        }
+        for (DepNode child : node.getChildren()) {
+            if (findQuarkusCore(child, result)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void addSource(ObjectNode extObject) {
@@ -1092,7 +1083,7 @@ public class ExtensionDescriptorGenerator {
 
         rootDeployment.expectedDeploymentNodes.put(rootDeployment.gact, rootDeployment);
         rootDeployment.expectedDeploymentNodes.put(rootRuntime.gact, rootRuntime);
-
+        // collect transitive extension deps
         final DepNode resolvedDeps = resolvedRuntimeDeps();
         for (DepNode node : resolvedDeps.getChildren()) {
             rootDeployment.directRuntimeDeps.add(node.key());
@@ -1188,15 +1179,15 @@ public class ExtensionDescriptorGenerator {
     }
 
     private DepNode resolvedRuntimeDeps() throws Exception {
-        if (cachedResolvedRuntimeDeps == null) {
+        if (runtimeDeps == null) {
             try {
-                cachedResolvedRuntimeDeps = resolver.resolveRuntimeDependencies();
+                runtimeDeps = resolver.resolveRuntimeDependencies();
             } catch (Exception e) {
                 throw new Exception("Failed to resolve dependencies of "
                         + groupId + ":" + artifactId + ":" + version, e);
             }
         }
-        return cachedResolvedRuntimeDeps;
+        return runtimeDeps;
     }
 
     private void highlightInTree(DepNode node, Collection<ArtifactKey> keys) {
@@ -1315,16 +1306,17 @@ public class ExtensionDescriptorGenerator {
         return ArtifactCoords.fromString(deploymentStr);
     }
 
-    private Properties getExtensionDescriptor(String gId, String aId, String classifier, String type, String ver) {
+    private Properties getExtensionDescriptor(String groupId, String artifactId, String classifier, String type,
+            String version) {
         // if it hasn't been packaged yet, we skip it, we are not packaging yet
         if (!ArtifactCoords.TYPE_JAR.equals(type)) {
             return null;
         }
         Path f;
         try {
-            f = resolver.resolveArtifact(gId, aId, classifier, type, ver);
+            f = resolver.resolveArtifact(groupId, artifactId, classifier, type, version);
         } catch (Exception e) {
-            logger.warn("Failed to resolve " + gId + ":" + aId);
+            logger.warn("Failed to resolve " + groupId + ":" + artifactId);
             return null;
         }
         if (f == null) {
@@ -1337,7 +1329,7 @@ public class ExtensionDescriptorGenerator {
             // In case of a parallel build, the resolved JAR might not have been fully written, which may result in a failure to read it
             // so we try the classes dir first
             if (resolver.isParallelBuild()) {
-                Path classesDir = resolver.workspaceClassesDir(gId, aId);
+                Path classesDir = resolver.workspaceClassesDir(groupId, artifactId);
                 if (classesDir != null && Files.exists(classesDir)) {
                     return readExtensionDescriptorIfExists(classesDir);
                 }
@@ -1372,15 +1364,15 @@ public class ExtensionDescriptorGenerator {
     }
 
     private DepNode collectedDeploymentDeps() throws Exception {
-        if (cachedCollectedDeploymentDeps == null) {
+        if (collectedDeploymentDeps == null) {
             final ArtifactCoords depCoords = getDeploymentCoords();
             try {
-                cachedCollectedDeploymentDeps = resolver.collectDeploymentDependencies(depCoords);
+                collectedDeploymentDeps = resolver.collectDeploymentDependencies(depCoords);
             } catch (Exception e) {
                 throw new Exception("Failed to collect dependencies of deployment artifact " + depCoords, e);
             }
         }
-        return cachedCollectedDeploymentDeps;
+        return collectedDeploymentDeps;
     }
 
     private ArtifactCoords getDeploymentCoords() {
