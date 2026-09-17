@@ -66,6 +66,7 @@ public class QravenCli {
                 case "--also-make", "-am" -> mainBuildArgs.add("-am");
                 case "--incremental", "-i" -> commonBuildArgs.add("-i");
                 case "--no-kotlin" -> commonBuildArgs.add("--no-kotlin");
+                case "--fast-kotlin" -> commonBuildArgs.add("--fast-kotlin");
                 default -> {
                     if (args[i].startsWith("-D")) {
                         commonBuildArgs.add(args[i]);
@@ -431,6 +432,7 @@ public class QravenCli {
                   -am, --also-make          Build dependencies of modules specified by -pl
                   -i, --incremental         Only rebuild modules with changed sources
                   --no-kotlin               Skip Kotlin modules and their dependents
+                  --fast-kotlin             Use optimized Kotlin compiler pipeline (shared environment)
                   -D<key>=<value>           Set a system property
 
                 Other options:
