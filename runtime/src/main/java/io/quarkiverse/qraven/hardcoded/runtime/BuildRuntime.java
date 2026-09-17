@@ -526,10 +526,6 @@ public class BuildRuntime {
 
     private void addFastKotlinArgs(List<String> args) {
         args.add("-Xuse-fast-jar-file-system");
-        args.add("-Xbackend-threads=0");
-        args.add("-Xno-call-assertions");
-        args.add("-Xno-param-assertions");
-        args.add("-Xno-receiver-assertions");
     }
 
     public void compileKotlin(Path kotlinSourceDir, Path javaSourceDir, Path outputDir,
