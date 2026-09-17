@@ -458,7 +458,8 @@ public class BuildFileGenerator {
         sb.append("        String projects = null;\n");
         sb.append("        boolean alsoMake = false;\n");
         sb.append("        boolean incremental = false;\n");
-        sb.append("        boolean noKotlin = false;\n\n");
+        sb.append("        boolean noKotlin = false;\n");
+        sb.append("        boolean fastKotlin = false;\n\n");
 
         sb.append("        for (int i = 0; i < args.length; i++) {\n");
         sb.append("            if (\"--help\".equals(args[i]) || \"-h\".equals(args[i])) {\n");
@@ -472,6 +473,7 @@ public class BuildFileGenerator {
         sb.append("                System.out.println(\"  -am, --also-make          Build dependencies of modules specified by -pl\");\n");
         sb.append("                System.out.println(\"  -i, --incremental         Only rebuild modules with changed sources\");\n");
         sb.append("                System.out.println(\"      --no-kotlin           Skip Kotlin modules and their dependents\");\n");
+        sb.append("                System.out.println(\"      --fast-kotlin         Use optimized Kotlin compiler pipeline (shared environment)\");\n");
         sb.append("                System.out.println(\"  -D<key>=<value>           Set a system property\");\n");
         sb.append("                return;\n");
         sb.append("            } else if (args[i].startsWith(\"-D\")) {\n");
@@ -494,6 +496,8 @@ public class BuildFileGenerator {
         sb.append("                incremental = true;\n");
         sb.append("            } else if (\"--no-kotlin\".equals(args[i])) {\n");
         sb.append("                noKotlin = true;\n");
+        sb.append("            } else if (\"--fast-kotlin\".equals(args[i])) {\n");
+        sb.append("                fastKotlin = true;\n");
         sb.append("            } else {\n");
         sb.append("                System.err.println(\"Unknown option: \" + args[i]);\n");
         sb.append("                System.err.println(\"Run with --help for usage information.\");\n");
@@ -502,6 +506,7 @@ public class BuildFileGenerator {
         sb.append("        }\n\n");
 
         sb.append("        BuildRuntime runtime = new BuildRuntime(projectRoot);\n");
+        sb.append("        if (fastKotlin) runtime.setFastKotlin(true);\n");
         if (protocPath != null) {
             sb.append("        runtime.setProtocPath(").append(quote(protocPath)).append(");\n");
         }

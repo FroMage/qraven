@@ -205,6 +205,11 @@ public class BuildRuntime {
             try { fm.close(); } catch (IOException e) { /* ignore */ }
         }
         fileManagers.clear();
+        var disposable = persistentKotlinDisposable;
+        if (disposable != null) {
+            persistentKotlinDisposable = null;
+            com.intellij.openapi.util.Disposer.dispose(disposable);
+        }
     }
 
     public Path getProjectRoot() {
@@ -497,12 +502,26 @@ public class BuildRuntime {
     }
 
     private volatile org.jetbrains.kotlin.cli.jvm.K2JVMCompiler kotlinCompiler;
+    private volatile boolean fastKotlin;
+    private volatile com.intellij.openapi.Disposable persistentKotlinDisposable;
+
+    public void setFastKotlin(boolean enabled) {
+        this.fastKotlin = enabled;
+        if (enabled) {
+            System.setProperty("kotlin.environment.keepalive", "true");
+        }
+    }
 
     public void warmupKotlin() {
         long start = System.currentTimeMillis();
         kotlinCompiler = new org.jetbrains.kotlin.cli.jvm.K2JVMCompiler();
+        if (fastKotlin) {
+            persistentKotlinDisposable =
+                    com.intellij.openapi.util.Disposer.newDisposable("qraven-fast-kotlin");
+        }
         long elapsed = System.currentTimeMillis() - start;
-        System.out.println("Kotlin compiler warmup: " + elapsed + "ms");
+        System.out.println("Kotlin compiler warmup: " + elapsed + "ms"
+                + (fastKotlin ? " (fast-kotlin enabled)" : ""));
     }
 
     public void compileKotlin(Path kotlinSourceDir, Path javaSourceDir, Path outputDir,
@@ -523,9 +542,18 @@ public class BuildRuntime {
             throw new RuntimeException("Failed to create output dir " + outputDir, e);
         }
 
-        org.jetbrains.kotlin.cli.jvm.K2JVMCompiler compiler =
-                kotlinCompiler != null ? kotlinCompiler : new org.jetbrains.kotlin.cli.jvm.K2JVMCompiler();
+        List<String> args = buildKotlinArgs(kotlinFiles, javaSourceDir, outputDir, classpath,
+                kotlinSourceDir, extraJavaSourceRoots);
 
+        if (fastKotlin) {
+            compileKotlinFast(args);
+        } else {
+            compileKotlinClassic(args);
+        }
+    }
+
+    private List<String> buildKotlinArgs(List<Path> kotlinFiles, Path javaSourceDir, Path outputDir,
+            List<String> classpath, Path kotlinSourceDir, Path[] extraJavaSourceRoots) {
         List<String> args = new ArrayList<>();
         args.add("-d");
         args.add(outputDir.toString());
@@ -554,12 +582,47 @@ public class BuildRuntime {
         for (Path ktFile : kotlinFiles) {
             args.add(ktFile.toString());
         }
+        return args;
+    }
+
+    private void compileKotlinClassic(List<String> args) {
+        org.jetbrains.kotlin.cli.jvm.K2JVMCompiler compiler =
+                kotlinCompiler != null ? kotlinCompiler : new org.jetbrains.kotlin.cli.jvm.K2JVMCompiler();
 
         ByteArrayOutputStream errBuf = new ByteArrayOutputStream();
         PrintStream errStream = new PrintStream(errBuf);
         org.jetbrains.kotlin.cli.common.ExitCode exitCode =
                 compiler.exec(errStream, args.toArray(new String[0]));
         if (exitCode != org.jetbrains.kotlin.cli.common.ExitCode.OK) {
+            throw new RuntimeException("Kotlin compilation failed:\n" + errBuf);
+        }
+    }
+
+    private void compileKotlinFast(List<String> args) {
+        org.jetbrains.kotlin.cli.jvm.K2JVMCompiler compiler =
+                kotlinCompiler != null ? kotlinCompiler : new org.jetbrains.kotlin.cli.jvm.K2JVMCompiler();
+
+        var compilerArgs = new org.jetbrains.kotlin.cli.common.arguments.K2JVMCompilerArguments();
+        org.jetbrains.kotlin.cli.common.arguments.ParseCommandLineArgumentsKt
+                .parseCommandLineArguments(args, compilerArgs, false);
+
+        ByteArrayOutputStream errBuf = new ByteArrayOutputStream();
+        PrintStream errStream = new PrintStream(errBuf);
+        var messageCollector = new org.jetbrains.kotlin.cli.common.messages.PrintingMessageCollector(
+                errStream,
+                org.jetbrains.kotlin.cli.common.messages.MessageRenderer.PLAIN_RELATIVE_PATHS,
+                false);
+
+        var pipeline = new org.jetbrains.kotlin.cli.pipeline.jvm.JvmCliPipeline(
+                compiler.getDefaultPerformanceManager());
+
+        var result = pipeline.executeAndReturnPipeLineArtifact(
+                compilerArgs,
+                org.jetbrains.kotlin.config.Services.EMPTY,
+                messageCollector,
+                persistentKotlinDisposable);
+
+        if (result.getExitCode() != org.jetbrains.kotlin.cli.common.ExitCode.OK) {
             throw new RuntimeException("Kotlin compilation failed:\n" + errBuf);
         }
     }
