@@ -205,11 +205,6 @@ public class BuildRuntime {
             try { fm.close(); } catch (IOException e) { /* ignore */ }
         }
         fileManagers.clear();
-        var disposable = persistentKotlinDisposable;
-        if (disposable != null) {
-            persistentKotlinDisposable = null;
-            com.intellij.openapi.util.Disposer.dispose(disposable);
-        }
     }
 
     public Path getProjectRoot() {
@@ -503,30 +498,62 @@ public class BuildRuntime {
 
     private volatile org.jetbrains.kotlin.cli.jvm.K2JVMCompiler kotlinCompiler;
     private volatile boolean fastKotlin;
-    private volatile com.intellij.openapi.Disposable persistentKotlinDisposable;
 
     public void setFastKotlin(boolean enabled) {
         this.fastKotlin = enabled;
-        if (enabled) {
-            System.setProperty("kotlin.environment.keepalive", "true");
-        }
     }
 
     public void warmupKotlin() {
         long start = System.currentTimeMillis();
         kotlinCompiler = new org.jetbrains.kotlin.cli.jvm.K2JVMCompiler();
         if (fastKotlin) {
-            persistentKotlinDisposable =
-                    com.intellij.openapi.util.Disposer.newDisposable("qraven-fast-kotlin");
+            jitWarmupKotlinCompiler();
         }
         long elapsed = System.currentTimeMillis() - start;
         System.out.println("Kotlin compiler warmup: " + elapsed + "ms"
-                + (fastKotlin ? " (fast-kotlin enabled)" : ""));
+                + (fastKotlin ? " (fast-kotlin: JIT warmup)" : ""));
     }
 
-    private void addFastKotlinArgs(List<String> args) {
-        args.add("-Xuse-fast-jar-file-system");
+    private void jitWarmupKotlinCompiler() {
+        try {
+            Path tmpDir = Files.createTempDirectory("kotlin-jit-warmup");
+            try {
+                Path warmupKt = tmpDir.resolve("Warmup.kt");
+                Files.writeString(warmupKt, WARMUP_SOURCE);
+                Path outDir = tmpDir.resolve("out");
+                Files.createDirectories(outDir);
+                for (int i = 0; i < 3; i++) {
+                    kotlinCompiler.exec(
+                            new PrintStream(java.io.OutputStream.nullOutputStream()),
+                            new String[]{"-d", outDir.toString(), "-no-stdlib",
+                                    "-jvm-target", "21", warmupKt.toString()});
+                }
+            } finally {
+                try (var walk = Files.walk(tmpDir)) {
+                    walk.sorted(java.util.Comparator.reverseOrder())
+                            .forEach(p -> { try { Files.delete(p); } catch (IOException ignored) {} });
+                }
+            }
+        } catch (IOException e) {
+            System.err.println("Kotlin JIT warmup failed: " + e.getMessage());
+        }
     }
+
+    private static final String WARMUP_SOURCE = """
+            annotation class Ann
+            interface Base<T> { fun process(value: T): T }
+            @Ann class Impl : Base<String> {
+                override fun process(value: String): String = value.uppercase()
+                fun <R> transform(input: String, fn: (String) -> R): R = fn(process(input))
+                val lazy: String by lazy { "hello" }
+                companion object { fun create(): Impl = Impl() }
+            }
+            inline fun <reified T> checkType(value: Any): Boolean = value is T
+            fun String.ext(): Int = this.length
+            data class Record(val name: String, val value: Int)
+            sealed class Result { data class Ok(val v: String) : Result(); data class Err(val e: String) : Result() }
+            fun use(r: Result) = when (r) { is Result.Ok -> r.v; is Result.Err -> r.e }
+            """;
 
     public void compileKotlin(Path kotlinSourceDir, Path javaSourceDir, Path outputDir,
             List<String> classpath, Path... extraJavaSourceRoots) {
@@ -578,10 +605,6 @@ public class BuildRuntime {
             }
         }
         args.add("-Xjava-source-roots=" + String.join(",", javaRoots));
-
-        if (fastKotlin) {
-            addFastKotlinArgs(args);
-        }
 
         for (Path ktFile : kotlinFiles) {
             args.add(ktFile.toString());
