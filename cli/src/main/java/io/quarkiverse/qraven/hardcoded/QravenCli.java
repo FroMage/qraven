@@ -165,6 +165,7 @@ public class QravenCli {
 
                 stepStart = System.currentTimeMillis();
                 deferredMainGen = new BuildFileGenerator(projectDir, outputDir, threads, resolver);
+                deferredMainGen.setPreBuiltModules(bootstrapModules);
                 deferredMainGen.setProgressListener((detail, current, total) ->
                         System.err.print(ERASE_LINE + "  Generating " + current + "/" + total + " (" + detail + ")"));
                 deferredMainGen.generate(mainModules, "build");

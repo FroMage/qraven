@@ -56,6 +56,12 @@ public class BuildFileGenerator {
         this.progressListener = listener;
     }
 
+    private List<ModuleInfo> preBuiltModules = List.of();
+
+    public void setPreBuiltModules(List<ModuleInfo> preBuiltModules) {
+        this.preBuiltModules = preBuiltModules;
+    }
+
     public void generate(List<ModuleInfo> modules) throws IOException {
         generate(modules, "build");
     }
@@ -108,6 +114,13 @@ public class BuildFileGenerator {
             }
         } finally {
             executor.shutdown();
+        }
+
+        for (ModuleInfo preBuilt : preBuiltModules) {
+            String className = sanitizeClassName(preBuilt.getArtifactId());
+            String source = generateModuleClass(preBuilt, className);
+            Path sourceFile = srcDir.resolve("Build_" + className + ".java");
+            Files.writeString(sourceFile, source);
         }
 
         Path mainFile = srcDir.resolve("Build.java");
@@ -503,6 +516,14 @@ public class BuildFileGenerator {
         for (ModuleInfo module : modules) {
             String className = sanitizeClassName(module.getArtifactId());
             sb.append("        modules.add(new Build_").append(className).append("(runtime));\n");
+        }
+
+        if (!preBuiltModules.isEmpty()) {
+            sb.append("\n        // Bootstrap modules (already built in bootstrap phase)\n");
+            for (ModuleInfo module : preBuiltModules) {
+                String className = sanitizeClassName(module.getArtifactId());
+                sb.append("        { ModuleBuild m = new Build_").append(className).append("(runtime); m.markPreBuilt(); modules.add(m); }\n");
+            }
         }
 
         sb.append("\n        new BuildOrchestrator(threads).buildAll(modules, projects, alsoMake, incremental, noKotlin);\n");

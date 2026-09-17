@@ -48,7 +48,20 @@ public class BuildOrchestrator {
         }
 
         for (ModuleBuild m : modules) {
-            List<ModuleBuild> deps = m.moduleDependencyIds().stream()
+            List<String> allDepIds = new ArrayList<>(m.moduleDependencyIds());
+            for (String optId : m.optionalModuleDependencyIds()) {
+                if (byId.containsKey(optId) && !allDepIds.contains(optId)) {
+                    allDepIds.add(optId);
+                }
+            }
+            List<String> unresolved = allDepIds.stream()
+                    .filter(id -> !byId.containsKey(id))
+                    .toList();
+            if (!unresolved.isEmpty()) {
+                System.err.println("WARNING: " + m.artifactId()
+                        + " has unresolved reactor dependencies: " + unresolved);
+            }
+            List<ModuleBuild> deps = allDepIds.stream()
                     .map(byId::get)
                     .filter(Objects::nonNull)
                     .toList();

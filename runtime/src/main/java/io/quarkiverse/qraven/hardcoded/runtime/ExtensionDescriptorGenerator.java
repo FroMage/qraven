@@ -512,7 +512,7 @@ public class ExtensionDescriptorGenerator {
                 ? toVersionRange(quarkusCoreVersion)
                 : requiresQuarkusCore;
         if (quarkusCoreVersionRange != null) {
-            props.put(BootstrapConstants.PROP_REQUIRES_QUARKUS_VERSION, quarkusCoreVersionRange);
+            props.put("requires-quarkus-version", quarkusCoreVersionRange);
         }
 
         final Path output = outputDirectory.resolve(BootstrapConstants.META_INF);

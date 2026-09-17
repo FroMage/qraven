@@ -519,7 +519,15 @@ public abstract class ModuleBuild {
                 continue;
             }
             if (dep.didSucceed() && !"pom".equals(dep.packaging())) {
-                classpath.add(dep.jarFile().toString());
+                Path jar = dep.jarFile();
+                if (Files.exists(jar)) {
+                    classpath.add(jar.toString());
+                } else {
+                    Path installed = dep.installedArtifactPath();
+                    if (Files.exists(installed)) {
+                        classpath.add(installed.toString());
+                    }
+                }
             }
             if (dep.didSucceed()) {
                 for (String cp : dep.resolvedClasspath()) {
@@ -686,7 +694,7 @@ public abstract class ModuleBuild {
         }
     }
 
-    private Path installedArtifactPath() {
+    Path installedArtifactPath() {
         Path localRepo = Path.of(System.getProperty("user.home"), ".m2", "repository");
         String ext = "pom".equals(packaging()) ? ".pom" : ".jar";
         return localRepo
