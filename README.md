@@ -306,6 +306,79 @@ Qraven replicates the behavior of the following Maven plugins during build:
 - **maven-surefire-plugin / maven-failsafe-plugin** -- Test execution
 - **maven-shade-plugin / maven-assembly-plugin** -- Uber-jar / assembly creation
 
+## Comparison with Maven
+
+This section compares `qraven --quickly` against the equivalent Maven command:
+
+```bash
+mvn -T 1C -DskipDocs -DskipTests -DskipITs -Dinvoker.skip \
+    -DskipExtensionValidation -Dskip.gradle.tests -Dskip.gradle.build \
+    -Dtruststore.skip clean install -Prelocations
+```
+
+### Module set
+
+Both build the same ~1438 reactor modules. `-Prelocations` currently adds an empty parent POM (all 3.x relocations were removed in 4.0). `-DskipDocs` skips asciidoctor in the `docs/` module.
+
+### Plugin/goal comparison
+
+| Phase | Maven plugin/goal | qraven equivalent | Status |
+|-------|-------------------|-------------------|--------|
+| clean | `maven-clean-plugin:clean` | `runtime.clean()` deletes classes dir | **Equivalent** (qraven cleans classes dir only, not full `target/`) |
+| validate | `maven-enforcer-plugin:enforce` | `runEnforcer()` | **Partial** — see below |
+| process-sources | `formatter-maven-plugin:format` | `CodeStyleHelper` (Eclipse JDT) | **Equivalent** — same engine, same config |
+| process-sources | `impsort-maven-plugin:sort` | `sortImports()` | **Equivalent** — same group order, reimplemented |
+| process-sources | `spotless-maven-plugin:apply` (ktfmt) | `formatKotlinFiles()` | **Equivalent** |
+| process-resources | `maven-resources-plugin:resources` | `copyResources()` | **Equivalent** |
+| process-resources | `quarkus-extension-maven-plugin:extension-descriptor` | `ExtensionDescriptorHelper` | **Equivalent** |
+| compile | `maven-compiler-plugin:compile` | `runtime.compile()` (in-process javac API) | **Equivalent** — faster (no JVM fork) |
+| compile | `kotlin-maven-plugin:compile` | `runtime.compileKotlin()` (in-process K2JVMCompiler) | **Equivalent** — faster |
+| process-classes | `bridger:transform` | — | **Missing** — affects 2–3 modules (arc/runtime, core/processor) |
+| generate-sources | `protobuf-maven-plugin` | `runtime.compileProtobuf()` | **Equivalent** |
+| generate-sources | `antlr4-maven-plugin` | `runtime.compileAntlr()` | **Equivalent** |
+| generate-sources | `build-helper-maven-plugin:add-source` | Implicit (generated dirs added to compiler) | **Equivalent** |
+| generate-sources | `module-services-plugin:generate` | — | **Missing** — affects ~9 modules with `module-info.java` |
+| process-classes | `jandex-maven-plugin:jandex` | `runtime.generateJandexIndex()` | **Equivalent** |
+| process-classes | `sisu-maven-plugin` | `generateSisuIndex()` | **Simplified** — see below |
+| process-classes | `maven-plugin-plugin:descriptor` | `MavenPluginDescriptorGenerator` | **Simplified** — see below |
+| test-compile | `maven-compiler-plugin:testCompile` | — | **Missing** — test sources not compiled |
+| test | `maven-surefire-plugin:test` | — | Skipped by both (`-DskipTests`) |
+| package | `maven-jar-plugin:jar` | `runtime.createJar()` | **Equivalent** |
+| package | `maven-source-plugin:jar-no-fork` | — | **Missing** — no `-sources.jar` produced |
+| verify | `forbiddenapis:check` | — | **Missing** |
+| install | `maven-install-plugin:install` | `runtime.install()` | **Simplified** — see below |
+
+### Behavioral differences
+
+**Enforcer:**
+Maven runs the full `maven-enforcer-plugin`: `dependencyConvergence`, `banDuplicatePomDependencyVersions`, Java/Maven version checks, plus banned dependencies from 3 XML rule files. Qraven only checks banned dependencies from 2 of the 3 XML files (skips `-test.xml`), and warns instead of failing.
+
+**Sisu index:**
+Maven's `sisu-maven-plugin` scans bytecode via ASM. Qraven does text search for `@Named` in `.java` source files — can miss fully-qualified annotations or annotations inherited from superclasses, and can false-positive on commented-out annotations.
+
+**Plugin descriptor:**
+Maven's `maven-plugin-plugin` uses QDox to extract javadoc for `@Parameter` descriptions. Qraven uses Jandex bytecode scanning — parameter descriptions are always empty.
+
+**Install:**
+Maven installs the effective POM plus `.md5`/`.sha1` checksums and updates `maven-metadata-local.xml`. Qraven copies the raw source POM with no checksums. Raw POMs require the parent POM chain to be present in the local repo for `<dependencyManagement>` version resolution (handled by bootstrap's parent POM detection).
+
+**Resources:**
+No `<include>`/`<exclude>` filter support. No `@property@` delimiter support (only `${property}`). Filter properties are limited to what's explicitly extracted from the POM.
+
+**Test compilation:**
+Maven with `-DskipTests` still compiles test sources (only `-Dmaven.test.skip` skips test compilation). Qraven never touches `src/test/`.
+
+### Missing features that affect correctness
+
+| Feature | Modules affected | Impact |
+|---------|-----------------|--------|
+| `bridger:transform` | 2–3 (arc/runtime, core/processor) | Bytecode transforms for `$IMPL` binary compat not applied |
+| `module-services-plugin` | ~9 with `module-info.java` | `META-INF/services/` files not generated from module-info |
+| `maven-shade-plugin` | 2 (grpc/protoc, bootstrap/gradle-resolver) | Shaded/relocated JARs not produced |
+| Test compilation | All | Compile errors in test code go undetected |
+| Source JARs | All | `-sources.jar` not produced (blocks releases, not needed for dev) |
+| `forbiddenapis` | All | Banned API usage checks not run |
+
 ## How the Quarkus build works
 
 When a module declares `quarkus-maven-plugin` with the `build` goal, qraven:
