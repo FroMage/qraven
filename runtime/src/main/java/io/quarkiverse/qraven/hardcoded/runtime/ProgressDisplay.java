@@ -19,6 +19,7 @@ public class ProgressDisplay {
     private final int threadCount;
     private final AtomicInteger completed = new AtomicInteger();
     private final AtomicInteger failed = new AtomicInteger();
+    private final AtomicInteger upToDate = new AtomicInteger();
     private final ConcurrentHashMap<Integer, String> threadStatus = new ConcurrentHashMap<>();
     private final long startTime;
     private final PrintStream out;
@@ -70,6 +71,9 @@ public class ProgressDisplay {
             case "pom" -> artifactId + " │ installing pom";
             default -> artifactId + " │ " + phase;
         };
+        if ("up-to-date".equals(phase) || "skipped".equals(phase)) {
+            upToDate.incrementAndGet();
+        }
         threadStatus.put(threadIndex, status);
         safeRender();
     }
@@ -111,8 +115,10 @@ public class ProgressDisplay {
 
         int done = completed.get();
         int fail = failed.get();
+        int skipped = upToDate.get();
         int total = totalModules;
         int processed = done + fail;
+        int rebuilt = done - skipped;
         long elapsed = System.currentTimeMillis() - startTime;
 
         String elapsedStr = formatTime(elapsed);
@@ -132,6 +138,9 @@ public class ProgressDisplay {
         }
         bar.append("] ");
         bar.append(processed).append('/').append(total);
+        if (skipped > 0) {
+            bar.append(" (").append(rebuilt).append(" rebuilding)");
+        }
         if (fail > 0) bar.append(" (").append(RED).append(fail).append(" failed").append(RESET).append(BOLD).append(')');
         bar.append(' ').append(elapsedStr).append(eta);
         bar.append(RESET);
