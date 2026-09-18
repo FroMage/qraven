@@ -492,7 +492,7 @@ public abstract class ModuleBuild {
                         if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "test-compile", 0);
                         t = System.currentTimeMillis();
                         runtime.compile(testSourceDir(), testClassesDir(), testCp,
-                                List.of(), false, compilerArgs());
+                                resolvedAnnotationProcessorPaths(), false, compilerArgs());
                         recordPhase("test-compile", t);
                     }
                 }

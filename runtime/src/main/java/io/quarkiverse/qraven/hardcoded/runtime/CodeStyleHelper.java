@@ -167,9 +167,35 @@ public class CodeStyleHelper {
         int lastImport = -1;
         List<String> regularImports = new ArrayList<>();
         List<String> staticImports = new ArrayList<>();
+        List<String> preservedComments = new ArrayList<>();
+        boolean inBlockComment = false;
 
         for (int i = 0; i < lines.length; i++) {
             String trimmed = lines[i].trim();
+
+            if (inBlockComment) {
+                if (trimmed.contains("*/")) {
+                    inBlockComment = false;
+                }
+                continue;
+            }
+
+            if (trimmed.startsWith("/*")) {
+                boolean singleLine = trimmed.contains("*/");
+                if (firstImport >= 0) {
+                    if (singleLine) {
+                        preservedComments.add(lines[i]);
+                        lastImport = i;
+                        continue;
+                    }
+                    break;
+                }
+                if (!singleLine) {
+                    inBlockComment = true;
+                }
+                continue;
+            }
+
             if (trimmed.startsWith("import static ") && trimmed.endsWith(";")) {
                 if (firstImport < 0) firstImport = i;
                 lastImport = i;
@@ -178,6 +204,13 @@ public class CodeStyleHelper {
                 if (firstImport < 0) firstImport = i;
                 lastImport = i;
                 regularImports.add(trimmed);
+            } else if (firstImport >= 0) {
+                if (trimmed.startsWith("//")) {
+                    preservedComments.add(lines[i]);
+                    lastImport = i;
+                } else if (!trimmed.isEmpty()) {
+                    break;
+                }
             }
         }
 
@@ -254,6 +287,9 @@ public class CodeStyleHelper {
             result.append(lines[i]).append("\n");
         }
         result.append(newImports);
+        for (String comment : preservedComments) {
+            result.append(comment).append("\n");
+        }
         for (int i = lastImport + 1; i < lines.length; i++) {
             result.append(lines[i]);
             if (i < lines.length - 1) result.append("\n");
