@@ -80,6 +80,9 @@ public abstract class ModuleBuild {
     public abstract boolean hasProtobufSources();
     public abstract boolean protobufUsesGrpc();
     public abstract boolean protobufUsesMutiny();
+    public boolean hasTestJavaSources() { return false; }
+    public boolean hasTestKotlinSources() { return false; }
+    public List<String> testCompileClasspath() { return List.of(); }
     public boolean hasAntlrSources() { return false; }
     public boolean antlrVisitor() { return false; }
     public abstract String[][] resourceDirs();
@@ -462,6 +465,38 @@ public abstract class ModuleBuild {
                 runtime.createJar(classesDir(), jarFile(), manifestEntries());
                 recordPhase("jar", t);
 
+                if ((hasTestJavaSources() || hasTestKotlinSources())
+                        && !evaluateSkip("${maven.test.skip}")) {
+                    List<String> testCp = new ArrayList<>(fullClasspath);
+                    testCp.addAll(resolvePaths(testCompileClasspath()));
+                    testCp.add(classesDir().toString());
+
+                    if (hasTestKotlinSources()) {
+                        if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "test-kotlin", 0);
+                        t = System.currentTimeMillis();
+                        runtime.compileKotlin(testKotlinSourceDir(), testSourceDir(), testClassesDir(), testCp);
+                        testCp.add(0, testClassesDir().toString());
+                        recordPhase("test-kotlin", t);
+                    }
+
+                    if (hasTestJavaSources() && !skipFormat) {
+                        if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "test-format", 0);
+                        t = System.currentTimeMillis();
+                        CodeStyleHelper codeStyle = runtime.getCodeStyleHelper();
+                        codeStyle.formatJavaFiles(testSourceDir());
+                        codeStyle.sortImports(testSourceDir());
+                        recordPhase("test-format", t);
+                    }
+
+                    if (hasTestJavaSources()) {
+                        if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "test-compile", 0);
+                        t = System.currentTimeMillis();
+                        runtime.compile(testSourceDir(), testClassesDir(), testCp,
+                                List.of(), false, compilerArgs());
+                        recordPhase("test-compile", t);
+                    }
+                }
+
                 if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "install", 0);
                 t = System.currentTimeMillis();
                 runtime.install(jarFile(), pomFile(), groupId(), artifactId(), version(), packaging());
@@ -562,6 +597,18 @@ public abstract class ModuleBuild {
 
     public Path kotlinSourceDir() {
         return runtime.getProjectRoot().resolve(baseDir()).resolve("src/main/kotlin");
+    }
+
+    public Path testSourceDir() {
+        return runtime.getProjectRoot().resolve(baseDir()).resolve("src/test/java");
+    }
+
+    public Path testKotlinSourceDir() {
+        return runtime.getProjectRoot().resolve(baseDir()).resolve("src/test/kotlin");
+    }
+
+    public Path testClassesDir() {
+        return runtime.getProjectRoot().resolve(baseDir()).resolve("target/test-classes");
     }
 
     private void addGeneratedSourceDirs(Path generatedSourcesDir, List<Path> extraDirs) {
@@ -670,6 +717,16 @@ public abstract class ModuleBuild {
             if (newestInput > artifactMtime) return false;
         }
 
+        if (hasTestJavaSources() && !evaluateSkip("${maven.test.skip}")) {
+            newestInput = newestMtime(testSourceDir());
+            if (newestInput > artifactMtime) return false;
+        }
+
+        if (hasTestKotlinSources() && !evaluateSkip("${maven.test.skip}")) {
+            newestInput = newestMtime(testKotlinSourceDir());
+            if (newestInput > artifactMtime) return false;
+        }
+
         try {
             if (Files.getLastModifiedTime(pomFile()).toMillis() > artifactMtime) return false;
         } catch (IOException e) {
@@ -686,6 +743,8 @@ public abstract class ModuleBuild {
             long artifactMtime = Files.getLastModifiedTime(installedArtifact).toMillis();
             if (newestMtime(sourceDir()) > artifactMtime) return true;
             if (hasKotlinSources() && newestMtime(kotlinSourceDir()) > artifactMtime) return true;
+            if (hasTestJavaSources() && newestMtime(testSourceDir()) > artifactMtime) return true;
+            if (hasTestKotlinSources() && newestMtime(testKotlinSourceDir()) > artifactMtime) return true;
             if (Files.getLastModifiedTime(pomFile()).toMillis() > artifactMtime) return true;
         } catch (IOException e) {
             return true;

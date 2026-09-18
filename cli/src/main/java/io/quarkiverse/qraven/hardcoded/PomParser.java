@@ -552,6 +552,12 @@ public class PomParser {
         Path kotlinSrcMain = baseDir.resolve("src/main/kotlin");
         info.setHasKotlinSources(Files.isDirectory(kotlinSrcMain) && hasKotlinFiles(kotlinSrcMain));
 
+        Path testSrcMain = baseDir.resolve("src/test/java");
+        info.setHasTestJavaSources(Files.isDirectory(testSrcMain) && hasJavaFiles(testSrcMain));
+
+        Path testKotlinSrcMain = baseDir.resolve("src/test/kotlin");
+        info.setHasTestKotlinSources(Files.isDirectory(testKotlinSrcMain) && hasKotlinFiles(testKotlinSrcMain));
+
         extractResourceDirs(model, baseDir, info);
         extractFilterProperties(model, info);
         detectJandexPlugin(model, info);
@@ -1579,6 +1585,8 @@ public class PomParser {
         }
 
         List<Dependency> externalDeps = new ArrayList<>();
+        List<Dependency> testExternalDeps = new ArrayList<>();
+        boolean hasTestSources = info.isHasTestJavaSources() || info.isHasTestKotlinSources();
         for (Dependency dep : model.getDependencies()) {
             String scope = dep.getScope() != null ? dep.getScope() : "compile";
             String ga = dep.getGroupId() + ":" + dep.getArtifactId();
@@ -1597,56 +1605,74 @@ public class PomParser {
                 }
                 continue;
             }
-            if (!"test".equals(scope) && !reactorGAs.contains(ga)) {
-                String version = dep.getVersion();
-                if (version == null || version.isBlank()) {
-                    version = managedVersions.get(ga);
+            if (reactorGAs.contains(ga)) {
+                continue;
+            }
+            String version = dep.getVersion();
+            if (version == null || version.isBlank()) {
+                version = managedVersions.get(ga);
+            }
+            if (version != null && !version.isBlank()) {
+                if (dep.getVersion() == null || dep.getVersion().isBlank()) {
+                    dep.setVersion(version);
                 }
-                if (version != null && !version.isBlank()) {
-                    if (dep.getVersion() == null || dep.getVersion().isBlank()) {
-                        dep.setVersion(version);
-                    }
+                if (!"test".equals(scope)) {
                     externalDeps.add(dep);
+                }
+                if (hasTestSources) {
+                    testExternalDeps.add(dep);
                 }
             }
         }
 
-        if (externalDeps.isEmpty()) {
+        if (externalDeps.isEmpty() && testExternalDeps.isEmpty()) {
             return;
         }
 
         List<Dependency> managedDeps = model.getDependencyManagement() != null
                 ? model.getDependencyManagement().getDependencies() : List.of();
 
-        List<DependencyResolver.ResolvedArtifact> resolved =
-                resolver.resolveCompileClasspath(externalDeps, managedDeps);
+        if (!externalDeps.isEmpty()) {
+            List<DependencyResolver.ResolvedArtifact> resolved =
+                    resolver.resolveCompileClasspath(externalDeps, managedDeps);
 
-        List<String> externalClasspath = new ArrayList<>();
-        for (DependencyResolver.ResolvedArtifact art : resolved) {
-            externalClasspath.add(art.filePath());
-        }
-        info.setCompileClasspath(externalClasspath);
-
-        boolean hasOptional = externalDeps.stream().anyMatch(d -> "true".equals(d.getOptional()));
-        if (hasOptional) {
-            List<Dependency> requiredDeps = externalDeps.stream()
-                    .filter(d -> !"true".equals(d.getOptional()))
-                    .toList();
-            Set<String> requiredPaths;
-            if (requiredDeps.isEmpty()) {
-                requiredPaths = Set.of();
-            } else {
-                requiredPaths = resolver.resolveCompileClasspath(requiredDeps, managedDeps).stream()
-                        .map(DependencyResolver.ResolvedArtifact::filePath)
-                        .collect(Collectors.toSet());
+            List<String> externalClasspath = new ArrayList<>();
+            for (DependencyResolver.ResolvedArtifact art : resolved) {
+                externalClasspath.add(art.filePath());
             }
-            Set<String> optionalPaths = new LinkedHashSet<>();
-            for (String path : externalClasspath) {
-                if (!requiredPaths.contains(path)) {
-                    optionalPaths.add(path);
+            info.setCompileClasspath(externalClasspath);
+
+            boolean hasOptional = externalDeps.stream().anyMatch(d -> "true".equals(d.getOptional()));
+            if (hasOptional) {
+                List<Dependency> requiredDeps = externalDeps.stream()
+                        .filter(d -> !"true".equals(d.getOptional()))
+                        .toList();
+                Set<String> requiredPaths;
+                if (requiredDeps.isEmpty()) {
+                    requiredPaths = Set.of();
+                } else {
+                    requiredPaths = resolver.resolveCompileClasspath(requiredDeps, managedDeps).stream()
+                            .map(DependencyResolver.ResolvedArtifact::filePath)
+                            .collect(Collectors.toSet());
                 }
+                Set<String> optionalPaths = new LinkedHashSet<>();
+                for (String path : externalClasspath) {
+                    if (!requiredPaths.contains(path)) {
+                        optionalPaths.add(path);
+                    }
+                }
+                info.setOptionalClasspathEntries(optionalPaths);
             }
-            info.setOptionalClasspathEntries(optionalPaths);
+        }
+
+        if (hasTestSources && !testExternalDeps.isEmpty()) {
+            List<DependencyResolver.ResolvedArtifact> testResolved =
+                    resolver.resolveTestClasspath(testExternalDeps, managedDeps);
+            List<String> testClasspath = new ArrayList<>();
+            for (DependencyResolver.ResolvedArtifact art : testResolved) {
+                testClasspath.add(art.filePath());
+            }
+            info.setTestCompileClasspath(testClasspath);
         }
     }
 

@@ -129,7 +129,7 @@ public class BuildOrchestrator {
 
         if (!modules.isEmpty() && rebuildCount > 0) {
             boolean needsJavaWarmup = modules.stream()
-                    .filter(ModuleBuild::hasJavaSources)
+                    .filter(m -> m.hasJavaSources() || m.hasTestJavaSources())
                     .anyMatch(m -> willRebuild == null || willRebuild.contains(m.artifactId()));
             if (needsJavaWarmup) {
                 modules.get(0).runtime.warmupClasspath(allJars);
@@ -138,7 +138,7 @@ public class BuildOrchestrator {
             // Without it, parallel kotlinc threads run while the JIT hasn't compiled
             // the compiler hot paths yet, making compilation much slower.
             boolean needsKotlinWarmup = modules.stream()
-                    .filter(ModuleBuild::hasKotlinSources)
+                    .filter(m -> m.hasKotlinSources() || m.hasTestKotlinSources())
                     .anyMatch(m -> willRebuild == null || willRebuild.contains(m.artifactId()));
             if (needsKotlinWarmup) {
                 modules.get(0).runtime.warmupKotlin();

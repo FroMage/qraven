@@ -149,6 +149,8 @@ public class BuildFileGenerator {
         sb.append("    @Override public Path baseDir() { return Path.of(").append(quote(module.getBaseDir().toString())).append("); }\n");
         sb.append("    @Override public boolean hasJavaSources() { return ").append(module.isHasJavaSources()).append("; }\n");
         sb.append("    @Override public boolean hasKotlinSources() { return ").append(module.isHasKotlinSources()).append("; }\n");
+        sb.append("    @Override public boolean hasTestJavaSources() { return ").append(module.isHasTestJavaSources()).append("; }\n");
+        sb.append("    @Override public boolean hasTestKotlinSources() { return ").append(module.isHasTestKotlinSources()).append("; }\n");
         sb.append("    @Override public boolean hasProtobufSources() { return ").append(module.isHasProtobufSources()).append("; }\n");
         sb.append("    @Override public boolean protobufUsesGrpc() { return ").append(module.isProtobufUsesGrpc()).append("; }\n");
         sb.append("    @Override public boolean protobufUsesMutiny() { return ").append(module.isProtobufUsesMutiny()).append("; }\n");
@@ -229,6 +231,13 @@ public class BuildFileGenerator {
         sb.append("        return List.of(\n");
         List<String> optionalCp = new ArrayList<>(module.getOptionalClasspathEntries());
         sb.append(formatStringList(makePortable(optionalCp), "            "));
+        sb.append("        );\n");
+        sb.append("    }\n\n");
+
+        sb.append("    @Override\n");
+        sb.append("    public List<String> testCompileClasspath() {\n");
+        sb.append("        return List.of(\n");
+        sb.append(formatStringList(makePortable(module.getTestCompileClasspath()), "            "));
         sb.append("        );\n");
         sb.append("    }\n\n");
 

@@ -123,6 +123,42 @@ public class DependencyResolver {
         }
     }
 
+    public List<ResolvedArtifact> resolveTestClasspath(
+            List<org.apache.maven.model.Dependency> dependencies,
+            List<org.apache.maven.model.Dependency> managedDependencies) {
+
+        CollectRequest collectRequest = new CollectRequest();
+
+        for (org.apache.maven.model.Dependency dep : dependencies) {
+            collectRequest.addDependency(toAetherDep(dep));
+        }
+
+        if (managedDependencies != null) {
+            for (org.apache.maven.model.Dependency dep : managedDependencies) {
+                if (!"import".equals(dep.getScope())) {
+                    collectRequest.addManagedDependency(toAetherDep(dep));
+                }
+            }
+        }
+
+        collectRequest.setRepositories(remoteRepos);
+
+        DependencyRequest depRequest = new DependencyRequest(collectRequest,
+                DependencyFilterUtils.classpathFilter(JavaScopes.COMPILE, JavaScopes.RUNTIME, JavaScopes.TEST));
+
+        try {
+            DependencyResult result = repoSystem.resolveDependencies(session, depRequest);
+            return toResolvedArtifacts(result);
+        } catch (DependencyResolutionException e) {
+            warn("WARNING: Test dependency resolution incomplete: " + e.getMessage());
+            DependencyResult result = e.getResult();
+            if (result != null) {
+                return toResolvedArtifacts(result);
+            }
+            return List.of();
+        }
+    }
+
     private List<ResolvedArtifact> toResolvedArtifacts(DependencyResult result) {
         return result.getArtifactResults().stream()
                 .filter(ArtifactResult::isResolved)

@@ -22,6 +22,9 @@ public class ModuleInfo {
     private List<String> reactorDependencies = new ArrayList<>();
     private boolean hasJavaSources;
     private boolean hasKotlinSources;
+    private boolean hasTestJavaSources;
+    private boolean hasTestKotlinSources;
+    private List<String> testCompileClasspath = new ArrayList<>();
     private List<ResourceDir> resourceDirs = new ArrayList<>();
     private Map<String, String> filterProperties = new LinkedHashMap<>();
     private boolean needsJandexIndex;
@@ -106,6 +109,15 @@ public class ModuleInfo {
 
     public boolean isHasKotlinSources() { return hasKotlinSources; }
     public void setHasKotlinSources(boolean hasKotlinSources) { this.hasKotlinSources = hasKotlinSources; }
+
+    public boolean isHasTestJavaSources() { return hasTestJavaSources; }
+    public void setHasTestJavaSources(boolean hasTestJavaSources) { this.hasTestJavaSources = hasTestJavaSources; }
+
+    public boolean isHasTestKotlinSources() { return hasTestKotlinSources; }
+    public void setHasTestKotlinSources(boolean hasTestKotlinSources) { this.hasTestKotlinSources = hasTestKotlinSources; }
+
+    public List<String> getTestCompileClasspath() { return testCompileClasspath; }
+    public void setTestCompileClasspath(List<String> testCompileClasspath) { this.testCompileClasspath = testCompileClasspath; }
 
     public List<ResourceDir> getResourceDirs() { return resourceDirs; }
     public void setResourceDirs(List<ResourceDir> resourceDirs) { this.resourceDirs = resourceDirs; }
