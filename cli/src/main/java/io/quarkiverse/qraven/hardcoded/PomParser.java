@@ -1606,6 +1606,17 @@ public class PomParser {
                 continue;
             }
             if (reactorGAs.contains(ga)) {
+                if (hasTestSources && "test".equals(scope)) {
+                    String version = dep.getVersion();
+                    if (version == null || version.isBlank()) {
+                        version = managedVersions.get(ga);
+                    }
+                    if (version != null && !version.isBlank()) {
+                        Dependency testDep = dep.clone();
+                        testDep.setVersion(version);
+                        testExternalDeps.add(testDep);
+                    }
+                }
                 continue;
             }
             String version = dep.getVersion();

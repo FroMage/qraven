@@ -236,11 +236,19 @@ public class DependencyResolver {
 
     private Dependency toAetherDep(org.apache.maven.model.Dependency mavenDep) {
         String version = mavenDep.getVersion() != null ? mavenDep.getVersion() : "";
+        String classifier = mavenDep.getClassifier() != null ? mavenDep.getClassifier() : "";
+        String extension = mavenDep.getType() != null ? mavenDep.getType() : "jar";
+        if ("test-jar".equals(extension)) {
+            extension = "jar";
+            if (classifier.isEmpty()) {
+                classifier = "tests";
+            }
+        }
         DefaultArtifact artifact = new DefaultArtifact(
                 mavenDep.getGroupId(),
                 mavenDep.getArtifactId(),
-                mavenDep.getClassifier() != null ? mavenDep.getClassifier() : "",
-                mavenDep.getType() != null ? mavenDep.getType() : "jar",
+                classifier,
+                extension,
                 version);
 
         String scope = mavenDep.getScope() != null ? mavenDep.getScope() : "compile";
