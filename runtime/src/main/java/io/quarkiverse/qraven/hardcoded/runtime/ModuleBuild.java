@@ -679,6 +679,20 @@ public abstract class ModuleBuild {
         return true;
     }
 
+    boolean hasChangedSources() {
+        Path installedArtifact = installedArtifactPath();
+        if (!Files.exists(installedArtifact)) return true;
+        try {
+            long artifactMtime = Files.getLastModifiedTime(installedArtifact).toMillis();
+            if (newestMtime(sourceDir()) > artifactMtime) return true;
+            if (hasKotlinSources() && newestMtime(kotlinSourceDir()) > artifactMtime) return true;
+            if (Files.getLastModifiedTime(pomFile()).toMillis() > artifactMtime) return true;
+        } catch (IOException e) {
+            return true;
+        }
+        return false;
+    }
+
     private static long newestMtime(Path dir) {
         if (!Files.isDirectory(dir)) return 0;
         try (var stream = Files.walk(dir)) {

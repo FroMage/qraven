@@ -124,23 +124,42 @@ public class BuildOrchestrator {
             System.exit(1);
         }
 
-        if (!modules.isEmpty()) {
-            modules.get(0).runtime.warmupClasspath(allJars);
-            if (modules.stream().anyMatch(ModuleBuild::hasKotlinSources)) {
+        Set<String> willRebuild = incremental ? computeRebuildSet(modules) : null;
+        int rebuildCount = willRebuild != null ? willRebuild.size() : modules.size();
+
+        if (!modules.isEmpty() && rebuildCount > 0) {
+            boolean needsJavaWarmup = modules.stream()
+                    .filter(ModuleBuild::hasJavaSources)
+                    .anyMatch(m -> willRebuild == null || willRebuild.contains(m.artifactId()));
+            if (needsJavaWarmup) {
+                modules.get(0).runtime.warmupClasspath(allJars);
+            }
+            // Kotlin warmup MUST happen upfront, before parallel compilation starts.
+            // Without it, parallel kotlinc threads run while the JIT hasn't compiled
+            // the compiler hot paths yet, making compilation much slower.
+            boolean needsKotlinWarmup = modules.stream()
+                    .filter(ModuleBuild::hasKotlinSources)
+                    .anyMatch(m -> willRebuild == null || willRebuild.contains(m.artifactId()));
+            if (needsKotlinWarmup) {
                 modules.get(0).runtime.warmupKotlin();
             }
         }
 
         boolean noProgress = "true".equals(System.getProperty("no-progress"))
                 || System.getProperties().containsKey("no-progress");
-        ProgressDisplay progress = noProgress ? null : new ProgressDisplay(modules.size(), threadCount);
+        ProgressDisplay progress = noProgress ? null : new ProgressDisplay(modules.size(), rebuildCount, threadCount);
 
         AtomicInteger threadIndexCounter = new AtomicInteger();
         ConcurrentHashMap<Long, Integer> threadIndices = new ConcurrentHashMap<>();
 
         long orchestratorStart = System.currentTimeMillis();
-        System.out.println("Building " + modules.size() + " modules with " + threadCount + " threads"
-                + (incremental ? " (incremental)" : ""));
+        StringBuilder buildMsg = new StringBuilder();
+        buildMsg.append("Building ").append(modules.size()).append(" modules with ")
+                .append(threadCount).append(" threads");
+        if (incremental) {
+            buildMsg.append(" (incremental, ").append(rebuildCount).append(" to rebuild)");
+        }
+        System.out.println(buildMsg);
 
         // Redirect System.out, System.err and JUL to build log so they don't break the progress bar.
         // ProgressDisplay already captured the original System.err at construction.
@@ -394,5 +413,31 @@ public class BuildOrchestrator {
             System.out.println("Filtered to " + filtered.size() + " modules");
         }
         return filtered;
+    }
+
+    private static Set<String> computeRebuildSet(List<ModuleBuild> modules) {
+        Map<String, List<ModuleBuild>> dependents = new HashMap<>();
+        for (ModuleBuild m : modules) {
+            for (ModuleBuild dep : m.getDependencies()) {
+                dependents.computeIfAbsent(dep.artifactId(), k -> new ArrayList<>()).add(m);
+            }
+        }
+        Set<String> willRebuild = new LinkedHashSet<>();
+        java.util.LinkedList<String> queue = new java.util.LinkedList<>();
+        for (ModuleBuild m : modules) {
+            if (m.hasChangedSources()) {
+                willRebuild.add(m.artifactId());
+                queue.add(m.artifactId());
+            }
+        }
+        while (!queue.isEmpty()) {
+            String id = queue.poll();
+            for (ModuleBuild dep : dependents.getOrDefault(id, List.of())) {
+                if (willRebuild.add(dep.artifactId())) {
+                    queue.add(dep.artifactId());
+                }
+            }
+        }
+        return willRebuild;
     }
 }
