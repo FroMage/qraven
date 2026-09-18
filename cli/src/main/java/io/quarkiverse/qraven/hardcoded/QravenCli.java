@@ -311,6 +311,9 @@ public class QravenCli {
                     queue.add(dep);
                 }
             }
+            if (module.getParentArtifactId() != null && !visited.contains(module.getParentArtifactId())) {
+                queue.add(module.getParentArtifactId());
+            }
         }
 
         return allModules.stream()

@@ -539,6 +539,10 @@ public class PomParser {
         info.setPackaging(model.getPackaging() != null ? model.getPackaging() : "jar");
         info.setProjectName(model.getName());
         info.setProjectDescription(model.getDescription());
+        if (model.getParent() != null) {
+            info.setParentGroupId(model.getParent().getGroupId());
+            info.setParentArtifactId(model.getParent().getArtifactId());
+        }
         info.setBaseDir(projectRoot.relativize(baseDir));
         info.setPomFile(baseDir.resolve("pom.xml").toAbsolutePath());
 

@@ -64,6 +64,8 @@ public class ModuleInfo {
     private String quarkusGrpcVersion;
     private Map<String, String> allReactorExtensionDeployments = new LinkedHashMap<>();
     private Map<String, Set<String>> reactorDependencyExclusions = new LinkedHashMap<>();
+    private String parentGroupId;
+    private String parentArtifactId;
     private String projectName;
     private String projectDescription;
 
@@ -234,6 +236,12 @@ public class ModuleInfo {
 
     public Map<String, String> getAllReactorExtensionDeployments() { return allReactorExtensionDeployments; }
     public void setAllReactorExtensionDeployments(Map<String, String> m) { this.allReactorExtensionDeployments = m; }
+
+    public String getParentGroupId() { return parentGroupId; }
+    public void setParentGroupId(String parentGroupId) { this.parentGroupId = parentGroupId; }
+
+    public String getParentArtifactId() { return parentArtifactId; }
+    public void setParentArtifactId(String parentArtifactId) { this.parentArtifactId = parentArtifactId; }
 
     public String getProjectName() { return projectName; }
     public void setProjectName(String projectName) { this.projectName = projectName; }
