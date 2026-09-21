@@ -238,7 +238,7 @@ public class DependencyResolver {
         int managedFp = computeManagedFingerprint(managedDependencies);
 
         List<ResolvedArtifact> allResolved = new ArrayList<>();
-        Set<String> seenGAs = new HashSet<>();
+        Set<String> seenPaths = new HashSet<>();
 
         for (org.apache.maven.model.Dependency dep : dependencies) {
             String depKey = computeTestDepKey(dep, managedFp);
@@ -269,8 +269,7 @@ public class DependencyResolver {
             }
 
             for (ResolvedArtifact art : depResult) {
-                String ga = art.groupId() + ":" + art.artifactId();
-                if (seenGAs.add(ga)) {
+                if (seenPaths.add(art.filePath())) {
                     allResolved.add(art);
                 }
             }
