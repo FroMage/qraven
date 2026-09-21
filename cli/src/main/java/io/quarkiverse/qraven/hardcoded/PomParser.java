@@ -102,8 +102,7 @@ public class PomParser {
         // Phase 2: Build effective models in parallel
         int totalPoms = pomEntries.size();
         ModuleInfo[] moduleInfos = new ModuleInfo[totalPoms];
-        java.util.concurrent.ConcurrentHashMap<String, Model> effectiveModels =
-                new java.util.concurrent.ConcurrentHashMap<>();
+        Model[] modelArray = new Model[totalPoms];
         AtomicInteger scanCounter = new AtomicInteger();
 
         ExecutorService executor = Executors.newFixedThreadPool(threads);
@@ -117,8 +116,7 @@ public class PomParser {
                     if (model != null) {
                         ModuleInfo info = toModuleInfo(model, entry.baseDir);
                         moduleInfos[idx] = info;
-                        effectiveModels.put(
-                                info.getGroupId() + ":" + info.getArtifactId(), model);
+                        modelArray[idx] = model;
                     }
                     int done = scanCounter.incrementAndGet();
                     String name = moduleInfos[idx] != null
@@ -136,9 +134,13 @@ public class PomParser {
 
         // Assemble results preserving discovery order
         List<ModuleInfo> modules = new ArrayList<>();
+        Map<String, Model> effectiveModels = new LinkedHashMap<>();
         for (int i = 0; i < totalPoms; i++) {
-            if (moduleInfos[i] != null) {
+            if (moduleInfos[i] != null && modelArray[i] != null) {
                 modules.add(moduleInfos[i]);
+                effectiveModels.put(
+                        moduleInfos[i].getGroupId() + ":" + moduleInfos[i].getArtifactId(),
+                        modelArray[i]);
             }
         }
 
@@ -148,10 +150,8 @@ public class PomParser {
         for (ModuleInfo m : modules) {
             reactorGAs.add(m.getGroupId() + ":" + m.getArtifactId());
         }
-        List<String> allReactorGAsList = new ArrayList<>(reactorGAs);
 
-        // Phase 3: Resolve dependencies, extract metadata, and release models
-        // Models are removed from the map after processing so GC can reclaim them
+        // Phase 3: Resolve dependencies in parallel
         long resolveStart = System.currentTimeMillis();
         AtomicInteger resolveCounter = new AtomicInteger();
         int totalModules = modules.size();
@@ -161,22 +161,14 @@ public class PomParser {
             List<Future<?>> futures = new ArrayList<>(totalModules);
             for (ModuleInfo info : modules) {
                 futures.add(executor.submit(() -> {
-                    String ga = info.getGroupId() + ":" + info.getArtifactId();
-                    Model model = effectiveModels.remove(ga);
+                    Model model = effectiveModels.get(
+                            info.getGroupId() + ":" + info.getArtifactId());
                     if (model == null) return;
 
                     extractCompilerConfig(model, info);
 
                     if (!"pom".equals(info.getPackaging())) {
                         resolveDependencies(model, info, reactorGAs);
-                    }
-
-                    if (info.isHasExtensionPlugin()) {
-                        collectExtensionMetadata(model, info, allReactorGAsList);
-                    }
-
-                    if (info.isHasQuarkusBuildPlugin() || info.isHasExtensionPlugin()) {
-                        extractQuarkusBuildProperties(model, info);
                     }
 
                     int done = resolveCounter.incrementAndGet();
@@ -192,7 +184,28 @@ public class PomParser {
 
         resolveTimeMs = System.currentTimeMillis() - resolveStart;
 
-        // Phase 4: Collect quarkus build metadata (needs all modules' classpaths resolved)
+        List<String> allReactorGAsList = new ArrayList<>(reactorGAs);
+        for (ModuleInfo info : modules) {
+            if (info.isHasExtensionPlugin()) {
+                Model model = effectiveModels.get(info.getGroupId() + ":" + info.getArtifactId());
+                if (model != null) {
+                    collectExtensionMetadata(model, info, allReactorGAsList);
+                }
+            }
+        }
+
+        for (ModuleInfo info : modules) {
+            if (info.isHasQuarkusBuildPlugin() || info.isHasExtensionPlugin()) {
+                Model model = effectiveModels.get(info.getGroupId() + ":" + info.getArtifactId());
+                if (model != null) {
+                    extractQuarkusBuildProperties(model, info);
+                }
+            }
+        }
+
+        // Release models — no longer needed
+        effectiveModels.clear();
+
         for (ModuleInfo info : modules) {
             if (info.isHasQuarkusBuildPlugin() || info.isHasExtensionPlugin()) {
                 collectQuarkusBuildMetadata(info, reactorGAs, modules);
