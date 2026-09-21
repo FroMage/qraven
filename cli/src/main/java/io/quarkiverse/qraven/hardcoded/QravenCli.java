@@ -128,6 +128,7 @@ public class QravenCli {
 
             System.out.println("Scanned " + modules.size() + " modules in " + parser.getScanTimeMs() + "ms");
             System.out.println("Resolved dependencies in " + parser.getResolveTimeMs() + "ms");
+            System.out.println(resolver.resolutionCacheStats());
 
             List<String> warnings = parser.getWarnings();
             if (!warnings.isEmpty()) {

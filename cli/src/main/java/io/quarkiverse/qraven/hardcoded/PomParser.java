@@ -186,16 +186,19 @@ public class PomParser {
 
         resolveTimeMs = System.currentTimeMillis() - resolveStart;
 
-        if (!resolveTimings.isEmpty()) {
-            try {
-                Path logDir = projectRoot.resolve("target/qraven");
-                Files.createDirectories(logDir);
-                Files.writeString(logDir.resolve("resolve.log"),
-                        String.join("\n", resolveTimings) + "\n",
-                        java.nio.charset.StandardCharsets.UTF_8);
-            } catch (Exception e) {
-                // ignore
+        try {
+            Path logDir = projectRoot.resolve("target/qraven");
+            Files.createDirectories(logDir);
+            StringBuilder logContent = new StringBuilder();
+            logContent.append(resolver.resolutionCacheStats()).append("\n");
+            for (String line : resolveTimings) {
+                logContent.append(line).append("\n");
             }
+            Files.writeString(logDir.resolve("resolve.log"),
+                    logContent.toString(),
+                    java.nio.charset.StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            // ignore
         }
 
         List<String> allReactorGAsList = new ArrayList<>(reactorGAs);

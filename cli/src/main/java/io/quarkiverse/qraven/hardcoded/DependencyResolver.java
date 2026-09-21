@@ -28,7 +28,10 @@ import org.eclipse.aether.util.filter.DependencyFilterUtils;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
 public class DependencyResolver {
@@ -38,6 +41,10 @@ public class DependencyResolver {
     private final List<RemoteRepository> remoteRepos;
     private final Path localRepoPath;
     private Consumer<String> warningConsumer;
+
+    private final ConcurrentHashMap<String, List<ResolvedArtifact>> resolutionCache = new ConcurrentHashMap<>();
+    private final AtomicInteger cacheHits = new AtomicInteger();
+    private final AtomicInteger cacheMisses = new AtomicInteger();
 
     public DependencyResolver() {
         this.localRepoPath = Path.of(System.getProperty("user.home"), ".m2", "repository");
@@ -84,9 +91,56 @@ public class DependencyResolver {
 
     public record ResolvedArtifact(String groupId, String artifactId, String version, String filePath) {}
 
+    public String resolutionCacheStats() {
+        return "Resolution cache: " + cacheHits.get() + " hits, "
+                + cacheMisses.get() + " misses, "
+                + resolutionCache.size() + " distinct keys";
+    }
+
+    private String computeResolutionKey(String scope,
+            List<org.apache.maven.model.Dependency> dependencies,
+            List<org.apache.maven.model.Dependency> managedDependencies) {
+        List<String> depKeys = new ArrayList<>(dependencies.size());
+        for (org.apache.maven.model.Dependency dep : dependencies) {
+            StringBuilder dk = new StringBuilder();
+            dk.append(dep.getGroupId()).append(':').append(dep.getArtifactId())
+                    .append(':').append(dep.getVersion()).append(':').append(dep.getScope());
+            if (dep.getClassifier() != null && !dep.getClassifier().isEmpty()) {
+                dk.append(':').append(dep.getClassifier());
+            }
+            if (dep.getType() != null && !"jar".equals(dep.getType())) {
+                dk.append(':').append(dep.getType());
+            }
+            if (dep.getExclusions() != null && !dep.getExclusions().isEmpty()) {
+                for (var excl : dep.getExclusions()) {
+                    dk.append('!').append(excl.getGroupId()).append(':').append(excl.getArtifactId());
+                }
+            }
+            depKeys.add(dk.toString());
+        }
+        Collections.sort(depKeys);
+        int managedFp = managedDependencies != null ? managedDependencies.size() : 0;
+        if (managedDependencies != null && !managedDependencies.isEmpty()) {
+            var first = managedDependencies.get(0);
+            var last = managedDependencies.get(managedDependencies.size() - 1);
+            managedFp = managedFp * 31
+                    + (first.getGroupId() + ":" + first.getArtifactId()).hashCode();
+            managedFp = managedFp * 31
+                    + (last.getGroupId() + ":" + last.getArtifactId()).hashCode();
+        }
+        return scope + "#" + managedFp + "|" + String.join("|", depKeys);
+    }
+
     public List<ResolvedArtifact> resolveCompileClasspath(
             List<org.apache.maven.model.Dependency> dependencies,
             List<org.apache.maven.model.Dependency> managedDependencies) {
+
+        String cacheKey = computeResolutionKey("compile", dependencies, managedDependencies);
+        List<ResolvedArtifact> cached = resolutionCache.get(cacheKey);
+        if (cached != null) {
+            cacheHits.incrementAndGet();
+            return cached;
+        }
 
         CollectRequest collectRequest = new CollectRequest();
 
@@ -112,7 +166,10 @@ public class DependencyResolver {
 
         try {
             DependencyResult result = repoSystem.resolveDependencies(session, depRequest);
-            return toResolvedArtifacts(result);
+            List<ResolvedArtifact> resolved = toResolvedArtifacts(result);
+            resolutionCache.put(cacheKey, resolved);
+            cacheMisses.incrementAndGet();
+            return resolved;
         } catch (DependencyResolutionException e) {
             warn("WARNING: Dependency resolution incomplete: " + e.getMessage());
             DependencyResult result = e.getResult();
@@ -126,6 +183,13 @@ public class DependencyResolver {
     public List<ResolvedArtifact> resolveTestClasspath(
             List<org.apache.maven.model.Dependency> dependencies,
             List<org.apache.maven.model.Dependency> managedDependencies) {
+
+        String cacheKey = computeResolutionKey("test", dependencies, managedDependencies);
+        List<ResolvedArtifact> cached = resolutionCache.get(cacheKey);
+        if (cached != null) {
+            cacheHits.incrementAndGet();
+            return cached;
+        }
 
         CollectRequest collectRequest = new CollectRequest();
 
@@ -148,7 +212,10 @@ public class DependencyResolver {
 
         try {
             DependencyResult result = repoSystem.resolveDependencies(session, depRequest);
-            return toResolvedArtifacts(result);
+            List<ResolvedArtifact> resolved = toResolvedArtifacts(result);
+            resolutionCache.put(cacheKey, resolved);
+            cacheMisses.incrementAndGet();
+            return resolved;
         } catch (DependencyResolutionException e) {
             warn("WARNING: Test dependency resolution incomplete: " + e.getMessage());
             DependencyResult result = e.getResult();
