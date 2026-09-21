@@ -542,7 +542,7 @@ public abstract class ModuleBuild {
                         if (progress != null) progress.phaseChanged(threadIdx, artifactId(), testCompilePhase, 0);
                         t = System.currentTimeMillis();
                         runtime.compile(testSourceDir(), testClassesDir(), testCp,
-                                testApPaths, false, compilerArgs(),
+                                testApPaths, isApCacheable(), compilerArgs(),
                                 testExtraDirs.toArray(new Path[0]));
                         recordPhase(testCompilePhase, t);
                     }
