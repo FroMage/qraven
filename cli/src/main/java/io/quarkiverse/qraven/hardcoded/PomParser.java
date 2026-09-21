@@ -1744,13 +1744,16 @@ public class PomParser {
                 ? model.getDependencyManagement().getDependencies() : List.of();
 
         // Compute test-only deps (not already in compile classpath)
-        Set<String> compileGAs = new HashSet<>();
+        Set<String> compileKeys = new HashSet<>();
         for (Dependency dep : externalDeps) {
-            compileGAs.add(dep.getGroupId() + ":" + dep.getArtifactId());
+            compileKeys.add(dep.getGroupId() + ":" + dep.getArtifactId()
+                    + ":" + (dep.getType() != null ? dep.getType() : "jar"));
         }
         List<Dependency> testOnlyDeps = new ArrayList<>();
         for (Dependency dep : testExternalDeps) {
-            if (!compileGAs.contains(dep.getGroupId() + ":" + dep.getArtifactId())) {
+            String key = dep.getGroupId() + ":" + dep.getArtifactId()
+                    + ":" + (dep.getType() != null ? dep.getType() : "jar");
+            if (!compileKeys.contains(key)) {
                 testOnlyDeps.add(dep);
             }
         }
