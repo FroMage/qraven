@@ -537,12 +537,14 @@ public abstract class ModuleBuild {
                     }
 
                     if (hasTestJavaSources() || !testExtraDirs.isEmpty()) {
-                        if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "test-compile", 0);
+                        List<String> testApPaths = resolvedAnnotationProcessorPaths();
+                        String testCompilePhase = testApPaths.isEmpty() ? "test-compile" : "test-compile+apt";
+                        if (progress != null) progress.phaseChanged(threadIdx, artifactId(), testCompilePhase, 0);
                         t = System.currentTimeMillis();
                         runtime.compile(testSourceDir(), testClassesDir(), testCp,
-                                resolvedAnnotationProcessorPaths(), false, compilerArgs(),
+                                testApPaths, false, compilerArgs(),
                                 testExtraDirs.toArray(new Path[0]));
-                        recordPhase("test-compile", t);
+                        recordPhase(testCompilePhase, t);
                     }
                 }
 
