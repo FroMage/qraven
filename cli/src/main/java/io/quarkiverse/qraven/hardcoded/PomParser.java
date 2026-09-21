@@ -16,6 +16,7 @@ import org.codehaus.plexus.util.xml.Xpp3Dom;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
+import java.util.Collections;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -155,6 +156,7 @@ public class PomParser {
         long resolveStart = System.currentTimeMillis();
         AtomicInteger resolveCounter = new AtomicInteger();
         int totalModules = modules.size();
+        List<String> resolveTimings = Collections.synchronizedList(new ArrayList<>());
 
         executor = Executors.newFixedThreadPool(threads);
         try {
@@ -168,7 +170,7 @@ public class PomParser {
                     extractCompilerConfig(model, info);
 
                     if (!"pom".equals(info.getPackaging())) {
-                        resolveDependencies(model, info, reactorGAs);
+                        resolveDependencies(model, info, reactorGAs, resolveTimings);
                     }
 
                     int done = resolveCounter.incrementAndGet();
@@ -183,6 +185,18 @@ public class PomParser {
         }
 
         resolveTimeMs = System.currentTimeMillis() - resolveStart;
+
+        if (!resolveTimings.isEmpty()) {
+            try {
+                Path logDir = projectRoot.resolve("target/qraven");
+                Files.createDirectories(logDir);
+                Files.writeString(logDir.resolve("resolve.log"),
+                        String.join("\n", resolveTimings) + "\n",
+                        java.nio.charset.StandardCharsets.UTF_8);
+            } catch (Exception e) {
+                // ignore
+            }
+        }
 
         List<String> allReactorGAsList = new ArrayList<>(reactorGAs);
         for (ModuleInfo info : modules) {
@@ -1655,10 +1669,12 @@ public class PomParser {
         }
     }
 
-    private void resolveDependencies(Model model, ModuleInfo info, Set<String> reactorGAs) {
+    private void resolveDependencies(Model model, ModuleInfo info, Set<String> reactorGAs,
+                                     List<String> resolveTimings) {
         if (model.getDependencies() == null || model.getDependencies().isEmpty()) {
             return;
         }
+        long resStart = System.currentTimeMillis();
 
         Map<String, String> managedVersions = new LinkedHashMap<>();
         if (model.getDependencyManagement() != null && model.getDependencyManagement().getDependencies() != null) {
@@ -1728,9 +1744,13 @@ public class PomParser {
         List<Dependency> managedDeps = model.getDependencyManagement() != null
                 ? model.getDependencyManagement().getDependencies() : List.of();
 
+        long prepElapsed = System.currentTimeMillis() - resStart;
+
         if (!externalDeps.isEmpty()) {
+            long t0 = System.currentTimeMillis();
             List<DependencyResolver.ResolvedArtifact> resolved =
                     resolver.resolveCompileClasspath(externalDeps, managedDeps);
+            long compileElapsed = System.currentTimeMillis() - t0;
 
             List<String> externalClasspath = new ArrayList<>();
             for (DependencyResolver.ResolvedArtifact art : resolved) {
@@ -1739,7 +1759,9 @@ public class PomParser {
             info.setCompileClasspath(externalClasspath);
 
             boolean hasOptional = externalDeps.stream().anyMatch(d -> "true".equals(d.getOptional()));
+            long optionalElapsed = 0;
             if (hasOptional) {
+                long t1 = System.currentTimeMillis();
                 List<Dependency> requiredDeps = externalDeps.stream()
                         .filter(d -> !"true".equals(d.getOptional()))
                         .toList();
@@ -1758,10 +1780,34 @@ public class PomParser {
                     }
                 }
                 info.setOptionalClasspathEntries(optionalPaths);
+                optionalElapsed = System.currentTimeMillis() - t1;
             }
-        }
 
-        if (hasTestSources && !testExternalDeps.isEmpty()) {
+            long testElapsed = 0;
+            if (hasTestSources && !testExternalDeps.isEmpty()) {
+                long t2 = System.currentTimeMillis();
+                List<DependencyResolver.ResolvedArtifact> testResolved =
+                        resolver.resolveTestClasspath(testExternalDeps, managedDeps);
+                List<String> testClasspath = new ArrayList<>();
+                for (DependencyResolver.ResolvedArtifact art : testResolved) {
+                    testClasspath.add(art.filePath());
+                }
+                info.setTestCompileClasspath(testClasspath);
+                testElapsed = System.currentTimeMillis() - t2;
+            }
+
+            long total = System.currentTimeMillis() - resStart;
+            if (total > 500) {
+                resolveTimings.add(info.getArtifactId()
+                        + " total=" + total + "ms prep=" + prepElapsed
+                        + "ms compile=" + compileElapsed + "ms optional=" + optionalElapsed
+                        + "ms test=" + testElapsed + "ms"
+                        + " extDeps=" + externalDeps.size()
+                        + " testDeps=" + testExternalDeps.size()
+                        + " managed=" + managedDeps.size());
+            }
+        } else if (hasTestSources && !testExternalDeps.isEmpty()) {
+            long t2 = System.currentTimeMillis();
             List<DependencyResolver.ResolvedArtifact> testResolved =
                     resolver.resolveTestClasspath(testExternalDeps, managedDeps);
             List<String> testClasspath = new ArrayList<>();
@@ -1769,6 +1815,16 @@ public class PomParser {
                 testClasspath.add(art.filePath());
             }
             info.setTestCompileClasspath(testClasspath);
+            long testElapsed = System.currentTimeMillis() - t2;
+
+            long total = System.currentTimeMillis() - resStart;
+            if (total > 500) {
+                resolveTimings.add(info.getArtifactId()
+                        + " total=" + total + "ms prep=" + prepElapsed
+                        + "ms test-only=" + testElapsed + "ms"
+                        + " testDeps=" + testExternalDeps.size()
+                        + " managed=" + managedDeps.size());
+            }
         }
     }
 
