@@ -273,6 +273,13 @@ public class BuildFileGenerator {
         sb.append("        );\n");
         sb.append("    }\n\n");
 
+        sb.append("    @Override\n");
+        sb.append("    public List<String> testModuleDependencyIds() {\n");
+        sb.append("        return List.of(\n");
+        sb.append(formatStringList(module.getTestReactorDependencies(), "            "));
+        sb.append("        );\n");
+        sb.append("    }\n\n");
+
         // extensionDescriptorProperties
         Map<String, String> extProps = module.getExtensionDescriptorProperties();
         sb.append("    @Override\n");

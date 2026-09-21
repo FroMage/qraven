@@ -1711,14 +1711,19 @@ public class PomParser {
             }
             if (reactorGAs.contains(ga)) {
                 if (hasTestSources && "test".equals(scope)) {
-                    String version = dep.getVersion();
-                    if (version == null || version.isBlank()) {
-                        version = managedVersions.get(ga);
-                    }
-                    if (version != null && !version.isBlank()) {
-                        Dependency testDep = dep.clone();
-                        testDep.setVersion(version);
-                        testExternalDeps.add(testDep);
+                    String type = dep.getType() != null ? dep.getType() : "jar";
+                    if ("jar".equals(type)) {
+                        info.getTestReactorDependencies().add(dep.getArtifactId());
+                    } else {
+                        String version = dep.getVersion();
+                        if (version == null || version.isBlank()) {
+                            version = managedVersions.get(ga);
+                        }
+                        if (version != null && !version.isBlank()) {
+                            Dependency testDep = dep.clone();
+                            testDep.setVersion(version);
+                            testExternalDeps.add(testDep);
+                        }
                     }
                 }
                 continue;

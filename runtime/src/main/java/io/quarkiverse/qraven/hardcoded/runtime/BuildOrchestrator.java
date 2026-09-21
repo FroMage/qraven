@@ -86,6 +86,13 @@ public class BuildOrchestrator {
                     .filter(Objects::nonNull)
                     .toList();
             m.setDependencies(deps);
+
+            List<ModuleBuild> testDeps = m.testModuleDependencyIds().stream()
+                    .map(byId::get)
+                    .filter(Objects::nonNull)
+                    .filter(d -> !allDepIds.contains(d.artifactId()))
+                    .toList();
+            m.setTestDependencies(testDeps);
         }
 
         if (projectsFilter != null) {
@@ -282,7 +289,8 @@ public class BuildOrchestrator {
                     skippedIncremental++;
                 }
             } else {
-                boolean hasFailed = m.getDependencies().stream().anyMatch(d -> !d.didSucceed());
+                boolean hasFailed = m.getDependencies().stream().anyMatch(d -> !d.didSucceed())
+                        || m.getTestDependencies().stream().anyMatch(d -> !d.didSucceed());
                 if (hasFailed) {
                     cascadeFailures.add(m.artifactId());
                 } else {
@@ -358,6 +366,9 @@ public class BuildOrchestrator {
             for (ModuleBuild dep : m.getDependencies()) {
                 dependents.computeIfAbsent(dep.artifactId(), k -> new ArrayList<>()).add(m.artifactId());
             }
+            for (ModuleBuild dep : m.getTestDependencies()) {
+                dependents.computeIfAbsent(dep.artifactId(), k -> new ArrayList<>()).add(m.artifactId());
+            }
         }
         Map<String, Integer> result = new HashMap<>();
         for (ModuleBuild m : modules) {
@@ -415,6 +426,11 @@ public class BuildOrchestrator {
                             changed = true;
                         }
                     }
+                    for (ModuleBuild dep : m.getTestDependencies()) {
+                        if (needed.add(dep.artifactId())) {
+                            changed = true;
+                        }
+                    }
                 }
             }
         }
@@ -439,6 +455,9 @@ public class BuildOrchestrator {
         Map<String, List<ModuleBuild>> dependents = new HashMap<>();
         for (ModuleBuild m : modules) {
             for (ModuleBuild dep : m.getDependencies()) {
+                dependents.computeIfAbsent(dep.artifactId(), k -> new ArrayList<>()).add(m);
+            }
+            for (ModuleBuild dep : m.getTestDependencies()) {
                 dependents.computeIfAbsent(dep.artifactId(), k -> new ArrayList<>()).add(m);
             }
         }

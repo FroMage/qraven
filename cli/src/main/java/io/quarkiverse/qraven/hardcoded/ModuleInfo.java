@@ -61,6 +61,7 @@ public class ModuleInfo {
     private Map<String, String> extensionDevProperties = new LinkedHashMap<>();
     private Set<String> optionalClasspathEntries = new LinkedHashSet<>();
     private Set<String> optionalReactorDependencies = new LinkedHashSet<>();
+    private List<String> testReactorDependencies = new ArrayList<>();
     private boolean apCacheable;
     private boolean hasCodeGenProviders;
     private boolean hasSisuPlugin;
@@ -230,6 +231,8 @@ public class ModuleInfo {
 
     public Set<String> getOptionalReactorDependencies() { return optionalReactorDependencies; }
     public void setOptionalReactorDependencies(Set<String> optionalReactorDependencies) { this.optionalReactorDependencies = optionalReactorDependencies; }
+    public List<String> getTestReactorDependencies() { return testReactorDependencies; }
+    public void setTestReactorDependencies(List<String> testReactorDependencies) { this.testReactorDependencies = testReactorDependencies; }
 
     public Map<String, Set<String>> getReactorDependencyExclusions() { return reactorDependencyExclusions; }
     public void addReactorDependencyExclusion(String depArtifactId, String excludedArtifactId) {

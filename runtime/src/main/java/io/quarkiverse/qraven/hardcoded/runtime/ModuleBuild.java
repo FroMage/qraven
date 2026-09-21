@@ -22,6 +22,7 @@ public abstract class ModuleBuild {
     protected final BuildRuntime runtime;
     private volatile CompletableFuture<Void> buildFuture;
     private List<ModuleBuild> dependencies = List.of();
+    private List<ModuleBuild> testDependencies = List.of();
     private ProgressDisplay progress;
     private BuildStats stats;
     private ConcurrentHashMap<Long, Integer> threadIndices;
@@ -85,6 +86,7 @@ public abstract class ModuleBuild {
     public boolean hasTestProtobufSources() { return false; }
     public boolean hasGenerateCodeTestsGoal() { return false; }
     public List<String> testCompileClasspath() { return List.of(); }
+    public List<String> testModuleDependencyIds() { return List.of(); }
     public boolean hasAntlrSources() { return false; }
     public boolean antlrVisitor() { return false; }
     public List<String> kotlinCompilerPlugins() { return List.of(); }
@@ -140,6 +142,14 @@ public abstract class ModuleBuild {
         return dependencies;
     }
 
+    public void setTestDependencies(List<ModuleBuild> testDependencies) {
+        this.testDependencies = testDependencies;
+    }
+
+    public List<ModuleBuild> getTestDependencies() {
+        return testDependencies;
+    }
+
     public void setProgress(ProgressDisplay progress, BuildStats stats,
                            ConcurrentHashMap<Long, Integer> threadIndices,
                            AtomicInteger threadIndexCounter, int maxThreadIndex,
@@ -179,9 +189,14 @@ public abstract class ModuleBuild {
         if (buildFuture != null) {
             return buildFuture;
         }
-        CompletableFuture<?>[] depFutures = dependencies.stream()
-                .map(dep -> dep.buildAsync(executor))
-                .toArray(CompletableFuture[]::new);
+        List<CompletableFuture<?>> allDepFutures = new ArrayList<>();
+        for (ModuleBuild dep : dependencies) {
+            allDepFutures.add(dep.buildAsync(executor));
+        }
+        for (ModuleBuild dep : testDependencies) {
+            allDepFutures.add(dep.buildAsync(executor));
+        }
+        CompletableFuture<?>[] depFutures = allDepFutures.toArray(CompletableFuture[]::new);
         buildScheduledAt = System.currentTimeMillis();
         buildFuture = CompletableFuture.allOf(depFutures)
                 .handleAsync((v, ex) -> { doBuild(); return null; }, executor);
@@ -213,6 +228,11 @@ public abstract class ModuleBuild {
 
         List<String> failedDeps = new ArrayList<>();
         for (ModuleBuild dep : dependencies) {
+            if (!dep.didSucceed()) {
+                failedDeps.add(dep.artifactId());
+            }
+        }
+        for (ModuleBuild dep : testDependencies) {
             if (!dep.didSucceed()) {
                 failedDeps.add(dep.artifactId());
             }
@@ -475,6 +495,32 @@ public abstract class ModuleBuild {
                         && !evaluateSkip("${maven.test.skip}")) {
                     List<String> testCp = new ArrayList<>(fullClasspath);
                     testCp.addAll(resolvePaths(testCompileClasspath()));
+                    if (!testDependencies.isEmpty()) {
+                        Set<String> testVisited = new HashSet<>(added);
+                        for (ModuleBuild testDep : testDependencies) {
+                            if (testVisited.add(testDep.artifactId())) {
+                                if (testDep.didSucceed() && !"pom".equals(testDep.packaging())) {
+                                    Path jar = testDep.jarFile();
+                                    if (Files.exists(jar)) {
+                                        testCp.add(jar.toString());
+                                    } else {
+                                        Path installed = testDep.installedArtifactPath();
+                                        if (Files.exists(installed)) {
+                                            testCp.add(installed.toString());
+                                        }
+                                    }
+                                }
+                                if (testDep.didSucceed()) {
+                                    for (String cp : testDep.resolvedClasspath()) {
+                                        if (!testCp.contains(cp)) {
+                                            testCp.add(cp);
+                                        }
+                                    }
+                                }
+                                addReactorJars(testDep, testCp, testVisited);
+                            }
+                        }
+                    }
                     testCp.add(classesDir().toString());
 
                     List<Path> testExtraDirs = new ArrayList<>();
