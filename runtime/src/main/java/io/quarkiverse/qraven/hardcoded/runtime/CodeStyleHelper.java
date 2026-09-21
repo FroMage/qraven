@@ -283,6 +283,9 @@ public class CodeStyleHelper {
         }
 
         String newContent = result.toString();
+        if (!content.endsWith("\n") && newContent.endsWith("\n")) {
+            newContent = newContent.substring(0, newContent.length() - 1);
+        }
         if (!newContent.equals(content)) {
             Files.writeString(file, newContent, StandardCharsets.UTF_8);
             return true;

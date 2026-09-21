@@ -102,7 +102,8 @@ public class PomParser {
         // Phase 2: Build effective models in parallel
         int totalPoms = pomEntries.size();
         ModuleInfo[] moduleInfos = new ModuleInfo[totalPoms];
-        Model[] modelArray = new Model[totalPoms];
+        java.util.concurrent.ConcurrentHashMap<String, Model> effectiveModels =
+                new java.util.concurrent.ConcurrentHashMap<>();
         AtomicInteger scanCounter = new AtomicInteger();
 
         ExecutorService executor = Executors.newFixedThreadPool(threads);
@@ -116,7 +117,8 @@ public class PomParser {
                     if (model != null) {
                         ModuleInfo info = toModuleInfo(model, entry.baseDir);
                         moduleInfos[idx] = info;
-                        modelArray[idx] = model;
+                        effectiveModels.put(
+                                info.getGroupId() + ":" + info.getArtifactId(), model);
                     }
                     int done = scanCounter.incrementAndGet();
                     String name = moduleInfos[idx] != null
@@ -134,51 +136,22 @@ public class PomParser {
 
         // Assemble results preserving discovery order
         List<ModuleInfo> modules = new ArrayList<>();
-        Map<String, Model> effectiveModels = new LinkedHashMap<>();
         for (int i = 0; i < totalPoms; i++) {
-            if (moduleInfos[i] != null && modelArray[i] != null) {
+            if (moduleInfos[i] != null) {
                 modules.add(moduleInfos[i]);
-                effectiveModels.put(
-                        moduleInfos[i].getGroupId() + ":" + moduleInfos[i].getArtifactId(),
-                        modelArray[i]);
             }
         }
 
         scanTimeMs = System.currentTimeMillis() - scanStart;
 
         Set<String> reactorGAs = new LinkedHashSet<>();
-        Map<String, String> gaToArtifactId = new LinkedHashMap<>();
         for (ModuleInfo m : modules) {
-            String ga = m.getGroupId() + ":" + m.getArtifactId();
-            reactorGAs.add(ga);
-            gaToArtifactId.put(ga, m.getArtifactId());
+            reactorGAs.add(m.getGroupId() + ":" + m.getArtifactId());
         }
+        List<String> allReactorGAsList = new ArrayList<>(reactorGAs);
 
-        // Identify skipped modules (check once, cache result)
-        Set<String> skipSet = new LinkedHashSet<>();
-        Map<String, List<String>> skippedModuleReactorDeps = new LinkedHashMap<>();
-        for (ModuleInfo m : modules) {
-            if (shouldSkipModule(m, effectiveModels)) {
-                skipSet.add(m.getArtifactId());
-                Model model = effectiveModels.get(m.getGroupId() + ":" + m.getArtifactId());
-                if (model != null && model.getDependencies() != null) {
-                    List<String> deps = new ArrayList<>();
-                    for (Dependency dep : model.getDependencies()) {
-                        String scope = dep.getScope() != null ? dep.getScope() : "compile";
-                        String ga = dep.getGroupId() + ":" + dep.getArtifactId();
-                        if (("compile".equals(scope) || "provided".equals(scope))
-                                && reactorGAs.contains(ga)) {
-                            deps.add(gaToArtifactId.get(ga));
-                        }
-                    }
-                    skippedModuleReactorDeps.put(m.getArtifactId(), deps);
-                }
-            }
-        }
-
-        modules.removeIf(m -> skipSet.contains(m.getArtifactId()));
-
-        // Phase 3: Resolve dependencies in parallel
+        // Phase 3: Resolve dependencies, extract metadata, and release models
+        // Models are removed from the map after processing so GC can reclaim them
         long resolveStart = System.currentTimeMillis();
         AtomicInteger resolveCounter = new AtomicInteger();
         int totalModules = modules.size();
@@ -188,29 +161,22 @@ public class PomParser {
             List<Future<?>> futures = new ArrayList<>(totalModules);
             for (ModuleInfo info : modules) {
                 futures.add(executor.submit(() -> {
-                    Model model = effectiveModels.get(
-                            info.getGroupId() + ":" + info.getArtifactId());
+                    String ga = info.getGroupId() + ":" + info.getArtifactId();
+                    Model model = effectiveModels.remove(ga);
                     if (model == null) return;
 
                     extractCompilerConfig(model, info);
 
                     if (!"pom".equals(info.getPackaging())) {
                         resolveDependencies(model, info, reactorGAs);
+                    }
 
-                        List<String> extraDeps = new ArrayList<>();
-                        for (String depId : new ArrayList<>(info.getReactorDependencies())) {
-                            if (skippedModuleReactorDeps.containsKey(depId)) {
-                                for (String transitiveDep : skippedModuleReactorDeps.get(depId)) {
-                                    if (!info.getReactorDependencies().contains(transitiveDep)
-                                            && !extraDeps.contains(transitiveDep)
-                                            && !skippedModuleReactorDeps.containsKey(transitiveDep)) {
-                                        extraDeps.add(transitiveDep);
-                                    }
-                                }
-                                info.getReactorDependencies().remove(depId);
-                            }
-                        }
-                        info.getReactorDependencies().addAll(extraDeps);
+                    if (info.isHasExtensionPlugin()) {
+                        collectExtensionMetadata(model, info, allReactorGAsList);
+                    }
+
+                    if (info.isHasQuarkusBuildPlugin() || info.isHasExtensionPlugin()) {
+                        extractQuarkusBuildProperties(model, info);
                     }
 
                     int done = resolveCounter.incrementAndGet();
@@ -226,22 +192,10 @@ public class PomParser {
 
         resolveTimeMs = System.currentTimeMillis() - resolveStart;
 
-        List<String> allReactorGAsList = new ArrayList<>(reactorGAs);
-        for (ModuleInfo info : modules) {
-            if (info.isHasExtensionPlugin()) {
-                Model model = effectiveModels.get(info.getGroupId() + ":" + info.getArtifactId());
-                if (model != null) {
-                    collectExtensionMetadata(model, info, allReactorGAsList);
-                }
-            }
-        }
-
+        // Phase 4: Collect quarkus build metadata (needs all modules' classpaths resolved)
         for (ModuleInfo info : modules) {
             if (info.isHasQuarkusBuildPlugin() || info.isHasExtensionPlugin()) {
-                Model model = effectiveModels.get(info.getGroupId() + ":" + info.getArtifactId());
-                if (model != null) {
-                    collectQuarkusBuildMetadata(model, info, reactorGAs, modules);
-                }
+                collectQuarkusBuildMetadata(info, reactorGAs, modules);
             }
         }
 
@@ -500,12 +454,6 @@ public class PomParser {
         return null;
     }
 
-    private boolean shouldSkipModule(ModuleInfo info, Map<String, Model> effectiveModels) {
-        Model model = effectiveModels.get(info.getGroupId() + ":" + info.getArtifactId());
-        if (model == null || model.getBuild() == null) return false;
-
-        return false;
-    }
 
     private Model buildEffectiveModel(Path pomFile, Map<String, Path> reactorPoms) {
         try {
@@ -959,13 +907,12 @@ public class PomParser {
         return null;
     }
 
-    private void collectQuarkusBuildMetadata(Model model, ModuleInfo info, Set<String> reactorGAs,
-                                              List<ModuleInfo> allModules) {
+    private void extractQuarkusBuildProperties(Model model, ModuleInfo info) {
         Map<String, String> buildProps = new LinkedHashMap<>();
         Properties modelProps = model.getProperties();
         if (modelProps != null) {
             for (String key : modelProps.stringPropertyNames()) {
-                if (key.startsWith("quarkus.")) {
+                if (key.startsWith("quarkus.") || key.startsWith("avro.codegen.")) {
                     buildProps.put(key, modelProps.getProperty(key));
                 }
             }
@@ -974,7 +921,10 @@ public class PomParser {
         buildProps.putIfAbsent("quarkus.application.version", info.getVersion());
         collectPlatformProperties(model, buildProps);
         info.setQuarkusBuildProperties(buildProps);
+    }
 
+    private void collectQuarkusBuildMetadata(ModuleInfo info, Set<String> reactorGAs,
+                                              List<ModuleInfo> allModules) {
         List<String> extensionArtifacts = new ArrayList<>();
         Map<String, String> extensionDevProps = new LinkedHashMap<>();
         Set<String> deploymentGAVs = new LinkedHashSet<>();
