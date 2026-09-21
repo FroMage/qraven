@@ -1740,20 +1740,33 @@ public class PomParser {
             }
         }
 
-        if (externalDeps.isEmpty() && testExternalDeps.isEmpty()) {
-            return;
-        }
-
         List<Dependency> managedDeps = model.getDependencyManagement() != null
                 ? model.getDependencyManagement().getDependencies() : List.of();
 
+        // Compute test-only deps (not already in compile classpath)
+        Set<String> compileGAs = new HashSet<>();
+        for (Dependency dep : externalDeps) {
+            compileGAs.add(dep.getGroupId() + ":" + dep.getArtifactId());
+        }
+        List<Dependency> testOnlyDeps = new ArrayList<>();
+        for (Dependency dep : testExternalDeps) {
+            if (!compileGAs.contains(dep.getGroupId() + ":" + dep.getArtifactId())) {
+                testOnlyDeps.add(dep);
+            }
+        }
+
+        if (externalDeps.isEmpty() && testOnlyDeps.isEmpty()) {
+            return;
+        }
+
         long prepElapsed = System.currentTimeMillis() - resStart;
 
+        long compileElapsed = 0;
         if (!externalDeps.isEmpty()) {
             long t0 = System.currentTimeMillis();
             List<DependencyResolver.ResolvedArtifact> resolved =
                     resolver.resolveCompileClasspath(externalDeps, managedDeps);
-            long compileElapsed = System.currentTimeMillis() - t0;
+            compileElapsed = System.currentTimeMillis() - t0;
 
             List<String> externalClasspath = new ArrayList<>();
             for (DependencyResolver.ResolvedArtifact art : resolved) {
@@ -1762,9 +1775,7 @@ public class PomParser {
             info.setCompileClasspath(externalClasspath);
 
             boolean hasOptional = externalDeps.stream().anyMatch(d -> "true".equals(d.getOptional()));
-            long optionalElapsed = 0;
             if (hasOptional) {
-                long t1 = System.currentTimeMillis();
                 List<Dependency> requiredDeps = externalDeps.stream()
                         .filter(d -> !"true".equals(d.getOptional()))
                         .toList();
@@ -1783,51 +1794,30 @@ public class PomParser {
                     }
                 }
                 info.setOptionalClasspathEntries(optionalPaths);
-                optionalElapsed = System.currentTimeMillis() - t1;
             }
+        }
 
-            long testElapsed = 0;
-            if (hasTestSources && !testExternalDeps.isEmpty()) {
-                long t2 = System.currentTimeMillis();
-                List<DependencyResolver.ResolvedArtifact> testResolved =
-                        resolver.resolveTestClasspath(testExternalDeps, managedDeps);
-                List<String> testClasspath = new ArrayList<>();
-                for (DependencyResolver.ResolvedArtifact art : testResolved) {
-                    testClasspath.add(art.filePath());
-                }
-                info.setTestCompileClasspath(testClasspath);
-                testElapsed = System.currentTimeMillis() - t2;
-            }
-
-            long total = System.currentTimeMillis() - resStart;
-            if (total > 500) {
-                resolveTimings.add(info.getArtifactId()
-                        + " total=" + total + "ms prep=" + prepElapsed
-                        + "ms compile=" + compileElapsed + "ms optional=" + optionalElapsed
-                        + "ms test=" + testElapsed + "ms"
-                        + " extDeps=" + externalDeps.size()
-                        + " testDeps=" + testExternalDeps.size()
-                        + " managed=" + managedDeps.size());
-            }
-        } else if (hasTestSources && !testExternalDeps.isEmpty()) {
+        long testElapsed = 0;
+        if (hasTestSources && !testOnlyDeps.isEmpty()) {
             long t2 = System.currentTimeMillis();
             List<DependencyResolver.ResolvedArtifact> testResolved =
-                    resolver.resolveTestClasspath(testExternalDeps, managedDeps);
+                    resolver.resolveTestClasspath(testOnlyDeps, managedDeps);
             List<String> testClasspath = new ArrayList<>();
             for (DependencyResolver.ResolvedArtifact art : testResolved) {
                 testClasspath.add(art.filePath());
             }
             info.setTestCompileClasspath(testClasspath);
-            long testElapsed = System.currentTimeMillis() - t2;
+            testElapsed = System.currentTimeMillis() - t2;
+        }
 
-            long total = System.currentTimeMillis() - resStart;
-            if (total > 500) {
-                resolveTimings.add(info.getArtifactId()
-                        + " total=" + total + "ms prep=" + prepElapsed
-                        + "ms test-only=" + testElapsed + "ms"
-                        + " testDeps=" + testExternalDeps.size()
-                        + " managed=" + managedDeps.size());
-            }
+        long total = System.currentTimeMillis() - resStart;
+        if (total > 500) {
+            resolveTimings.add(info.getArtifactId()
+                    + " total=" + total + "ms prep=" + prepElapsed
+                    + "ms compile=" + compileElapsed + "ms test=" + testElapsed + "ms"
+                    + " extDeps=" + externalDeps.size()
+                    + " testOnlyDeps=" + testOnlyDeps.size()
+                    + " managed=" + managedDeps.size());
         }
     }
 
