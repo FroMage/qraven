@@ -47,11 +47,31 @@ public class BuildOrchestrator {
             byId.put(m.artifactId(), m);
         }
 
+        Map<String, String> installPathToArtifactId = new HashMap<>();
+        for (ModuleBuild m : modules) {
+            if (!"pom".equals(m.packaging())) {
+                String installPath = "$HOME/.m2/repository/"
+                        + m.groupId().replace('.', '/') + "/"
+                        + m.artifactId() + "/"
+                        + m.version() + "/"
+                        + m.artifactId() + "-" + m.version() + ".jar";
+                installPathToArtifactId.put(installPath, m.artifactId());
+            }
+        }
+
         for (ModuleBuild m : modules) {
             List<String> allDepIds = new ArrayList<>(m.moduleDependencyIds());
             for (String optId : m.optionalModuleDependencyIds()) {
                 if (byId.containsKey(optId) && !allDepIds.contains(optId)) {
                     allDepIds.add(optId);
+                }
+            }
+            if (m.hasExtensionPlugin()) {
+                for (String path : m.deploymentClasspath()) {
+                    String reactorId = installPathToArtifactId.get(path);
+                    if (reactorId != null && !allDepIds.contains(reactorId)) {
+                        allDepIds.add(reactorId);
+                    }
                 }
             }
             List<String> unresolved = allDepIds.stream()
