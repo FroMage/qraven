@@ -73,7 +73,7 @@ public class BuildFileGenerator {
         deleteDirectory(classesDir);
         Files.createDirectories(srcDir);
 
-        hasProtobufModules = modules.stream().anyMatch(ModuleInfo::isHasProtobufSources);
+        hasProtobufModules = modules.stream().anyMatch(m -> m.isHasProtobufSources() || m.isHasTestProtobufSources());
         if (hasProtobufModules) {
             resolveProtocPaths(modules);
         }
@@ -152,6 +152,7 @@ public class BuildFileGenerator {
         sb.append("    @Override public boolean hasTestJavaSources() { return ").append(module.isHasTestJavaSources()).append("; }\n");
         sb.append("    @Override public boolean hasTestKotlinSources() { return ").append(module.isHasTestKotlinSources()).append("; }\n");
         sb.append("    @Override public boolean hasProtobufSources() { return ").append(module.isHasProtobufSources()).append("; }\n");
+        sb.append("    @Override public boolean hasTestProtobufSources() { return ").append(module.isHasTestProtobufSources()).append("; }\n");
         sb.append("    @Override public boolean protobufUsesGrpc() { return ").append(module.isProtobufUsesGrpc()).append("; }\n");
         sb.append("    @Override public boolean protobufUsesMutiny() { return ").append(module.isProtobufUsesMutiny()).append("; }\n");
         sb.append("    @Override public boolean hasAntlrSources() { return ").append(module.isHasAntlrSources()).append("; }\n");
@@ -365,6 +366,8 @@ public class BuildFileGenerator {
                 .append(quoteOrNull(module.getQuarkusBuildSkipWhen())).append("; }\n");
         sb.append("    @Override public boolean hasGenerateCodeGoal() { return ")
                 .append(module.isHasGenerateCodeGoal()).append("; }\n");
+        sb.append("    @Override public boolean hasGenerateCodeTestsGoal() { return ")
+                .append(module.isHasGenerateCodeTestsGoal()).append("; }\n");
         sb.append("    @Override public boolean hasCodeGenProviders() { return ")
                 .append(module.isHasCodeGenProviders()).append("; }\n");
         sb.append("    @Override public boolean hasSisuPlugin() { return ")
@@ -445,7 +448,21 @@ public class BuildFileGenerator {
         sb.append("    @Override public String pluginName() { return ")
                 .append(quoteOrNull(module.getProjectName())).append("; }\n");
         sb.append("    @Override public String pluginDescription() { return ")
-                .append(quoteOrNull(module.getProjectDescription())).append("; }\n");
+                .append(quoteOrNull(module.getProjectDescription())).append("; }\n\n");
+
+        sb.append("    @Override\n");
+        sb.append("    public List<String> kotlinCompilerPlugins() {\n");
+        sb.append("        return List.of(\n");
+        sb.append(formatStringList(module.getKotlinCompilerPlugins(), "            "));
+        sb.append("        );\n");
+        sb.append("    }\n\n");
+
+        sb.append("    @Override\n");
+        sb.append("    public List<String> kotlinPluginOptions() {\n");
+        sb.append("        return List.of(\n");
+        sb.append(formatStringList(module.getKotlinPluginOptions(), "            "));
+        sb.append("        );\n");
+        sb.append("    }\n");
 
         sb.append("}\n");
         return sb.toString();

@@ -148,6 +148,45 @@ public class QuarkusBuildHelper {
         return generatedSourcesDir;
     }
 
+    static Path generateCodeTests(ModuleBuild module, List<ModuleBuild> reactorDeps) throws Exception {
+        Path generatedTestSourcesDir = module.targetDir().resolve("generated-test-sources");
+        ClassLoader originalTccl = Thread.currentThread().getContextClassLoader();
+        long t0 = System.currentTimeMillis();
+        try (CuratedApplication app = bootstrap(module, reactorDeps)) {
+            long t1 = System.currentTimeMillis();
+            QuarkusClassLoader deploymentCl = app.createDeploymentClassLoader();
+            long t2 = System.currentTimeMillis();
+            Thread.currentThread().setContextClassLoader(deploymentCl);
+            try {
+                Class<?> codeGenerator = deploymentCl.loadClass("io.quarkus.deployment.CodeGenerator");
+                Method initAndRun = codeGenerator.getMethod("initAndRun",
+                        QuarkusClassLoader.class, PathCollection.class,
+                        Path.class, Path.class,
+                        Consumer.class, ApplicationModel.class, Properties.class, String.class,
+                        boolean.class);
+
+                Path testSourceParent = module.testSourceDir().getParent();
+                PathCollection sourceParentDirs = PathList.of(testSourceParent);
+                Properties buildProps = new Properties();
+                buildProps.putAll(module.quarkusBuildProperties());
+
+                long t3 = System.currentTimeMillis();
+                initAndRun.invoke(null, deploymentCl, sourceParentDirs,
+                        generatedTestSourcesDir, module.targetDir(),
+                        (Consumer<Path>) p -> {}, app.getApplicationModel(), buildProps,
+                        "NORMAL", true);
+                long t4 = System.currentTimeMillis();
+                System.err.println("[timing] [" + module.artifactId() + "] generateCodeTests breakdown: "
+                        + "bootstrap=" + (t1 - t0) + "ms, createDeploymentCL=" + (t2 - t1)
+                        + "ms, initAndRun=" + (t4 - t3) + "ms, total=" + (t4 - t0) + "ms");
+            } finally {
+                Thread.currentThread().setContextClassLoader(originalTccl);
+                deploymentCl.close();
+            }
+        }
+        return generatedTestSourcesDir;
+    }
+
     private static void addRuntimeDep(String jarPath, Set<String> extensionGAs,
             Map<String, String> extensionProps, ApplicationModelBuilder modelBuilder) throws Exception {
         GAV gav = parseGAVFromM2Path(jarPath);

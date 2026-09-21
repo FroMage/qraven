@@ -564,6 +564,7 @@ public class PomParser {
         detectSisuPlugin(model, info);
         detectProtobufPlugin(model, baseDir, info);
         detectAntlrPlugin(model, baseDir, info);
+        detectKotlinPlugin(model, info);
         detectExtensionPlugin(model, info);
         detectQuarkusBuildPlugin(model, info);
         extractManifestEntries(model, info);
@@ -645,25 +646,45 @@ public class PomParser {
             if (!"protobuf-maven-plugin".equals(plugin.getArtifactId())) continue;
 
             boolean hasMainCompile = false;
+            boolean hasTestCompile = false;
             boolean hasCustom = false;
             for (PluginExecution exec : plugin.getExecutions()) {
                 for (String goal : exec.getGoals()) {
                     if ("compile".equals(goal)) hasMainCompile = true;
-                    if ("compile-custom".equals(goal)) hasCustom = true;
+                    if ("test-compile".equals(goal)) hasTestCompile = true;
+                    if ("compile-custom".equals(goal) || "test-compile-custom".equals(goal)) hasCustom = true;
                 }
             }
 
-            if (!hasMainCompile) return;
+            if (!hasMainCompile && !hasTestCompile) return;
 
-            Path protoDir = baseDir.resolve("src/main/proto");
-            if (!Files.isDirectory(protoDir)) return;
-            try (var stream = Files.walk(protoDir)) {
-                if (stream.noneMatch(p -> p.toString().endsWith(".proto"))) return;
-            } catch (IOException e) {
-                return;
+            if (hasMainCompile) {
+                Path protoDir = baseDir.resolve("src/main/proto");
+                if (Files.isDirectory(protoDir)) {
+                    try (var stream = Files.walk(protoDir)) {
+                        if (stream.anyMatch(p -> p.toString().endsWith(".proto"))) {
+                            info.setHasProtobufSources(true);
+                        }
+                    } catch (IOException e) {
+                        // skip
+                    }
+                }
             }
 
-            info.setHasProtobufSources(true);
+            if (hasTestCompile) {
+                Path testProtoDir = baseDir.resolve("src/test/proto");
+                if (Files.isDirectory(testProtoDir)) {
+                    try (var stream = Files.walk(testProtoDir)) {
+                        if (stream.anyMatch(p -> p.toString().endsWith(".proto"))) {
+                            info.setHasTestProtobufSources(true);
+                        }
+                    } catch (IOException e) {
+                        // skip
+                    }
+                }
+            }
+
+            if (!info.isHasProtobufSources() && !info.isHasTestProtobufSources()) return;
 
             Xpp3Dom config = (Xpp3Dom) plugin.getConfiguration();
             if (config != null) {
@@ -722,6 +743,104 @@ public class PomParser {
             info.setAntlrVisitor(visitor);
             return;
         }
+    }
+
+    private void detectKotlinPlugin(Model model, ModuleInfo info) {
+        if (model.getBuild() == null) return;
+        for (Plugin plugin : model.getBuild().getPlugins()) {
+            if (!"kotlin-maven-plugin".equals(plugin.getArtifactId())) continue;
+
+            String kotlinVersion = plugin.getVersion();
+            if (kotlinVersion != null && kotlinVersion.startsWith("${") && kotlinVersion.endsWith("}")) {
+                String propName = kotlinVersion.substring(2, kotlinVersion.length() - 1);
+                Properties props = model.getProperties();
+                if (props != null) {
+                    String resolved = props.getProperty(propName);
+                    if (resolved != null) kotlinVersion = resolved;
+                }
+            }
+            if (kotlinVersion == null || kotlinVersion.isBlank()) {
+                Properties props = model.getProperties();
+                if (props != null) {
+                    kotlinVersion = props.getProperty("kotlin.version");
+                }
+            }
+
+            Xpp3Dom config = (Xpp3Dom) plugin.getConfiguration();
+            if (config == null) return;
+
+            Xpp3Dom compilerPlugins = config.getChild("compilerPlugins");
+            if (compilerPlugins != null && kotlinVersion != null) {
+                List<String> pluginJarPaths = new ArrayList<>();
+                for (Xpp3Dom child : compilerPlugins.getChildren("plugin")) {
+                    if (child.getValue() == null || child.getValue().isBlank()) continue;
+                    String pluginName = child.getValue().trim();
+                    String jarPath = resolveKotlinCompilerPluginJar(pluginName, kotlinVersion);
+                    if (jarPath != null) {
+                        pluginJarPaths.add(jarPath);
+                    }
+                }
+                info.setKotlinCompilerPlugins(pluginJarPaths);
+            }
+
+            Xpp3Dom pluginOptions = config.getChild("pluginOptions");
+            if (pluginOptions != null) {
+                List<String> options = new ArrayList<>();
+                for (Xpp3Dom child : pluginOptions.getChildren("option")) {
+                    if (child.getValue() == null || child.getValue().isBlank()) continue;
+                    String option = child.getValue().trim();
+                    int colon = option.indexOf(':');
+                    if (colon > 0) {
+                        String prefix = option.substring(0, colon);
+                        String rest = option.substring(colon + 1);
+                        String pluginId = kotlinPluginId(prefix);
+                        options.add(pluginId + ":" + rest);
+                    } else {
+                        options.add(option);
+                    }
+                }
+                info.setKotlinPluginOptions(options);
+            }
+            return;
+        }
+    }
+
+    private String resolveKotlinCompilerPluginJar(String pluginName, String kotlinVersion) {
+        String artifactId = switch (pluginName) {
+            case "all-open" -> "kotlin-allopen-compiler-plugin-embeddable";
+            case "no-arg" -> "kotlin-noarg-compiler-plugin-embeddable";
+            case "kotlinx-serialization" -> "kotlin-serialization-compiler-plugin-embeddable";
+            case "sam-with-receiver" -> "kotlin-sam-with-receiver-compiler-plugin-embeddable";
+            case "lombok" -> "kotlin-lombok-compiler-plugin-embeddable";
+            default -> null;
+        };
+        if (artifactId == null) return null;
+
+        Path jar = localRepoDir
+                .resolve("org/jetbrains/kotlin")
+                .resolve(artifactId)
+                .resolve(kotlinVersion)
+                .resolve(artifactId + "-" + kotlinVersion + ".jar");
+        if (Files.exists(jar)) {
+            String m2 = localRepoDir.toString();
+            String home = System.getProperty("user.home");
+            if (m2.startsWith(home)) {
+                return "$HOME" + m2.substring(home.length()) + "/" + localRepoDir.relativize(jar);
+            }
+            return jar.toString();
+        }
+        return null;
+    }
+
+    private static String kotlinPluginId(String shortName) {
+        return switch (shortName) {
+            case "all-open" -> "org.jetbrains.kotlin.allopen";
+            case "no-arg" -> "org.jetbrains.kotlin.noarg";
+            case "sam-with-receiver" -> "org.jetbrains.kotlin.samWithReceiver";
+            case "kotlinx-serialization" -> "org.jetbrains.kotlinx.serialization";
+            case "lombok" -> "org.jetbrains.kotlin.lombok";
+            default -> shortName;
+        };
     }
 
     private void detectExtensionPlugin(Model model, ModuleInfo info) {
@@ -815,6 +934,9 @@ public class PomParser {
                     // GenerateCodeMojo field is "skipSourceGeneration", property "quarkus.generate-code.skip"
                     String skip = extractConfigValue("skipSourceGeneration", execConfig, pluginConfig);
                     info.setGenerateCodeSkipWhen(skip != null ? skip : "${quarkus.generate-code.skip}");
+                }
+                if (exec.getGoals().contains("generate-code-tests")) {
+                    info.setHasGenerateCodeTestsGoal(true);
                 }
             }
             return;

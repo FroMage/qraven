@@ -30,6 +30,7 @@ public class ModuleInfo {
     private boolean needsJandexIndex;
     private Map<String, String> manifestEntries = new LinkedHashMap<>();
     private boolean hasProtobufSources;
+    private boolean hasTestProtobufSources;
     private boolean protobufUsesGrpc;
     private boolean protobufUsesMutiny;
     private boolean hasAntlrSources;
@@ -52,6 +53,7 @@ public class ModuleInfo {
     private boolean hasQuarkusBuildPlugin;
     private String quarkusBuildSkipWhen;
     private boolean hasGenerateCodeGoal;
+    private boolean hasGenerateCodeTestsGoal;
     private String generateCodeSkipWhen;
     private Map<String, String> quarkusBuildProperties = new LinkedHashMap<>();
     private List<String> deploymentClasspath = new ArrayList<>();
@@ -67,6 +69,8 @@ public class ModuleInfo {
     private String quarkusGrpcVersion;
     private Map<String, String> allReactorExtensionDeployments = new LinkedHashMap<>();
     private Map<String, Set<String>> reactorDependencyExclusions = new LinkedHashMap<>();
+    private List<String> kotlinCompilerPlugins = new ArrayList<>();
+    private List<String> kotlinPluginOptions = new ArrayList<>();
     private String parentGroupId;
     private String parentArtifactId;
     private String projectName;
@@ -134,6 +138,9 @@ public class ModuleInfo {
     public boolean isHasProtobufSources() { return hasProtobufSources; }
     public void setHasProtobufSources(boolean hasProtobufSources) { this.hasProtobufSources = hasProtobufSources; }
 
+    public boolean isHasTestProtobufSources() { return hasTestProtobufSources; }
+    public void setHasTestProtobufSources(boolean hasTestProtobufSources) { this.hasTestProtobufSources = hasTestProtobufSources; }
+
     public boolean isProtobufUsesGrpc() { return protobufUsesGrpc; }
     public void setProtobufUsesGrpc(boolean protobufUsesGrpc) { this.protobufUsesGrpc = protobufUsesGrpc; }
 
@@ -200,6 +207,9 @@ public class ModuleInfo {
     public boolean isHasGenerateCodeGoal() { return hasGenerateCodeGoal; }
     public void setHasGenerateCodeGoal(boolean hasGenerateCodeGoal) { this.hasGenerateCodeGoal = hasGenerateCodeGoal; }
 
+    public boolean isHasGenerateCodeTestsGoal() { return hasGenerateCodeTestsGoal; }
+    public void setHasGenerateCodeTestsGoal(boolean v) { this.hasGenerateCodeTestsGoal = v; }
+
     public String getGenerateCodeSkipWhen() { return generateCodeSkipWhen; }
     public void setGenerateCodeSkipWhen(String generateCodeSkipWhen) { this.generateCodeSkipWhen = generateCodeSkipWhen; }
 
@@ -248,6 +258,12 @@ public class ModuleInfo {
 
     public Map<String, String> getAllReactorExtensionDeployments() { return allReactorExtensionDeployments; }
     public void setAllReactorExtensionDeployments(Map<String, String> m) { this.allReactorExtensionDeployments = m; }
+
+    public List<String> getKotlinCompilerPlugins() { return kotlinCompilerPlugins; }
+    public void setKotlinCompilerPlugins(List<String> v) { this.kotlinCompilerPlugins = v; }
+
+    public List<String> getKotlinPluginOptions() { return kotlinPluginOptions; }
+    public void setKotlinPluginOptions(List<String> v) { this.kotlinPluginOptions = v; }
 
     public String getParentGroupId() { return parentGroupId; }
     public void setParentGroupId(String parentGroupId) { this.parentGroupId = parentGroupId; }

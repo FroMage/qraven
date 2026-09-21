@@ -82,9 +82,13 @@ public abstract class ModuleBuild {
     public abstract boolean protobufUsesMutiny();
     public boolean hasTestJavaSources() { return false; }
     public boolean hasTestKotlinSources() { return false; }
+    public boolean hasTestProtobufSources() { return false; }
+    public boolean hasGenerateCodeTestsGoal() { return false; }
     public List<String> testCompileClasspath() { return List.of(); }
     public boolean hasAntlrSources() { return false; }
     public boolean antlrVisitor() { return false; }
+    public List<String> kotlinCompilerPlugins() { return List.of(); }
+    public List<String> kotlinPluginOptions() { return List.of(); }
     public abstract String[][] resourceDirs();
     public abstract Map<String, String> filterProperties();
     public abstract boolean needsJandexIndex();
@@ -390,6 +394,7 @@ public abstract class ModuleBuild {
                         if (Files.isDirectory(quarkusDir)) kotlinExtraRoots.add(quarkusDir);
                     }
                     runtime.compileKotlin(kotlinSourceDir(), sourceDir(), classesDir(), fullClasspath,
+                            kotlinCompilerPlugins(), kotlinPluginOptions(),
                             kotlinExtraRoots.toArray(new Path[0]));
                     fullClasspath.add(0, classesDir().toString());
                     recordPhase("kotlin", t);
@@ -465,16 +470,59 @@ public abstract class ModuleBuild {
                 runtime.createJar(classesDir(), jarFile(), manifestEntries());
                 recordPhase("jar", t);
 
-                if ((hasTestJavaSources() || hasTestKotlinSources())
+                if ((hasTestJavaSources() || hasTestKotlinSources()
+                        || hasTestProtobufSources() || hasGenerateCodeTestsGoal())
                         && !evaluateSkip("${maven.test.skip}")) {
                     List<String> testCp = new ArrayList<>(fullClasspath);
                     testCp.addAll(resolvePaths(testCompileClasspath()));
                     testCp.add(classesDir().toString());
 
+                    List<Path> testExtraDirs = new ArrayList<>();
+
+                    Path generatedTestProtoDir = null;
+                    if (hasTestProtobufSources()) {
+                        if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "test-protobuf", 0);
+                        t = System.currentTimeMillis();
+                        generatedTestProtoDir = generatedTestProtobufDir();
+                        runtime.compileProtobuf(testProtoSourceDir(), generatedTestProtoDir,
+                                protobufUsesGrpc(), protobufUsesMutiny(), testCp);
+                        Path javaDir = generatedTestProtoDir.resolve("java");
+                        if (Files.isDirectory(javaDir)) testExtraDirs.add(javaDir);
+                        Path grpcDir = generatedTestProtoDir.resolve("grpc-java");
+                        if (Files.isDirectory(grpcDir)) testExtraDirs.add(grpcDir);
+                        Path quarkusDir = generatedTestProtoDir.resolve("quarkus-grpc");
+                        if (Files.isDirectory(quarkusDir)) testExtraDirs.add(quarkusDir);
+                        recordPhase("test-protobuf", t);
+                    }
+
+                    Path generatedTestSourcesDir = null;
+                    if (hasGenerateCodeTestsGoal() && hasCodeGenProviders()
+                            && !evaluateSkip(generateCodeSkipWhen())
+                            && hasTestCodeGenSourceFiles()) {
+                        if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "generate-code-tests", 0);
+                        t = System.currentTimeMillis();
+                        try {
+                            generatedTestSourcesDir = QuarkusBuildHelper.generateCodeTests(this, dependencies);
+                            if (generatedTestSourcesDir != null && Files.isDirectory(generatedTestSourcesDir)) {
+                                addGeneratedSourceDirs(generatedTestSourcesDir, testExtraDirs);
+                            }
+                        } catch (Exception e) {
+                            Throwable cause = e;
+                            while (cause.getCause() != null && (cause.getMessage() == null
+                                    || cause instanceof java.lang.reflect.InvocationTargetException)) {
+                                cause = cause.getCause();
+                            }
+                            System.err.println("[" + artifactId() + "] generate-code-tests failed: " + cause.getMessage());
+                        }
+                        recordPhase("generate-code-tests", t);
+                    }
+
                     if (hasTestKotlinSources()) {
                         if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "test-kotlin", 0);
                         t = System.currentTimeMillis();
-                        runtime.compileKotlin(testKotlinSourceDir(), testSourceDir(), testClassesDir(), testCp);
+                        runtime.compileKotlin(testKotlinSourceDir(), testSourceDir(), testClassesDir(), testCp,
+                                kotlinCompilerPlugins(), kotlinPluginOptions(),
+                                testExtraDirs.toArray(new Path[0]));
                         testCp.add(0, testClassesDir().toString());
                         recordPhase("test-kotlin", t);
                     }
@@ -488,11 +536,12 @@ public abstract class ModuleBuild {
                         recordPhase("test-format", t);
                     }
 
-                    if (hasTestJavaSources()) {
+                    if (hasTestJavaSources() || !testExtraDirs.isEmpty()) {
                         if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "test-compile", 0);
                         t = System.currentTimeMillis();
                         runtime.compile(testSourceDir(), testClassesDir(), testCp,
-                                resolvedAnnotationProcessorPaths(), false, compilerArgs());
+                                resolvedAnnotationProcessorPaths(), false, compilerArgs(),
+                                testExtraDirs.toArray(new Path[0]));
                         recordPhase("test-compile", t);
                     }
                 }
@@ -717,6 +766,11 @@ public abstract class ModuleBuild {
             if (newestInput > artifactMtime) return false;
         }
 
+        if (hasTestProtobufSources() && !evaluateSkip("${maven.test.skip}")) {
+            newestInput = newestMtime(testProtoSourceDir());
+            if (newestInput > artifactMtime) return false;
+        }
+
         if (hasTestJavaSources() && !evaluateSkip("${maven.test.skip}")) {
             newestInput = newestMtime(testSourceDir());
             if (newestInput > artifactMtime) return false;
@@ -745,6 +799,7 @@ public abstract class ModuleBuild {
             if (hasKotlinSources() && newestMtime(kotlinSourceDir()) > artifactMtime) return true;
             if (hasTestJavaSources() && newestMtime(testSourceDir()) > artifactMtime) return true;
             if (hasTestKotlinSources() && newestMtime(testKotlinSourceDir()) > artifactMtime) return true;
+            if (hasTestProtobufSources() && newestMtime(testProtoSourceDir()) > artifactMtime) return true;
             if (Files.getLastModifiedTime(pomFile()).toMillis() > artifactMtime) return true;
         } catch (IOException e) {
             return true;
@@ -805,8 +860,40 @@ public abstract class ModuleBuild {
         return false;
     }
 
+    private boolean hasTestCodeGenSourceFiles() {
+        Path base = runtime.getProjectRoot().resolve(baseDir()).resolve("src/test");
+        Path protoDir = base.resolve("proto");
+        if (Files.isDirectory(protoDir)) {
+            try (var stream = Files.walk(protoDir)) {
+                if (stream.anyMatch(p -> p.getFileName().toString().endsWith(".proto"))) {
+                    return true;
+                }
+            } catch (IOException e) {
+                return true;
+            }
+        }
+        Path avroDir = base.resolve("avro");
+        if (Files.isDirectory(avroDir)) {
+            try (var stream = Files.walk(avroDir)) {
+                if (stream.anyMatch(p -> {
+                    String name = p.getFileName().toString();
+                    return name.endsWith(".avsc") || name.endsWith(".avpr") || name.endsWith(".avdl");
+                })) {
+                    return true;
+                }
+            } catch (IOException e) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public Path protoSourceDir() {
         return runtime.getProjectRoot().resolve(baseDir()).resolve("src/main/proto");
+    }
+
+    public Path testProtoSourceDir() {
+        return runtime.getProjectRoot().resolve(baseDir()).resolve("src/test/proto");
     }
 
     public Path antlrSourceDir() {
@@ -815,6 +902,10 @@ public abstract class ModuleBuild {
 
     public Path generatedProtobufDir() {
         return targetDir().resolve("generated-sources/protobuf");
+    }
+
+    public Path generatedTestProtobufDir() {
+        return targetDir().resolve("generated-test-sources/protobuf");
     }
 
     public Path generatedAntlrDir() {

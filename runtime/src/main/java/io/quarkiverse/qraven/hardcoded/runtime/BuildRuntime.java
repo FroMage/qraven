@@ -557,6 +557,13 @@ public class BuildRuntime {
 
     public void compileKotlin(Path kotlinSourceDir, Path javaSourceDir, Path outputDir,
             List<String> classpath, Path... extraJavaSourceRoots) {
+        compileKotlin(kotlinSourceDir, javaSourceDir, outputDir, classpath,
+                List.of(), List.of(), extraJavaSourceRoots);
+    }
+
+    public void compileKotlin(Path kotlinSourceDir, Path javaSourceDir, Path outputDir,
+            List<String> classpath, List<String> compilerPlugins, List<String> pluginOptions,
+            Path... extraJavaSourceRoots) {
         if (!Files.isDirectory(kotlinSourceDir)) return;
 
         List<Path> kotlinFiles;
@@ -574,13 +581,15 @@ public class BuildRuntime {
         }
 
         List<String> args = buildKotlinArgs(kotlinFiles, javaSourceDir, outputDir, classpath,
-                kotlinSourceDir, extraJavaSourceRoots);
+                kotlinSourceDir, compilerPlugins, pluginOptions, extraJavaSourceRoots);
 
         compileKotlinClassic(args);
     }
 
     private List<String> buildKotlinArgs(List<Path> kotlinFiles, Path javaSourceDir, Path outputDir,
-            List<String> classpath, Path kotlinSourceDir, Path[] extraJavaSourceRoots) {
+            List<String> classpath, Path kotlinSourceDir,
+            List<String> compilerPlugins, List<String> pluginOptions,
+            Path[] extraJavaSourceRoots) {
         List<String> args = new ArrayList<>();
         args.add("-d");
         args.add(outputDir.toString());
@@ -592,6 +601,18 @@ public class BuildRuntime {
         if (!cp.isEmpty()) {
             args.add("-classpath");
             args.add(cp);
+        }
+
+        for (String pluginJar : compilerPlugins) {
+            String resolved = pluginJar.startsWith("$HOME/")
+                    ? System.getProperty("user.home") + pluginJar.substring(5) : pluginJar;
+            if (Files.exists(Path.of(resolved))) {
+                args.add("-Xplugin=" + resolved);
+            }
+        }
+        for (String option : pluginOptions) {
+            args.add("-P");
+            args.add("plugin:" + option);
         }
 
         List<String> javaRoots = new ArrayList<>();
