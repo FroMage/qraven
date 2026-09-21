@@ -189,14 +189,12 @@ public abstract class ModuleBuild {
         if (buildFuture != null) {
             return buildFuture;
         }
-        List<CompletableFuture<?>> allDepFutures = new ArrayList<>();
-        for (ModuleBuild dep : dependencies) {
-            allDepFutures.add(dep.buildAsync(executor));
-        }
         for (ModuleBuild dep : testDependencies) {
-            allDepFutures.add(dep.buildAsync(executor));
+            dep.buildAsync(executor);
         }
-        CompletableFuture<?>[] depFutures = allDepFutures.toArray(CompletableFuture[]::new);
+        CompletableFuture<?>[] depFutures = dependencies.stream()
+                .map(dep -> dep.buildAsync(executor))
+                .toArray(CompletableFuture[]::new);
         buildScheduledAt = System.currentTimeMillis();
         buildFuture = CompletableFuture.allOf(depFutures)
                 .handleAsync((v, ex) -> { doBuild(); return null; }, executor);
@@ -228,11 +226,6 @@ public abstract class ModuleBuild {
 
         List<String> failedDeps = new ArrayList<>();
         for (ModuleBuild dep : dependencies) {
-            if (!dep.didSucceed()) {
-                failedDeps.add(dep.artifactId());
-            }
-        }
-        for (ModuleBuild dep : testDependencies) {
             if (!dep.didSucceed()) {
                 failedDeps.add(dep.artifactId());
             }
@@ -493,6 +486,12 @@ public abstract class ModuleBuild {
                 if ((hasTestJavaSources() || hasTestKotlinSources()
                         || hasTestProtobufSources() || hasGenerateCodeTestsGoal())
                         && !evaluateSkip("${maven.test.skip}")) {
+                    for (ModuleBuild testDep : testDependencies) {
+                        testDep.buildFuture.join();
+                        if (!testDep.didSucceed()) {
+                            throw new RuntimeException("Test dependency " + testDep.artifactId() + " failed");
+                        }
+                    }
                     List<String> testCp = new ArrayList<>(fullClasspath);
                     testCp.addAll(resolvePaths(testCompileClasspath()));
                     if (!testDependencies.isEmpty()) {
