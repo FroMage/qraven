@@ -10,6 +10,8 @@
     </parent>
     <artifactId>qraven-cli</artifactId>
     <name>Qraven - CLI</name>
+    <description>Qraven CLI - parses Maven POMs, resolves dependencies, and generates build scripts</description>
+    <url>https://github.com/FroMage/qraven</url>
 
     <properties>
         <maven.version>3.9.6</maven.version>

@@ -10,6 +10,8 @@
     </parent>
     <artifactId>qraven-runtime</artifactId>
     <name>Qraven - Runtime</name>
+    <description>Qraven Runtime - compilation, packaging, and Quarkus augmentation engine</description>
+    <url>https://github.com/FroMage/qraven</url>
 
     <properties>
         <quarkus.version>3.39.4</quarkus.version>
