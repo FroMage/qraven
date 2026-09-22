@@ -11,11 +11,15 @@
     <artifactId>qraven-runtime</artifactId>
     <name>Qraven - Runtime</name>
 
+    <properties>
+        <quarkus.version>3.39.4</quarkus.version>
+    </properties>
+
     <dependencies>
         <dependency>
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-extension-maven-plugin</artifactId>
-            <version>999-SNAPSHOT</version>
+            <version>${quarkus.version}</version>
             <exclusions>
                 <exclusion>
                     <groupId>org.apache.maven</groupId>
@@ -46,7 +50,7 @@
         <dependency>
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-bootstrap-core</artifactId>
-            <version>999-SNAPSHOT</version>
+            <version>${quarkus.version}</version>
             <exclusions>
                 <exclusion>
                     <groupId>io.quarkus</groupId>

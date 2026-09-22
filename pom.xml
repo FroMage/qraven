@@ -8,6 +8,30 @@
     <version>1.1-SNAPSHOT</version>
     <packaging>pom</packaging>
     <name>Qraven - Parent</name>
+    <description>A fast build tool for Maven projects that generates self-contained build scripts</description>
+    <url>https://github.com/FroMage/qraven</url>
+
+    <licenses>
+        <license>
+            <name>Apache License, Version 2.0</name>
+            <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+
+    <developers>
+        <developer>
+            <id>FroMage</id>
+            <name>Stéphane Épardaud</name>
+            <url>https://github.com/FroMage</url>
+        </developer>
+    </developers>
+
+    <scm>
+        <connection>scm:git:git://github.com/FroMage/qraven.git</connection>
+        <developerConnection>scm:git:ssh://github.com:FroMage/qraven.git</developerConnection>
+        <url>https://github.com/FroMage/qraven/tree/main</url>
+    </scm>
 
     <modules>
         <module>runtime</module>
@@ -18,4 +42,44 @@
         <maven.compiler.release>17</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     </properties>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-source-plugin</artifactId>
+                <version>3.3.1</version>
+                <executions>
+                    <execution>
+                        <id>attach-sources</id>
+                        <goals>
+                            <goal>jar-no-fork</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-javadoc-plugin</artifactId>
+                <version>3.11.2</version>
+                <executions>
+                    <execution>
+                        <id>attach-javadocs</id>
+                        <goals>
+                            <goal>jar</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.jreleaser</groupId>
+                <artifactId>jreleaser-maven-plugin</artifactId>
+                <version>1.16.0</version>
+                <inherited>false</inherited>
+                <configuration>
+                    <configFile>jreleaser.yml</configFile>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
 </project>

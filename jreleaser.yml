@@ -1,0 +1,30 @@
+project:
+  name: qraven
+  description: A fast build tool for Maven projects that generates self-contained build scripts
+  website: https://github.com/FroMage/qraven
+  license: Apache-2.0
+  authors:
+    - Stéphane Épardaud
+  java:
+    groupId: io.github.fromage.qraven
+    version: 17
+
+signing:
+  active: ALWAYS
+  armored: true
+
+deploy:
+  maven:
+    mavenCentral:
+      sonatype:
+        active: ALWAYS
+        url: https://central.sonatype.com/api/v1/publisher
+        stagingRepositories:
+          - target/staging-deploy
+
+release:
+  github:
+    overwrite: true
+    changelog:
+      formatted: ALWAYS
+      preset: conventional-commits
