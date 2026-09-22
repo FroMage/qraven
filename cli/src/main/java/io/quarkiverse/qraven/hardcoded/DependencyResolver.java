@@ -6,8 +6,6 @@ import org.eclipse.aether.RepositorySystem;
 import org.eclipse.aether.artifact.Artifact;
 import org.eclipse.aether.artifact.DefaultArtifact;
 import org.eclipse.aether.collection.CollectRequest;
-import org.eclipse.aether.collection.DependencyCollectionContext;
-import org.eclipse.aether.collection.DependencySelector;
 import org.eclipse.aether.connector.basic.BasicRepositoryConnectorFactory;
 import org.eclipse.aether.graph.Dependency;
 import org.eclipse.aether.graph.Exclusion;
@@ -46,7 +44,6 @@ public class DependencyResolver {
 
     private final RepositorySystem repoSystem;
     private final DefaultRepositorySystemSession session;
-    private volatile DefaultRepositorySystemSession apSession;
     private final List<RemoteRepository> remoteRepos;
     private final Path localRepoPath;
     private Set<String> reactorGAs = Set.of();
@@ -120,10 +117,7 @@ public class DependencyResolver {
     public void setReactorGAs(Set<String> reactorGAs) {
         this.reactorGAs = reactorGAs;
         if (!reactorGAs.isEmpty()) {
-            this.apSession = new DefaultRepositorySystemSession(session);
-            apSession.setWorkspaceReader(new ReactorWorkspaceReader(reactorGAs, localRepoPath));
-            DependencySelector existing = session.getDependencySelector();
-            session.setDependencySelector(new ReactorExclusionSelector(reactorGAs, existing));
+            session.setWorkspaceReader(new ReactorWorkspaceReader(reactorGAs, localRepoPath));
         }
     }
 
@@ -344,10 +338,9 @@ public class DependencyResolver {
         }
 
         DependencyRequest depRequest = new DependencyRequest(collectRequest, null);
-        DefaultRepositorySystemSession resolveSession = apSession != null ? apSession : session;
 
         try {
-            DependencyResult result = repoSystem.resolveDependencies(resolveSession, depRequest);
+            DependencyResult result = repoSystem.resolveDependencies(session, depRequest);
             return result.getArtifactResults().stream()
                     .filter(ArtifactResult::isResolved)
                     .map(ar -> ar.getArtifact().getFile().getAbsolutePath())
@@ -423,48 +416,6 @@ public class DependencyResolver {
         }
 
         return dep;
-    }
-
-    private static class ReactorExclusionSelector implements DependencySelector {
-        private final Set<String> reactorGAs;
-        private final DependencySelector delegate;
-        private final boolean active;
-
-        ReactorExclusionSelector(Set<String> reactorGAs, DependencySelector delegate) {
-            this(reactorGAs, delegate, false);
-        }
-
-        private ReactorExclusionSelector(Set<String> reactorGAs, DependencySelector delegate,
-                                         boolean active) {
-            this.reactorGAs = reactorGAs;
-            this.delegate = delegate;
-            this.active = active;
-        }
-
-        @Override
-        public boolean selectDependency(Dependency dependency) {
-            if (active) {
-                String ga = dependency.getArtifact().getGroupId() + ":"
-                        + dependency.getArtifact().getArtifactId();
-                if (reactorGAs.contains(ga)) {
-                    return false;
-                }
-            }
-            return delegate == null || delegate.selectDependency(dependency);
-        }
-
-        @Override
-        public DependencySelector deriveChildSelector(DependencyCollectionContext context) {
-            DependencySelector derivedDelegate = delegate != null
-                    ? delegate.deriveChildSelector(context) : null;
-            if (!active) {
-                return new ReactorExclusionSelector(reactorGAs, derivedDelegate, true);
-            }
-            if (derivedDelegate == delegate) {
-                return this;
-            }
-            return new ReactorExclusionSelector(reactorGAs, derivedDelegate, true);
-        }
     }
 
     private static class ReactorWorkspaceReader implements WorkspaceReader {
