@@ -230,16 +230,19 @@ public abstract class ModuleBuild {
 
         List<String> failedDeps = new ArrayList<>();
         for (ModuleBuild dep : dependencies) {
-            if (!dep.didSucceed()) {
+            if (!dep.mainBuildSucceeded) {
                 failedDeps.add(dep.artifactId());
             }
         }
 
         int threadIdx = getThreadIndex();
 
-        if (!failedDeps.isEmpty() && progress != null) {
-            progress.moduleStarted(threadIdx, artifactId(), "skipped", 0);
-            progress.moduleCompleted(threadIdx, false);
+        if (!failedDeps.isEmpty()) {
+            failureMessage = "[" + artifactId() + "] SKIPPED: dependency failed: " + String.join(", ", failedDeps);
+            if (progress != null) {
+                progress.moduleStarted(threadIdx, artifactId(), "skipped", 0);
+                progress.moduleCompleted(threadIdx, false);
+            }
             mainBuildDone.complete(null);
             return;
         }
@@ -664,7 +667,7 @@ public abstract class ModuleBuild {
             if (!visited.add(dep.artifactId())) {
                 continue;
             }
-            if (dep.didSucceed() && !"pom".equals(dep.packaging())) {
+            if (dep.mainBuildSucceeded && !"pom".equals(dep.packaging())) {
                 Path jar = dep.jarFile();
                 if (Files.exists(jar)) {
                     classpath.add(jar.toString());
@@ -675,7 +678,7 @@ public abstract class ModuleBuild {
                     }
                 }
             }
-            if (dep.didSucceed()) {
+            if (dep.mainBuildSucceeded) {
                 for (String cp : dep.resolvedClasspath()) {
                     if (!classpath.contains(cp)) {
                         classpath.add(cp);
@@ -788,7 +791,7 @@ public abstract class ModuleBuild {
         }
 
         for (ModuleBuild dep : dependencies) {
-            if (dep.didSucceed() && !dep.wasSkippedIncremental()) {
+            if (dep.mainBuildSucceeded && !dep.wasSkippedIncremental()) {
                 return false;
             }
         }
