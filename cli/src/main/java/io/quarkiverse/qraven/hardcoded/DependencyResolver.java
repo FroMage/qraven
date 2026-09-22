@@ -29,9 +29,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
@@ -102,7 +100,7 @@ public class DependencyResolver {
         return "Compile cache: " + cacheHits.get() + " hits, "
                 + cacheMisses.get() + " misses, "
                 + resolutionCache.size() + " distinct keys"
-                + "\nTest dep cache: " + testDepCacheHits.get() + " hits, "
+                + "\nTest cache: " + testDepCacheHits.get() + " hits, "
                 + testDepCacheMisses.get() + " misses, "
                 + testDepCache.size() + " distinct keys"
                 + "\nManaged deps cache: " + managedDepsAetherCache.size() + " sets cached";
@@ -130,24 +128,6 @@ public class DependencyResolver {
             }
             return Collections.unmodifiableList(result);
         });
-    }
-
-    private String computeTestDepKey(org.apache.maven.model.Dependency dep, int managedFp) {
-        StringBuilder sb = new StringBuilder();
-        sb.append(dep.getGroupId()).append(':').append(dep.getArtifactId())
-                .append(':').append(dep.getVersion()).append('#').append(managedFp);
-        if (dep.getClassifier() != null && !dep.getClassifier().isEmpty()) {
-            sb.append(':').append(dep.getClassifier());
-        }
-        if (dep.getType() != null && !"jar".equals(dep.getType())) {
-            sb.append(':').append(dep.getType());
-        }
-        if (dep.getExclusions() != null && !dep.getExclusions().isEmpty()) {
-            for (var excl : dep.getExclusions()) {
-                sb.append('!').append(excl.getGroupId()).append(':').append(excl.getArtifactId());
-            }
-        }
-        return sb.toString();
     }
 
     private String computeResolutionKey(String scope,
@@ -234,48 +214,39 @@ public class DependencyResolver {
 
         if (dependencies.isEmpty()) return List.of();
 
-        List<Dependency> aetherManagedDeps = getAetherManagedDeps(managedDependencies);
-        int managedFp = computeManagedFingerprint(managedDependencies);
-
-        List<ResolvedArtifact> allResolved = new ArrayList<>();
-        Set<String> seenPaths = new HashSet<>();
-
-        for (org.apache.maven.model.Dependency dep : dependencies) {
-            String depKey = computeTestDepKey(dep, managedFp);
-            List<ResolvedArtifact> depResult = testDepCache.get(depKey);
-            if (depResult != null) {
-                testDepCacheHits.incrementAndGet();
-            } else {
-                testDepCacheMisses.incrementAndGet();
-                CollectRequest collectRequest = new CollectRequest();
-                collectRequest.addDependency(toAetherDep(dep));
-                collectRequest.setManagedDependencies(aetherManagedDeps);
-                collectRequest.setRepositories(remoteRepos);
-
-                DependencyRequest depRequest = new DependencyRequest(collectRequest,
-                        DependencyFilterUtils.classpathFilter(JavaScopes.COMPILE, JavaScopes.RUNTIME,
-                                JavaScopes.TEST));
-
-                try {
-                    DependencyResult result = repoSystem.resolveDependencies(session, depRequest);
-                    depResult = toResolvedArtifacts(result);
-                } catch (DependencyResolutionException e) {
-                    warn("WARNING: Test dependency resolution incomplete for "
-                            + dep.getGroupId() + ":" + dep.getArtifactId() + ": " + e.getMessage());
-                    DependencyResult result = e.getResult();
-                    depResult = result != null ? toResolvedArtifacts(result) : List.of();
-                }
-                testDepCache.put(depKey, depResult);
-            }
-
-            for (ResolvedArtifact art : depResult) {
-                if (seenPaths.add(art.filePath())) {
-                    allResolved.add(art);
-                }
-            }
+        String cacheKey = computeResolutionKey("test", dependencies, managedDependencies);
+        List<ResolvedArtifact> cached = testDepCache.get(cacheKey);
+        if (cached != null) {
+            testDepCacheHits.incrementAndGet();
+            return cached;
         }
+        testDepCacheMisses.incrementAndGet();
 
-        return allResolved;
+        List<Dependency> aetherManagedDeps = getAetherManagedDeps(managedDependencies);
+
+        CollectRequest collectRequest = new CollectRequest();
+        for (org.apache.maven.model.Dependency dep : dependencies) {
+            collectRequest.addDependency(toAetherDep(dep));
+        }
+        collectRequest.setManagedDependencies(aetherManagedDeps);
+        collectRequest.setRepositories(remoteRepos);
+
+        DependencyRequest depRequest = new DependencyRequest(collectRequest,
+                DependencyFilterUtils.classpathFilter(JavaScopes.COMPILE, JavaScopes.RUNTIME,
+                        JavaScopes.TEST));
+
+        try {
+            DependencyResult result = repoSystem.resolveDependencies(session, depRequest);
+            List<ResolvedArtifact> resolved = toResolvedArtifacts(result);
+            testDepCache.put(cacheKey, resolved);
+            return resolved;
+        } catch (DependencyResolutionException e) {
+            warn("WARNING: Test dependency resolution incomplete: " + e.getMessage());
+            DependencyResult result = e.getResult();
+            List<ResolvedArtifact> resolved = result != null ? toResolvedArtifacts(result) : List.of();
+            testDepCache.put(cacheKey, resolved);
+            return resolved;
+        }
     }
 
     private List<ResolvedArtifact> toResolvedArtifacts(DependencyResult result) {
