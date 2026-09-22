@@ -341,7 +341,7 @@ Both build the same ~1438 reactor modules. `-Prelocations` currently adds an emp
 | process-classes | `jandex-maven-plugin:jandex` | `runtime.generateJandexIndex()` | **Equivalent** |
 | process-classes | `sisu-maven-plugin` | `generateSisuIndex()` | **Simplified** — see below |
 | process-classes | `maven-plugin-plugin:descriptor` | `MavenPluginDescriptorGenerator` | **Simplified** — see below |
-| test-compile | `maven-compiler-plugin:testCompile` | — | **Missing** — test sources not compiled |
+| test-compile | `maven-compiler-plugin:testCompile` | `runtime.compileTests()` (in-process javac API) | **Equivalent** — see below |
 | test | `maven-surefire-plugin:test` | — | Skipped by both (`-DskipTests`) |
 | package | `maven-jar-plugin:jar` | `runtime.createJar()` | **Equivalent** |
 | package | `maven-source-plugin:jar-no-fork` | — | **Missing** — no `-sources.jar` produced |
@@ -366,7 +366,7 @@ Maven installs the effective POM plus `.md5`/`.sha1` checksums and updates `mave
 No `<include>`/`<exclude>` filter support. No `@property@` delimiter support (only `${property}`). Filter properties are limited to what's explicitly extracted from the POM.
 
 **Test compilation:**
-Maven with `-DskipTests` still compiles test sources (only `-Dmaven.test.skip` skips test compilation). Qraven never touches `src/test/`.
+Maven with `-DskipTests` still compiles test sources (only `-Dmaven.test.skip` skips test compilation). Qraven also compiles test sources by default. Test dependencies are resolved via Aether the same way as compile dependencies, with reactor modules resolved locally via a workspace reader. The main difference is that Maven resolves test-scoped reactor dependencies transitively through the reactor, while qraven resolves them via Aether against the local repository — the artifacts must already be installed in `~/.m2/repository` (which they are, since qraven installs each module after building it).
 
 ### Missing features that affect correctness
 
@@ -375,7 +375,6 @@ Maven with `-DskipTests` still compiles test sources (only `-Dmaven.test.skip` s
 | `bridger:transform` | 2–3 (arc/runtime, core/processor) | Bytecode transforms for `$IMPL` binary compat not applied |
 | `module-services-plugin` | ~9 with `module-info.java` | `META-INF/services/` files not generated from module-info |
 | `maven-shade-plugin` | 2 (grpc/protoc, bootstrap/gradle-resolver) | Shaded/relocated JARs not produced |
-| Test compilation | All | Compile errors in test code go undetected |
 | Source JARs | All | `-sources.jar` not produced (blocks releases, not needed for dev) |
 | `forbiddenapis` | All | Banned API usage checks not run |
 
