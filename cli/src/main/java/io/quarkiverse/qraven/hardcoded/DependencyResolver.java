@@ -30,6 +30,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
@@ -40,6 +41,7 @@ public class DependencyResolver {
     private final DefaultRepositorySystemSession session;
     private final List<RemoteRepository> remoteRepos;
     private final Path localRepoPath;
+    private Set<String> reactorGAs = Set.of();
     private Consumer<String> warningConsumer;
 
     private final ConcurrentHashMap<String, List<ResolvedArtifact>> resolutionCache = new ConcurrentHashMap<>();
@@ -82,6 +84,10 @@ public class DependencyResolver {
         return localRepoPath;
     }
 
+    public void setReactorGAs(Set<String> reactorGAs) {
+        this.reactorGAs = reactorGAs;
+    }
+
     public void setWarningConsumer(Consumer<String> consumer) {
         this.warningConsumer = consumer;
     }
@@ -122,7 +128,8 @@ public class DependencyResolver {
         return managedDepsAetherCache.computeIfAbsent(fp, k -> {
             List<Dependency> result = new ArrayList<>();
             for (org.apache.maven.model.Dependency dep : managedDependencies) {
-                if (!"import".equals(dep.getScope())) {
+                if (!"import".equals(dep.getScope())
+                        && !reactorGAs.contains(dep.getGroupId() + ":" + dep.getArtifactId())) {
                     result.add(toAetherDep(dep));
                 }
             }
@@ -270,7 +277,8 @@ public class DependencyResolver {
 
         if (managedDependencies != null) {
             for (org.apache.maven.model.Dependency dep : managedDependencies) {
-                if (!"import".equals(dep.getScope()) && dep.getVersion() != null) {
+                if (!"import".equals(dep.getScope()) && dep.getVersion() != null
+                        && !reactorGAs.contains(dep.getGroupId() + ":" + dep.getArtifactId())) {
                     collectRequest.addManagedDependency(toAetherDep(dep));
                 }
             }

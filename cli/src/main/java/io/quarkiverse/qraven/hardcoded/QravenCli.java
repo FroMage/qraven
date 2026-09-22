@@ -21,7 +21,7 @@ public class QravenCli {
     private static final String ERASE_LINE = "\r[2K";
     private static final String RUNTIME_GROUP_ID = "io.quarkiverse.qraven";
     private static final String RUNTIME_ARTIFACT_ID = "qraven-runtime";
-    private static final String RUNTIME_VERSION = "1.0-SNAPSHOT";
+    private static final String RUNTIME_VERSION = loadVersion();
 
     public static void main(String[] args) throws Exception {
         Path projectDir = Path.of(".").toAbsolutePath().normalize();
@@ -41,6 +41,7 @@ public class QravenCli {
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
                 case "--help", "-h" -> { printHelp(); return; }
+                case "--version", "-V" -> { printVersion(); return; }
                 case "--project", "-p" -> projectDir = Path.of(args[++i]).toAbsolutePath().normalize();
                 case "--threads", "-t" -> {
                     threads = Integer.parseInt(args[++i]);
@@ -441,6 +442,7 @@ public class QravenCli {
 
                 Other options:
                   -h, --help                Show this help message and exit
+                  -V, --version             Show version and exit
                   -p, --project <path>      Project root directory (default: current directory)
                   -t, --threads <n>         Thread count (default: available CPUs)
                   -o, --output <path>       Output directory (default: <project>/target/qraven)
@@ -456,6 +458,41 @@ public class QravenCli {
                   qraven -fg --quickly           Force regeneration, skip tests
                   qraven -i                      Incremental build (only changed modules)
                 """);
+    }
+
+    private static void printVersion() {
+        System.out.println("qraven " + RUNTIME_VERSION);
+        try (var is = QravenCli.class.getResourceAsStream("/qraven-build.properties")) {
+            if (is != null) {
+                var props = new java.util.Properties();
+                props.load(is);
+                String ts = props.getProperty("build.timestamp");
+                if (ts != null && !ts.isBlank()) {
+                    var instant = java.time.OffsetDateTime.parse(ts).toInstant();
+                    var formatted = java.time.format.DateTimeFormatter
+                            .ofPattern("yyyy-MM-dd HH:mm:ss z")
+                            .withZone(java.time.ZoneId.systemDefault())
+                            .format(instant);
+                    System.out.println("Built on " + formatted);
+                }
+            }
+        } catch (Exception e) {
+            // ignore
+        }
+    }
+
+    private static String loadVersion() {
+        try (var is = QravenCli.class.getResourceAsStream("/qraven-build.properties")) {
+            if (is != null) {
+                var props = new java.util.Properties();
+                props.load(is);
+                String v = props.getProperty("build.version");
+                if (v != null && !v.isBlank()) return v;
+            }
+        } catch (Exception e) {
+            // fall through
+        }
+        return "dev";
     }
 
     private static Path resolveNativeImage(String graalvmHome) {

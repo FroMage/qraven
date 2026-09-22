@@ -152,6 +152,8 @@ public class PomParser {
             reactorGAs.add(m.getGroupId() + ":" + m.getArtifactId());
         }
 
+        resolver.setReactorGAs(reactorGAs);
+
         // Phase 3: Resolve dependencies in parallel
         long resolveStart = System.currentTimeMillis();
         AtomicInteger resolveCounter = new AtomicInteger();
