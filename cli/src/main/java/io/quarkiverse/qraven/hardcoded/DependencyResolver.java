@@ -14,6 +14,8 @@ import org.eclipse.aether.graph.Exclusion;
 import org.eclipse.aether.impl.DefaultServiceLocator;
 import org.eclipse.aether.repository.LocalRepository;
 import org.eclipse.aether.repository.RemoteRepository;
+import org.eclipse.aether.repository.WorkspaceReader;
+import org.eclipse.aether.repository.WorkspaceRepository;
 import org.eclipse.aether.resolution.ArtifactRequest;
 import org.eclipse.aether.resolution.ArtifactResolutionException;
 import org.eclipse.aether.resolution.ArtifactResult;
@@ -29,6 +31,7 @@ import org.eclipse.aether.transfer.TransferEvent;
 import org.eclipse.aether.util.artifact.JavaScopes;
 import org.eclipse.aether.util.filter.DependencyFilterUtils;
 
+import java.io.File;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -43,6 +46,7 @@ public class DependencyResolver {
 
     private final RepositorySystem repoSystem;
     private final DefaultRepositorySystemSession session;
+    private volatile DefaultRepositorySystemSession apSession;
     private final List<RemoteRepository> remoteRepos;
     private final Path localRepoPath;
     private Set<String> reactorGAs = Set.of();
@@ -116,6 +120,8 @@ public class DependencyResolver {
     public void setReactorGAs(Set<String> reactorGAs) {
         this.reactorGAs = reactorGAs;
         if (!reactorGAs.isEmpty()) {
+            this.apSession = new DefaultRepositorySystemSession(session);
+            apSession.setWorkspaceReader(new ReactorWorkspaceReader(reactorGAs, localRepoPath));
             DependencySelector existing = session.getDependencySelector();
             session.setDependencySelector(new ReactorExclusionSelector(reactorGAs, existing));
         }
@@ -338,9 +344,10 @@ public class DependencyResolver {
         }
 
         DependencyRequest depRequest = new DependencyRequest(collectRequest, null);
+        DefaultRepositorySystemSession resolveSession = apSession != null ? apSession : session;
 
         try {
-            DependencyResult result = repoSystem.resolveDependencies(session, depRequest);
+            DependencyResult result = repoSystem.resolveDependencies(resolveSession, depRequest);
             return result.getArtifactResults().stream()
                     .filter(ArtifactResult::isResolved)
                     .map(ar -> ar.getArtifact().getFile().getAbsolutePath())
@@ -457,6 +464,47 @@ public class DependencyResolver {
                 return this;
             }
             return new ReactorExclusionSelector(reactorGAs, derivedDelegate, true);
+        }
+    }
+
+    private static class ReactorWorkspaceReader implements WorkspaceReader {
+        private final Set<String> reactorGAs;
+        private final Path localRepoPath;
+        private final WorkspaceRepository repository = new WorkspaceRepository("reactor");
+
+        ReactorWorkspaceReader(Set<String> reactorGAs, Path localRepoPath) {
+            this.reactorGAs = reactorGAs;
+            this.localRepoPath = localRepoPath;
+        }
+
+        @Override
+        public WorkspaceRepository getRepository() {
+            return repository;
+        }
+
+        @Override
+        public File findArtifact(Artifact artifact) {
+            String ga = artifact.getGroupId() + ":" + artifact.getArtifactId();
+            if (!reactorGAs.contains(ga)) return null;
+
+            String classifier = artifact.getClassifier();
+            String fileName = artifact.getArtifactId() + "-" + artifact.getVersion()
+                    + (classifier != null && !classifier.isEmpty() ? "-" + classifier : "")
+                    + "." + artifact.getExtension();
+            Path path = localRepoPath
+                    .resolve(artifact.getGroupId().replace('.', '/'))
+                    .resolve(artifact.getArtifactId())
+                    .resolve(artifact.getVersion())
+                    .resolve(fileName);
+            File file = path.toFile();
+            return file.exists() ? file : null;
+        }
+
+        @Override
+        public List<String> findVersions(Artifact artifact) {
+            String ga = artifact.getGroupId() + ":" + artifact.getArtifactId();
+            if (!reactorGAs.contains(ga)) return List.of();
+            return List.of(artifact.getVersion());
         }
     }
 }
