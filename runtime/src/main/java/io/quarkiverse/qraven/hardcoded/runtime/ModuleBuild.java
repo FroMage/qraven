@@ -21,6 +21,8 @@ public abstract class ModuleBuild {
 
     protected final BuildRuntime runtime;
     private volatile CompletableFuture<Void> buildFuture;
+    private final CompletableFuture<Void> mainBuildDone = new CompletableFuture<>();
+    private volatile boolean mainBuildSucceeded;
     private List<ModuleBuild> dependencies = List.of();
     private List<ModuleBuild> testDependencies = List.of();
     private ProgressDisplay progress;
@@ -181,7 +183,9 @@ public abstract class ModuleBuild {
 
     public void markPreBuilt() {
         buildSucceeded = true;
+        mainBuildSucceeded = true;
         skippedIncremental = true;
+        mainBuildDone.complete(null);
         buildFuture = CompletableFuture.completedFuture(null);
     }
 
@@ -233,6 +237,7 @@ public abstract class ModuleBuild {
         if (!failedDeps.isEmpty() && progress != null) {
             progress.moduleStarted(threadIdx, artifactId(), "skipped", 0);
             progress.moduleCompleted(threadIdx, false);
+            mainBuildDone.complete(null);
             return;
         }
 
@@ -241,6 +246,8 @@ public abstract class ModuleBuild {
                 if (incremental && isUpToDate()) {
                     skippedIncremental = true;
                     buildSucceeded = true;
+                    mainBuildSucceeded = true;
+                    mainBuildDone.complete(null);
                     if (progress != null) {
                         progress.moduleStarted(threadIdx, artifactId(), "up-to-date", 0);
                         progress.moduleCompleted(threadIdx, true);
@@ -250,11 +257,15 @@ public abstract class ModuleBuild {
                 if (progress != null) progress.moduleStarted(threadIdx, artifactId(), "pom", 0);
                 long t = System.currentTimeMillis();
                 runtime.install(null, pomFile(), groupId(), artifactId(), version(), packaging());
+                mainBuildSucceeded = true;
+                mainBuildDone.complete(null);
                 recordPhase("install", t);
             } else {
                 if (incremental && isUpToDate()) {
                     skippedIncremental = true;
                     buildSucceeded = true;
+                    mainBuildSucceeded = true;
+                    mainBuildDone.complete(null);
                     if (progress != null) {
                         progress.moduleStarted(threadIdx, artifactId(), "up-to-date", 0);
                         progress.moduleCompleted(threadIdx, true);
@@ -480,12 +491,15 @@ public abstract class ModuleBuild {
                 runtime.createJar(classesDir(), jarFile(), manifestEntries());
                 recordPhase("jar", t);
 
+                mainBuildSucceeded = true;
+                mainBuildDone.complete(null);
+
                 if ((hasTestJavaSources() || hasTestKotlinSources()
                         || hasTestProtobufSources() || hasGenerateCodeTestsGoal())
                         && !evaluateSkip("${maven.test.skip}")) {
                     for (ModuleBuild testDep : testDependencies) {
-                        testDep.buildFuture.join();
-                        if (!testDep.didSucceed()) {
+                        testDep.mainBuildDone.join();
+                        if (!testDep.mainBuildSucceeded) {
                             throw new RuntimeException("Test dependency " + testDep.artifactId() + " failed");
                         }
                     }
@@ -495,7 +509,7 @@ public abstract class ModuleBuild {
                         Set<String> testVisited = new HashSet<>(added);
                         for (ModuleBuild testDep : testDependencies) {
                             if (testVisited.add(testDep.artifactId())) {
-                                if (testDep.didSucceed() && !"pom".equals(testDep.packaging())) {
+                                if (testDep.mainBuildSucceeded && !"pom".equals(testDep.packaging())) {
                                     Path jar = testDep.jarFile();
                                     if (Files.exists(jar)) {
                                         testCp.add(jar.toString());
@@ -506,7 +520,7 @@ public abstract class ModuleBuild {
                                         }
                                     }
                                 }
-                                if (testDep.didSucceed()) {
+                                if (testDep.mainBuildSucceeded) {
                                     for (String cp : testDep.resolvedClasspath()) {
                                         if (!testCp.contains(cp)) {
                                             testCp.add(cp);
@@ -612,6 +626,7 @@ public abstract class ModuleBuild {
                 progress.moduleCompleted(threadIdx, true);
             }
         } catch (Throwable e) {
+            mainBuildDone.complete(null);
             long elapsed = System.currentTimeMillis() - start;
             StringBuilder msg = new StringBuilder();
             msg.append("[").append(artifactId()).append("] FAILED after ").append(elapsed).append("ms: ").append(e.getMessage());
