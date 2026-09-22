@@ -1,4 +1,4 @@
-package io.quarkiverse.qraven.hardcoded.runtime;
+package io.github.fromage.qraven.hardcoded.runtime;
 
 import java.io.IOException;
 import java.nio.file.Files;

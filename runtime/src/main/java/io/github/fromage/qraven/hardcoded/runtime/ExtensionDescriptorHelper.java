@@ -1,4 +1,4 @@
-package io.quarkiverse.qraven.hardcoded.runtime;
+package io.github.fromage.qraven.hardcoded.runtime;
 
 import io.quarkus.maven.capabilities.CapabilitiesConfig;
 import io.quarkus.maven.capabilities.CapabilityConfig;

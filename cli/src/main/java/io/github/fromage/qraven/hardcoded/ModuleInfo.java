@@ -1,4 +1,4 @@
-package io.quarkiverse.qraven.hardcoded;
+package io.github.fromage.qraven.hardcoded;
 
 import java.nio.file.Path;
 import java.util.ArrayList;

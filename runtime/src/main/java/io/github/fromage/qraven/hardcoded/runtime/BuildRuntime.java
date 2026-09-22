@@ -1,4 +1,4 @@
-package io.quarkiverse.qraven.hardcoded.runtime;
+package io.github.fromage.qraven.hardcoded.runtime;
 
 import javax.tools.Diagnostic;
 import javax.tools.DiagnosticCollector;

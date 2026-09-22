@@ -1,4 +1,4 @@
-package io.quarkiverse.qraven.hardcoded;
+package io.github.fromage.qraven.hardcoded;
 
 import javax.tools.JavaCompiler;
 import javax.tools.ToolProvider;
@@ -25,7 +25,7 @@ import java.util.stream.Collectors;
 
 public class BuildFileGenerator {
 
-    private static final String RUNTIME_GROUP_ID = "io.quarkiverse.qraven";
+    private static final String RUNTIME_GROUP_ID = "io.github.fromage.qraven";
     private static final String RUNTIME_ARTIFACT_ID = "qraven-runtime";
     private static final String RUNTIME_VERSION = "1.0-SNAPSHOT";
 
@@ -132,8 +132,8 @@ public class BuildFileGenerator {
 
     private String generateModuleClass(ModuleInfo module, String className) {
         StringBuilder sb = new StringBuilder();
-        sb.append("import io.quarkiverse.qraven.hardcoded.runtime.ModuleBuild;\n");
-        sb.append("import io.quarkiverse.qraven.hardcoded.runtime.BuildRuntime;\n");
+        sb.append("import io.github.fromage.qraven.hardcoded.runtime.ModuleBuild;\n");
+        sb.append("import io.github.fromage.qraven.hardcoded.runtime.BuildRuntime;\n");
         sb.append("import java.nio.file.Path;\n");
         sb.append("import java.util.List;\n");
         sb.append("import java.util.Map;\n\n");
@@ -481,7 +481,7 @@ public class BuildFileGenerator {
 
     private String generateMainClass(List<ModuleInfo> modules) {
         StringBuilder sb = new StringBuilder();
-        sb.append("import io.quarkiverse.qraven.hardcoded.runtime.*;\n");
+        sb.append("import io.github.fromage.qraven.hardcoded.runtime.*;\n");
         sb.append("import java.util.*;\n\n");
 
         sb.append("public class Build {\n");

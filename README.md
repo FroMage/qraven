@@ -35,7 +35,7 @@ This produces two modules:
 After the Maven build:
 
 ```bash
-jbang app install --name qraven --force io.quarkiverse.qraven:qraven-cli:1.1-SNAPSHOT
+jbang app install --name qraven --force io.github.fromage.qraven:qraven-cli:1.1-SNAPSHOT
 ```
 
 JBang resolves all dependencies from the POM automatically.

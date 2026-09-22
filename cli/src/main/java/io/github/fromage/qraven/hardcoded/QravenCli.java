@@ -1,4 +1,4 @@
-package io.quarkiverse.qraven.hardcoded;
+package io.github.fromage.qraven.hardcoded;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -19,7 +19,7 @@ import org.apache.maven.model.io.xpp3.MavenXpp3Reader;
 public class QravenCli {
 
     private static final String ERASE_LINE = "\r[2K";
-    private static final String RUNTIME_GROUP_ID = "io.quarkiverse.qraven";
+    private static final String RUNTIME_GROUP_ID = "io.github.fromage.qraven";
     private static final String RUNTIME_ARTIFACT_ID = "qraven-runtime";
     private static final String RUNTIME_VERSION = loadVersion();
 

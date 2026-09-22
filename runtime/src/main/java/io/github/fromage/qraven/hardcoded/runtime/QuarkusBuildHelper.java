@@ -1,4 +1,4 @@
-package io.quarkiverse.qraven.hardcoded.runtime;
+package io.github.fromage.qraven.hardcoded.runtime;
 
 import java.io.StringReader;
 import java.lang.reflect.Method;

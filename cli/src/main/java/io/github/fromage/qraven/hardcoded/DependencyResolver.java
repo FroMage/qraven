@@ -1,4 +1,4 @@
-package io.quarkiverse.qraven.hardcoded;
+package io.github.fromage.qraven.hardcoded;
 
 import org.apache.maven.repository.internal.MavenRepositorySystemUtils;
 import org.eclipse.aether.DefaultRepositorySystemSession;
