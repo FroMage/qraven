@@ -43,6 +43,7 @@ public class DependencyResolver {
 
     private final RepositorySystem repoSystem;
     private final DefaultRepositorySystemSession session;
+    private volatile DefaultRepositorySystemSession apSession;
     private final List<RemoteRepository> remoteRepos;
     private final Path localRepoPath;
     private Set<String> reactorGAs = Set.of();
@@ -116,6 +117,7 @@ public class DependencyResolver {
     public void setReactorGAs(Set<String> reactorGAs) {
         this.reactorGAs = reactorGAs;
         if (!reactorGAs.isEmpty()) {
+            this.apSession = new DefaultRepositorySystemSession(session);
             DependencySelector existing = session.getDependencySelector();
             session.setDependencySelector(new ReactorExclusionSelector(reactorGAs, existing));
         }
@@ -338,9 +340,10 @@ public class DependencyResolver {
         }
 
         DependencyRequest depRequest = new DependencyRequest(collectRequest, null);
+        DefaultRepositorySystemSession resolveSession = apSession != null ? apSession : session;
 
         try {
-            DependencyResult result = repoSystem.resolveDependencies(session, depRequest);
+            DependencyResult result = repoSystem.resolveDependencies(resolveSession, depRequest);
             return result.getArtifactResults().stream()
                     .filter(ArtifactResult::isResolved)
                     .map(ar -> ar.getArtifact().getFile().getAbsolutePath())
