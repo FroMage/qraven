@@ -206,14 +206,14 @@ public abstract class ModuleBuild {
         CompletableFuture<Void> mainBuild = CompletableFuture.allOf(depFutures)
                 .handleAsync((v, ex) -> { doBuild(); return null; }, executor);
         if (!testDependencies.isEmpty()) {
-            for (ModuleBuild td : testDependencies) {
-                td.buildAsync(executor);
-            }
             CompletableFuture<?>[] testDepFutures = testDependencies.stream()
                     .map(td -> td.mainBuildDone)
                     .toArray(CompletableFuture[]::new);
             buildFuture = CompletableFuture.allOf(mainBuild, CompletableFuture.allOf(testDepFutures))
                     .handleAsync((v, ex) -> { doTestCompilation(); return null; }, executor);
+            for (ModuleBuild td : testDependencies) {
+                td.buildAsync(executor);
+            }
         } else {
             buildFuture = mainBuild;
         }
