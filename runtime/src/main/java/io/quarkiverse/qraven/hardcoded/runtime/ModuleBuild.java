@@ -34,6 +34,9 @@ public abstract class ModuleBuild {
     private List<String> resolvedClasspath;
     private Set<String> resolvedOptionalClasspath;
     private List<String> resolvedAnnotationProcessorPaths;
+    private volatile List<String> mainBuildClasspath;
+    private volatile Set<String> mainBuildAdded;
+    private volatile boolean mainBuildSkipFormat;
 
     protected ModuleBuild(BuildRuntime runtime) {
         this.runtime = runtime;
@@ -200,8 +203,20 @@ public abstract class ModuleBuild {
                 })
                 .toArray(CompletableFuture[]::new);
         buildScheduledAt = System.currentTimeMillis();
-        buildFuture = CompletableFuture.allOf(depFutures)
+        CompletableFuture<Void> mainBuild = CompletableFuture.allOf(depFutures)
                 .handleAsync((v, ex) -> { doBuild(); return null; }, executor);
+        if (!testDependencies.isEmpty()) {
+            for (ModuleBuild td : testDependencies) {
+                td.buildAsync(executor);
+            }
+            CompletableFuture<?>[] testDepFutures = testDependencies.stream()
+                    .map(td -> td.mainBuildDone)
+                    .toArray(CompletableFuture[]::new);
+            buildFuture = CompletableFuture.allOf(mainBuild, CompletableFuture.allOf(testDepFutures))
+                    .handleAsync((v, ex) -> { doTestCompilation(); return null; }, executor);
+        } else {
+            buildFuture = mainBuild;
+        }
         return buildFuture;
     }
 
@@ -505,114 +520,14 @@ public abstract class ModuleBuild {
                 mainBuildSucceeded = true;
                 mainBuildDone.complete(null);
 
-                if ((hasTestJavaSources() || hasTestKotlinSources()
+                if (!testDependencies.isEmpty()) {
+                    mainBuildClasspath = fullClasspath;
+                    mainBuildAdded = added;
+                    mainBuildSkipFormat = skipFormat;
+                } else if ((hasTestJavaSources() || hasTestKotlinSources()
                         || hasTestProtobufSources() || hasGenerateCodeTestsGoal())
                         && !evaluateSkip("${maven.test.skip}")) {
-                    for (ModuleBuild testDep : testDependencies) {
-                        testDep.mainBuildDone.join();
-                        if (!testDep.mainBuildSucceeded) {
-                            throw new RuntimeException("Test dependency " + testDep.artifactId() + " failed");
-                        }
-                    }
-                    List<String> testCp = new ArrayList<>(fullClasspath);
-                    testCp.addAll(resolvePaths(testCompileClasspath()));
-                    if (!testDependencies.isEmpty()) {
-                        Set<String> testVisited = new HashSet<>(added);
-                        for (ModuleBuild testDep : testDependencies) {
-                            if (testVisited.add(testDep.artifactId())) {
-                                if (testDep.mainBuildSucceeded && !"pom".equals(testDep.packaging())) {
-                                    Path jar = testDep.jarFile();
-                                    if (Files.exists(jar)) {
-                                        testCp.add(jar.toString());
-                                    } else {
-                                        Path installed = testDep.installedArtifactPath();
-                                        if (Files.exists(installed)) {
-                                            testCp.add(installed.toString());
-                                        }
-                                    }
-                                }
-                                if (testDep.mainBuildSucceeded) {
-                                    for (String cp : testDep.resolvedClasspath()) {
-                                        if (!testCp.contains(cp)) {
-                                            testCp.add(cp);
-                                        }
-                                    }
-                                }
-                                addReactorJars(testDep, testCp, testVisited);
-                            }
-                        }
-                    }
-                    testCp.add(classesDir().toString());
-
-                    List<Path> testExtraDirs = new ArrayList<>();
-
-                    Path generatedTestProtoDir = null;
-                    if (hasTestProtobufSources()) {
-                        if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "test-protobuf", 0);
-                        t = System.currentTimeMillis();
-                        generatedTestProtoDir = generatedTestProtobufDir();
-                        runtime.compileProtobuf(testProtoSourceDir(), generatedTestProtoDir,
-                                protobufUsesGrpc(), protobufUsesMutiny(), testCp);
-                        Path javaDir = generatedTestProtoDir.resolve("java");
-                        if (Files.isDirectory(javaDir)) testExtraDirs.add(javaDir);
-                        Path grpcDir = generatedTestProtoDir.resolve("grpc-java");
-                        if (Files.isDirectory(grpcDir)) testExtraDirs.add(grpcDir);
-                        Path quarkusDir = generatedTestProtoDir.resolve("quarkus-grpc");
-                        if (Files.isDirectory(quarkusDir)) testExtraDirs.add(quarkusDir);
-                        recordPhase("test-protobuf", t);
-                    }
-
-                    Path generatedTestSourcesDir = null;
-                    if (hasGenerateCodeTestsGoal() && hasCodeGenProviders()
-                            && !evaluateSkip(generateCodeSkipWhen())
-                            && hasTestCodeGenSourceFiles()) {
-                        if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "generate-code-tests", 0);
-                        t = System.currentTimeMillis();
-                        try {
-                            generatedTestSourcesDir = QuarkusBuildHelper.generateCodeTests(this, dependencies);
-                            if (generatedTestSourcesDir != null && Files.isDirectory(generatedTestSourcesDir)) {
-                                addGeneratedSourceDirs(generatedTestSourcesDir, testExtraDirs);
-                            }
-                        } catch (Exception e) {
-                            Throwable cause = e;
-                            while (cause.getCause() != null && (cause.getMessage() == null
-                                    || cause instanceof java.lang.reflect.InvocationTargetException)) {
-                                cause = cause.getCause();
-                            }
-                            System.err.println("[" + artifactId() + "] generate-code-tests failed: " + cause.getMessage());
-                        }
-                        recordPhase("generate-code-tests", t);
-                    }
-
-                    if (hasTestKotlinSources()) {
-                        if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "test-kotlin", 0);
-                        t = System.currentTimeMillis();
-                        runtime.compileKotlin(testKotlinSourceDir(), testSourceDir(), testClassesDir(), testCp,
-                                kotlinCompilerPlugins(), kotlinPluginOptions(),
-                                testExtraDirs.toArray(new Path[0]));
-                        testCp.add(0, testClassesDir().toString());
-                        recordPhase("test-kotlin", t);
-                    }
-
-                    if (hasTestJavaSources() && !skipFormat) {
-                        if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "test-format", 0);
-                        t = System.currentTimeMillis();
-                        CodeStyleHelper codeStyle = runtime.getCodeStyleHelper();
-                        codeStyle.formatJavaFiles(testSourceDir());
-                        codeStyle.sortImports(testSourceDir());
-                        recordPhase("test-format", t);
-                    }
-
-                    if (hasTestJavaSources() || !testExtraDirs.isEmpty()) {
-                        List<String> testApPaths = resolvedAnnotationProcessorPaths();
-                        String testCompilePhase = testApPaths.isEmpty() ? "test-compile" : "test-compile+apt";
-                        if (progress != null) progress.phaseChanged(threadIdx, artifactId(), testCompilePhase, 0);
-                        t = System.currentTimeMillis();
-                        runtime.compile(testSourceDir(), testClassesDir(), testCp,
-                                testApPaths, isApCacheable(), compilerArgs(),
-                                testExtraDirs.toArray(new Path[0]));
-                        recordPhase(testCompilePhase, t);
-                    }
+                    compileTests(fullClasspath, added, skipFormat);
                 }
 
                 if (hasQuarkusBuildPlugin() && !evaluateSkip(quarkusBuildSkipWhen())) {
@@ -623,12 +538,14 @@ public abstract class ModuleBuild {
                 }
             }
 
-            buildSucceeded = true;
+            if (testDependencies.isEmpty()) {
+                buildSucceeded = true;
+            }
             long totalElapsed = System.currentTimeMillis() - start;
             if (totalElapsed > 500) {
                 System.err.println("[timing] [" + artifactId() + "] doBuild total: " + totalElapsed + "ms");
             }
-            if (progress != null) {
+            if (testDependencies.isEmpty() && progress != null) {
                 progress.moduleCompleted(threadIdx, true);
             }
         } catch (Throwable e) {
@@ -653,6 +570,150 @@ public abstract class ModuleBuild {
                 progress.moduleCompleted(threadIdx, false);
             }
             throw new RuntimeException("Build failed for " + artifactId(), e);
+        }
+    }
+
+    private void doTestCompilation() {
+        if (!mainBuildSucceeded) {
+            return;
+        }
+        for (ModuleBuild testDep : testDependencies) {
+            if (!testDep.mainBuildSucceeded) {
+                failureMessage = "[" + artifactId() + "] FAILED: test dependency " + testDep.artifactId() + " failed";
+                if (progress != null) {
+                    progress.moduleCompleted(getThreadIndex(), false);
+                }
+                return;
+            }
+        }
+        try {
+            if ((hasTestJavaSources() || hasTestKotlinSources()
+                    || hasTestProtobufSources() || hasGenerateCodeTestsGoal())
+                    && !evaluateSkip("${maven.test.skip}")) {
+                List<String> fullClasspath = mainBuildClasspath;
+                Set<String> added = mainBuildAdded;
+                List<String> testCp = new ArrayList<>(fullClasspath);
+                testCp.addAll(resolvePaths(testCompileClasspath()));
+                Set<String> testVisited = new HashSet<>(added);
+                for (ModuleBuild testDep : testDependencies) {
+                    if (testVisited.add(testDep.artifactId())) {
+                        if (testDep.mainBuildSucceeded && !"pom".equals(testDep.packaging())) {
+                            Path jar = testDep.jarFile();
+                            if (Files.exists(jar)) {
+                                testCp.add(jar.toString());
+                            } else {
+                                Path installed = testDep.installedArtifactPath();
+                                if (Files.exists(installed)) {
+                                    testCp.add(installed.toString());
+                                }
+                            }
+                        }
+                        if (testDep.mainBuildSucceeded) {
+                            for (String cp : testDep.resolvedClasspath()) {
+                                if (!testCp.contains(cp)) {
+                                    testCp.add(cp);
+                                }
+                            }
+                        }
+                        addReactorJars(testDep, testCp, testVisited);
+                    }
+                }
+                compileTests(testCp, added, mainBuildSkipFormat);
+            }
+            buildSucceeded = true;
+            if (progress != null) {
+                int threadIdx = getThreadIndex();
+                progress.moduleCompleted(threadIdx, true);
+            }
+        } catch (Throwable e) {
+            StringBuilder msg = new StringBuilder();
+            msg.append("[").append(artifactId()).append("] FAILED (test compilation): ").append(e.getMessage());
+            Throwable cause = e.getCause();
+            while (cause != null) {
+                msg.append("\n  Caused by: ").append(cause.getClass().getName()).append(": ").append(cause.getMessage());
+                cause = cause.getCause();
+            }
+            failureMessage = msg.toString();
+            if (progress != null) {
+                progress.moduleCompleted(getThreadIndex(), false);
+            }
+            throw new RuntimeException("Test compilation failed for " + artifactId(), e);
+        }
+    }
+
+    private void compileTests(List<String> testCp, Set<String> added, boolean skipFormat) {
+        int threadIdx = getThreadIndex();
+        long t;
+        testCp.add(classesDir().toString());
+
+        List<Path> testExtraDirs = new ArrayList<>();
+
+        Path generatedTestProtoDir = null;
+        if (hasTestProtobufSources()) {
+            if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "test-protobuf", 0);
+            t = System.currentTimeMillis();
+            generatedTestProtoDir = generatedTestProtobufDir();
+            runtime.compileProtobuf(testProtoSourceDir(), generatedTestProtoDir,
+                    protobufUsesGrpc(), protobufUsesMutiny(), testCp);
+            Path javaDir = generatedTestProtoDir.resolve("java");
+            if (Files.isDirectory(javaDir)) testExtraDirs.add(javaDir);
+            Path grpcDir = generatedTestProtoDir.resolve("grpc-java");
+            if (Files.isDirectory(grpcDir)) testExtraDirs.add(grpcDir);
+            Path quarkusDir = generatedTestProtoDir.resolve("quarkus-grpc");
+            if (Files.isDirectory(quarkusDir)) testExtraDirs.add(quarkusDir);
+            recordPhase("test-protobuf", t);
+        }
+
+        Path generatedTestSourcesDir = null;
+        if (hasGenerateCodeTestsGoal() && hasCodeGenProviders()
+                && !evaluateSkip(generateCodeSkipWhen())
+                && hasTestCodeGenSourceFiles()) {
+            if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "generate-code-tests", 0);
+            t = System.currentTimeMillis();
+            try {
+                generatedTestSourcesDir = QuarkusBuildHelper.generateCodeTests(this, dependencies);
+                if (generatedTestSourcesDir != null && Files.isDirectory(generatedTestSourcesDir)) {
+                    addGeneratedSourceDirs(generatedTestSourcesDir, testExtraDirs);
+                }
+            } catch (Exception e) {
+                Throwable cause = e;
+                while (cause.getCause() != null && (cause.getMessage() == null
+                        || cause instanceof java.lang.reflect.InvocationTargetException)) {
+                    cause = cause.getCause();
+                }
+                System.err.println("[" + artifactId() + "] generate-code-tests failed: " + cause.getMessage());
+            }
+            recordPhase("generate-code-tests", t);
+        }
+
+        if (hasTestKotlinSources()) {
+            if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "test-kotlin", 0);
+            t = System.currentTimeMillis();
+            runtime.compileKotlin(testKotlinSourceDir(), testSourceDir(), testClassesDir(), testCp,
+                    kotlinCompilerPlugins(), kotlinPluginOptions(),
+                    testExtraDirs.toArray(new Path[0]));
+            testCp.add(0, testClassesDir().toString());
+            recordPhase("test-kotlin", t);
+        }
+
+        if (hasTestJavaSources() && !skipFormat) {
+            if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "test-format", 0);
+            t = System.currentTimeMillis();
+            CodeStyleHelper codeStyle = runtime.getCodeStyleHelper();
+            codeStyle.formatJavaFiles(testSourceDir());
+            codeStyle.sortImports(testSourceDir());
+            recordPhase("test-format", t);
+        }
+
+        if (hasTestJavaSources() || !testExtraDirs.isEmpty()) {
+            List<String> testApPaths = resolvedAnnotationProcessorPaths();
+            String testCompilePhase = testApPaths.isEmpty() ? "test-compile" : "test-compile+apt";
+            if (progress != null) progress.phaseChanged(threadIdx, artifactId(), testCompilePhase, 0);
+            t = System.currentTimeMillis();
+            runtime.compile(testSourceDir(), testClassesDir(), testCp,
+                    testApPaths, isApCacheable(), compilerArgs(),
+                    testExtraDirs.toArray(new Path[0]));
+            recordPhase(testCompilePhase, t);
         }
     }
 
