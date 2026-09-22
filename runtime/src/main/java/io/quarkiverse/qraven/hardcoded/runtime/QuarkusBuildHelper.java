@@ -237,7 +237,7 @@ public class QuarkusBuildHelper {
         for (ModuleBuild dep : reactorDeps) {
             if (!visited.add(dep.artifactId())) continue;
             if (!"jar".equals(dep.packaging())) continue;
-            if (!dep.didSucceed()) continue;
+            if (!dep.mainBuildSucceeded) continue;
             if (optionalDepIds.contains(dep.artifactId())) continue;
 
             ArtifactKey key = ArtifactKey.of(dep.groupId(), dep.artifactId(), "", "jar");

@@ -22,7 +22,7 @@ public abstract class ModuleBuild {
     protected final BuildRuntime runtime;
     private volatile CompletableFuture<Void> buildFuture;
     private final CompletableFuture<Void> mainBuildDone = new CompletableFuture<>();
-    private volatile boolean mainBuildSucceeded;
+    volatile boolean mainBuildSucceeded;
     private List<ModuleBuild> dependencies = List.of();
     private List<ModuleBuild> testDependencies = List.of();
     private ProgressDisplay progress;
