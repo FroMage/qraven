@@ -189,9 +189,6 @@ public abstract class ModuleBuild {
         if (buildFuture != null) {
             return buildFuture;
         }
-        for (ModuleBuild dep : testDependencies) {
-            dep.buildAsync(executor);
-        }
         CompletableFuture<?>[] depFutures = dependencies.stream()
                 .map(dep -> dep.buildAsync(executor))
                 .toArray(CompletableFuture[]::new);
