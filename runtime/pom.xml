@@ -63,6 +63,10 @@
             <artifactId>jandex</artifactId>
             <version>3.5.3</version>
         </dependency>
+        <!-- Jackson 3.x (tools.jackson) is needed because ExtensionDescriptorGenerator was copied
+             from the Quarkus 4 source tree which migrated to Jackson 3.x. The compile-time Quarkus
+             dep is pinned to 3.39.4 (Jackson 2.x), so these provide the Jackson 3.x classes.
+             Remove once the Quarkus compile-time dep moves to a version that includes Jackson 3.x. -->
         <dependency>
             <groupId>tools.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>

@@ -598,6 +598,11 @@ public class ExtensionDescriptorGenerator {
 
         completeCodestartArtifact(mapper, extObject);
 
+        // TODO: restore ExtensionMetadataValidator.validate(extObject) once we compile against
+        // a Quarkus version that uses Jackson 3.x (tools.jackson). The 3.39.4 compile-time dep
+        // uses Jackson 2.x, so its ExtensionMetadataValidator expects com.fasterxml ObjectNode
+        // while we produce tools.jackson ObjectNode.
+
         final DefaultPrettyPrinter prettyPrinter = new DefaultPrettyPrinter();
         prettyPrinter.indentArraysWith(DefaultIndenter.SYSTEM_LINEFEED_INSTANCE);
 
