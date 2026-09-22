@@ -6,6 +6,8 @@ import org.eclipse.aether.RepositorySystem;
 import org.eclipse.aether.artifact.Artifact;
 import org.eclipse.aether.artifact.DefaultArtifact;
 import org.eclipse.aether.collection.CollectRequest;
+import org.eclipse.aether.collection.DependencyCollectionContext;
+import org.eclipse.aether.collection.DependencySelector;
 import org.eclipse.aether.connector.basic.BasicRepositoryConnectorFactory;
 import org.eclipse.aether.graph.Dependency;
 import org.eclipse.aether.graph.Exclusion;
@@ -113,6 +115,10 @@ public class DependencyResolver {
 
     public void setReactorGAs(Set<String> reactorGAs) {
         this.reactorGAs = reactorGAs;
+        if (!reactorGAs.isEmpty()) {
+            DependencySelector existing = session.getDependencySelector();
+            session.setDependencySelector(new ReactorExclusionSelector(reactorGAs, existing));
+        }
     }
 
     public void setWarningConsumer(Consumer<String> consumer) {
@@ -410,5 +416,35 @@ public class DependencyResolver {
         }
 
         return dep;
+    }
+
+    private static class ReactorExclusionSelector implements DependencySelector {
+        private final Set<String> reactorGAs;
+        private final DependencySelector delegate;
+
+        ReactorExclusionSelector(Set<String> reactorGAs, DependencySelector delegate) {
+            this.reactorGAs = reactorGAs;
+            this.delegate = delegate;
+        }
+
+        @Override
+        public boolean selectDependency(Dependency dependency) {
+            String ga = dependency.getArtifact().getGroupId() + ":"
+                    + dependency.getArtifact().getArtifactId();
+            if (reactorGAs.contains(ga)) {
+                return false;
+            }
+            return delegate == null || delegate.selectDependency(dependency);
+        }
+
+        @Override
+        public DependencySelector deriveChildSelector(DependencyCollectionContext context) {
+            DependencySelector derivedDelegate = delegate != null
+                    ? delegate.deriveChildSelector(context) : null;
+            if (derivedDelegate == delegate) {
+                return this;
+            }
+            return new ReactorExclusionSelector(reactorGAs, derivedDelegate);
+        }
     }
 }
