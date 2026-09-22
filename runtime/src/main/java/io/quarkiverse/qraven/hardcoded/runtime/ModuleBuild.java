@@ -527,7 +527,9 @@ public abstract class ModuleBuild {
                 } else if ((hasTestJavaSources() || hasTestKotlinSources()
                         || hasTestProtobufSources() || hasGenerateCodeTestsGoal())
                         && !evaluateSkip("${maven.test.skip}")) {
-                    compileTests(fullClasspath, added, skipFormat);
+                    List<String> testCp = new ArrayList<>(fullClasspath);
+                    testCp.addAll(resolvePaths(testCompileClasspath()));
+                    compileTests(testCp, added, skipFormat);
                 }
 
                 if (hasQuarkusBuildPlugin() && !evaluateSkip(quarkusBuildSkipWhen())) {
