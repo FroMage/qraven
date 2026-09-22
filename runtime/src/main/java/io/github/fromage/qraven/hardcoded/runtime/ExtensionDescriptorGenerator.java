@@ -28,7 +28,6 @@ import io.quarkus.maven.capabilities.CapabilityConfig;
 import io.quarkus.maven.dependency.ArtifactCoords;
 import io.quarkus.maven.dependency.ArtifactKey;
 import io.quarkus.maven.dependency.GACTV;
-import io.quarkus.platform.tools.ExtensionMetadataValidator;
 import tools.jackson.core.json.JsonReadFeature;
 import tools.jackson.core.util.DefaultIndenter;
 import tools.jackson.core.util.DefaultPrettyPrinter;
@@ -598,12 +597,6 @@ public class ExtensionDescriptorGenerator {
         addExtensionDependencies(extObject);
 
         completeCodestartArtifact(mapper, extObject);
-
-        try {
-            ExtensionMetadataValidator.validate(extObject);
-        } catch (IOException e) {
-            throw new Exception(e.getMessage(), e.getCause());
-        }
 
         final DefaultPrettyPrinter prettyPrinter = new DefaultPrettyPrinter();
         prettyPrinter.indentArraysWith(DefaultIndenter.SYSTEM_LINEFEED_INSTANCE);
