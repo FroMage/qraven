@@ -194,7 +194,10 @@ public abstract class ModuleBuild {
             return buildFuture;
         }
         CompletableFuture<?>[] depFutures = dependencies.stream()
-                .map(dep -> dep.buildAsync(executor))
+                .map(dep -> {
+                    dep.buildAsync(executor);
+                    return dep.mainBuildDone;
+                })
                 .toArray(CompletableFuture[]::new);
         buildScheduledAt = System.currentTimeMillis();
         buildFuture = CompletableFuture.allOf(depFutures)
@@ -491,6 +494,11 @@ public abstract class ModuleBuild {
                 runtime.createJar(classesDir(), jarFile(), manifestEntries());
                 recordPhase("jar", t);
 
+                if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "install", 0);
+                t = System.currentTimeMillis();
+                runtime.install(jarFile(), pomFile(), groupId(), artifactId(), version(), packaging());
+                recordPhase("install", t);
+
                 mainBuildSucceeded = true;
                 mainBuildDone.complete(null);
 
@@ -603,11 +611,6 @@ public abstract class ModuleBuild {
                         recordPhase(testCompilePhase, t);
                     }
                 }
-
-                if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "install", 0);
-                t = System.currentTimeMillis();
-                runtime.install(jarFile(), pomFile(), groupId(), artifactId(), version(), packaging());
-                recordPhase("install", t);
 
                 if (hasQuarkusBuildPlugin() && !evaluateSkip(quarkusBuildSkipWhen())) {
                     if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "quarkus-build", 0);
