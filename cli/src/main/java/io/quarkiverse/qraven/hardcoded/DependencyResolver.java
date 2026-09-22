@@ -22,6 +22,8 @@ import org.eclipse.aether.spi.connector.RepositoryConnectorFactory;
 import org.eclipse.aether.spi.connector.transport.TransporterFactory;
 import org.eclipse.aether.transport.file.FileTransporterFactory;
 import org.eclipse.aether.transport.http.HttpTransporterFactory;
+import org.eclipse.aether.transfer.AbstractTransferListener;
+import org.eclipse.aether.transfer.TransferEvent;
 import org.eclipse.aether.util.artifact.JavaScopes;
 import org.eclipse.aether.util.filter.DependencyFilterUtils;
 
@@ -53,6 +55,11 @@ public class DependencyResolver {
     private final AtomicInteger testDepCacheHits = new AtomicInteger();
     private final AtomicInteger testDepCacheMisses = new AtomicInteger();
 
+    private final AtomicInteger transferInitiated = new AtomicInteger();
+    private final AtomicInteger transferSucceeded = new AtomicInteger();
+    private final AtomicInteger transferFailed = new AtomicInteger();
+    private final ConcurrentHashMap<String, String> transferDetails = new ConcurrentHashMap<>();
+
     public DependencyResolver() {
         this.localRepoPath = Path.of(System.getProperty("user.home"), ".m2", "repository");
 
@@ -65,6 +72,26 @@ public class DependencyResolver {
         this.session = MavenRepositorySystemUtils.newSession();
         LocalRepository localRepo = new LocalRepository(localRepoPath.toFile());
         session.setLocalRepositoryManager(repoSystem.newLocalRepositoryManager(session, localRepo));
+
+        session.setTransferListener(new AbstractTransferListener() {
+            @Override
+            public void transferInitiated(TransferEvent event) {
+                transferInitiated.incrementAndGet();
+                String resource = event.getResource().getRepositoryUrl()
+                        + event.getResource().getResourceName();
+                transferDetails.put(resource, event.getRequestType().name());
+            }
+
+            @Override
+            public void transferSucceeded(TransferEvent event) {
+                transferSucceeded.incrementAndGet();
+            }
+
+            @Override
+            public void transferFailed(TransferEvent event) {
+                transferFailed.incrementAndGet();
+            }
+        });
 
         for (String key : System.getProperties().stringPropertyNames()) {
             session.setSystemProperty(key, System.getProperty(key));
@@ -109,7 +136,27 @@ public class DependencyResolver {
                 + "\nTest cache: " + testDepCacheHits.get() + " hits, "
                 + testDepCacheMisses.get() + " misses, "
                 + testDepCache.size() + " distinct keys"
-                + "\nManaged deps cache: " + managedDepsAetherCache.size() + " sets cached";
+                + "\nManaged deps cache: " + managedDepsAetherCache.size() + " sets cached"
+                + "\nRemote transfers: " + transferInitiated.get() + " initiated, "
+                + transferSucceeded.get() + " succeeded, "
+                + transferFailed.get() + " failed";
+    }
+
+    public String transferStats() {
+        StringBuilder sb = new StringBuilder();
+        sb.append("Remote transfers: ").append(transferInitiated.get()).append(" initiated, ")
+                .append(transferSucceeded.get()).append(" succeeded, ")
+                .append(transferFailed.get()).append(" failed\n");
+        if (!transferDetails.isEmpty()) {
+            sb.append("Transfer details (").append(transferDetails.size()).append(" unique resources):\n");
+            transferDetails.forEach((resource, type) ->
+                    sb.append("  ").append(type).append(" ").append(resource).append("\n"));
+        }
+        return sb.toString();
+    }
+
+    public int getTransferCount() {
+        return transferInitiated.get();
     }
 
     private int computeManagedFingerprint(List<org.apache.maven.model.Dependency> managedDependencies) {

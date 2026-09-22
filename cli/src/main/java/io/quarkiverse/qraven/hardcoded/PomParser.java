@@ -192,10 +192,11 @@ public class PomParser {
             Path logDir = projectRoot.resolve("target/qraven");
             Files.createDirectories(logDir);
             StringBuilder logContent = new StringBuilder();
-            logContent.append(resolver.resolutionCacheStats()).append("\n");
+            logContent.append(resolver.resolutionCacheStats()).append("\n\n");
             for (String line : resolveTimings) {
                 logContent.append(line).append("\n");
             }
+            logContent.append("\n").append(resolver.transferStats());
             Files.writeString(logDir.resolve("resolve.log"),
                     logContent.toString(),
                     java.nio.charset.StandardCharsets.UTF_8);
@@ -1679,6 +1680,7 @@ public class PomParser {
         if (model.getDependencies() == null || model.getDependencies().isEmpty()) {
             return;
         }
+        int transfersBefore = resolver.getTransferCount();
         long resStart = System.currentTimeMillis();
 
         Map<String, String> managedVersions = new LinkedHashMap<>();
@@ -1821,13 +1823,15 @@ public class PomParser {
         }
 
         long total = System.currentTimeMillis() - resStart;
+        int transfersThisModule = resolver.getTransferCount() - transfersBefore;
         if (total > 500) {
             resolveTimings.add(info.getArtifactId()
                     + " total=" + total + "ms prep=" + prepElapsed
                     + "ms compile=" + compileElapsed + "ms test=" + testElapsed + "ms"
                     + " extDeps=" + externalDeps.size()
                     + " testOnlyDeps=" + testOnlyDeps.size()
-                    + " managed=" + managedDeps.size());
+                    + " managed=" + managedDeps.size()
+                    + " transfers=" + transfersThisModule);
         }
     }
 
