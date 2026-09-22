@@ -169,3 +169,159 @@ Optimization Attempts (native mode)
 Key insight: the ct.sym per-compilation overhead (~25ms/module × 15 modules = ~375ms)
 is ~15% of the native build time (~2.5s at base clock). The simplest optimization
 (page cache warmup, 15ms cost) gives the best cost/benefit ratio.
+
+
+Quarkus Build Performance (1438 modules)
+=========================================
+
+The sections above cover the small-project (quarkus-renarde) benchmarks. The
+sections below cover optimizations for the Quarkus monorepo itself (1438 modules,
+~2600 managed dependencies, 200+ extensions).
+
+Qraven has two phases: generate (POM parsing + dependency resolution → build.jar)
+and build (compilation + packaging). Both phases have been heavily optimized.
+
+
+Generate Phase Optimizations
+-----------------------------
+
+The generate phase parses all pom.xml files, resolves dependencies via Maven
+Resolver (Aether), scans extension JARs, and emits one Java source file per
+module. It runs once when POMs change.
+
+1. Dependency resolution caching
+   Problem: Many modules share the same external dependencies. Without caching,
+   Aether re-resolves the same artifact graph for every module.
+   Fix: Cross-module resolution cache keyed on (groupId:artifactId:version,
+   managedDeps hash). Compile and test caches tracked separately.
+   Result: ~80 compile cache hits / 463 misses, ~208 test cache hits / 435 misses
+   on the Quarkus build. Roughly 30% of resolutions served from cache.
+
+2. Test-only dependency resolution
+   Problem: Test classpath = compile classpath + test-only deps. Resolving the
+   full test classpath redundantly re-resolves all compile deps.
+   Fix: Compute test-only deps (deps with test scope not already in compile
+   classpath), resolve only those, then merge with the cached compile result.
+   Result: Most modules have 0-10 test-only deps vs 100-200 compile deps.
+   Reduces Aether calls significantly.
+
+3. Batch test dependency resolution
+   Problem: Even with test-only filtering, each test dep was resolved in a
+   separate Aether call.
+   Fix: Batch all test-only deps for a module into a single CollectRequest
+   with multiple dependencies.
+   Result: One Aether call per module instead of N (where N = test-only dep count).
+
+4. Managed dependencies conversion cache
+   Problem: Converting Maven Model Dependency objects to Aether Dependency
+   objects for 2600+ managed deps is repeated for every module.
+   Fix: Cache the converted managed dependency lists. 18 distinct sets cover
+   all 1438 modules (most modules inherit the same parent/BOM chain).
+   Result: Managed deps conversion done 18 times instead of 1438 times.
+
+5. Reactor module filtering from managed deps
+   Problem: The Quarkus BOM contains all 1438 reactor modules as managed deps.
+   Passing them to Aether is wasteful since reactor modules are tracked
+   separately.
+   Fix: Filter reactor GAs from managed dependency lists before passing to
+   Aether. Reduces managed deps from ~2600 to a few hundred external artifacts.
+   Result: Smaller dependency graphs, faster collection.
+
+6. ReactorWorkspaceReader (eliminating remote snapshot lookups)
+   Problem: Reactor modules use version 999-SNAPSHOT. When encountered as
+   transitive dependencies, Aether checks all remote repositories for
+   snapshot metadata (maven-metadata.xml). With 3 remote repos and hundreds
+   of reactor modules appearing transitively, this caused 1860 remote HTTP
+   requests — all failing (reactor modules don't exist in remote repos).
+   This alone added ~167s to the generate phase.
+   Fix: Register a WorkspaceReader on the Aether session that recognizes
+   reactor module GAs and resolves them directly from the local repository.
+   Aether's WorkspaceReader is consulted before any remote repository — the
+   same mechanism Maven's own ReactorReader uses.
+   Result: 1860 remote transfers → 4 (only non-reactor external artifacts
+   checked on Confluent/Gradle repos). Generate phase time dominated by
+   POM parsing and local resolution, not network I/O.
+
+   Evolution of the fix:
+   - First attempt: DependencySelector that excluded reactor GAs from transitive
+     deps. Broke annotation processor resolution (CapabilitiesConfig not found).
+   - Second attempt: Separate apSession without the selector for AP resolution.
+     Fixed AP but 36 remote lookups remained for AP transitive reactor deps.
+   - Third attempt: Added WorkspaceReader to apSession. Down to 4 transfers,
+     but the selector still excluded transitive reactor deps needed by test-jars
+     (9 test compilation failures).
+   - Final fix: WorkspaceReader on main session, selector removed entirely.
+     Zero correctness issues, 4 transfers. The workspace reader is strictly
+     better — it prevents remote lookups without altering the dependency graph.
+
+7. Pre-computed extension maps
+   Problem: Scanning all runtime dependency JARs for
+   META-INF/quarkus-extension.properties at build time is slow.
+   Fix: Move extension JAR scanning, codegen tool version scanning, and AP
+   cacheability checks to generation time. Store results in the generated
+   Java source files as hardcoded constants.
+   Result: Build time has zero JAR scanning overhead.
+
+8. Parallel POM parsing and resolution
+   Problem: Sequential POM parsing and dependency resolution for 1438 modules.
+   Fix: Parallelize module scanning and dependency resolution across threads.
+   Result: Generation uses all available CPUs for POM parsing.
+   Note: An earlier attempt to merge POM parsing into the resolve phase caused
+   a 4x slowdown and was reverted — the phases must remain sequential because
+   resolution depends on the full reactor module set being known.
+
+
+Build Phase Optimizations
+--------------------------
+
+The build phase compiles Java/Kotlin sources, copies resources, generates
+indexes, creates JARs, and installs artifacts. It runs on every build.
+
+1. AP classloader caching
+   Problem: Each module compilation creates a new classloader for annotation
+   processors. The quarkus-extension-processor is used by ~200 extension modules
+   and loading it fresh each time is expensive.
+   Fix: Cache the AP classloader for quarkus-extension-processor (which is
+   side-effect-free and safe to reuse). Use fresh classloaders for other APs
+   that may have state.
+   Result: AP classloader created once, reused ~200 times. Non-cacheable AP
+   modules use a ForwardingJavaFileManager to isolate the AP classpath.
+
+2. Kotlin JIT warmup
+   Problem: The Kotlin compiler (K2) is slow on first invocation due to JIT
+   compilation. With ~60 Kotlin modules, the first few compilations are
+   disproportionately slow.
+   Fix: Run a throwaway Kotlin compilation of a trivial file during startup
+   (before any module builds). This warms up the JIT compiler for the K2
+   pipeline. Based on flamegraph analysis, the warmup targets the hot paths
+   in the Kotlin frontend and backend.
+   Result: First real Kotlin module compiles at near-steady-state speed.
+   Warmup is skipped when no Kotlin modules are in the build.
+
+3. Critical-path module scheduling
+   Problem: With parallel builds, thread scheduling is FIFO by default. Modules
+   on the critical path (most dependents) may start late, delaying the overall
+   build.
+   Fix: Prioritize modules with the most transitive dependents when scheduling.
+   Result: Critical-path modules (quarkus-core, arc, etc.) start early,
+   reducing idle time in later build stages.
+
+4. In-process javac and Kotlin compilation
+   Problem: Maven forks external javac and kotlinc processes.
+   Fix: Use javax.tools.JavaCompiler API (in-process) and K2 JVM compiler
+   API (in-process). Per-thread StandardJavaFileManager instances (not
+   thread-safe). File manager caches JAR indexes across compilations within
+   the same thread.
+   Result: Zero process fork overhead. JAR index (ZIP central directory)
+   cached across modules on the same thread.
+
+5. Test source compilation
+   Problem: Test sources need their own classpath (compile classpath + test
+   deps + test-jar deps). Resolving and compiling test sources must not block
+   the main build pipeline.
+   Fix: Test compilation runs as a separate async stage after main compilation
+   and JAR installation complete. Test dependencies wait on mainBuildDone
+   (not buildFuture) to avoid deadlocks. Test reactor deps are tracked
+   separately and resolved against the local repository.
+   Result: Test compilation overlaps with other modules' main compilation.
+   No deadlocks, no thread pool exhaustion.
