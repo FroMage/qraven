@@ -24,6 +24,7 @@ deploy:
 
 release:
   github:
+    tagName: "{{projectVersion}}"
     overwrite: true
     changelog:
       formatted: ALWAYS

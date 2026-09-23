@@ -43,6 +43,22 @@ jobs:
           JRELEASER_MAVENCENTRAL_SONATYPE_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
           JRELEASER_MAVENCENTRAL_SONATYPE_TOKEN: ${{ secrets.MAVEN_CENTRAL_TOKEN }}
 
+      - name: Bump to next SNAPSHOT version
+        run: |
+          IFS='.' read -r major minor patch <<< "${{ github.event.inputs.version }}"
+          if [ -n "$patch" ]; then
+            next="${major}.${minor}.$((patch + 1))-SNAPSHOT"
+          else
+            next="${major}.$((minor + 1))-SNAPSHOT"
+          fi
+          git checkout -- .
+          mvn versions:set -DnewVersion="$next" -DgenerateBackupPoms=false
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add pom.xml cli/pom.xml runtime/pom.xml
+          git commit -m "Bump version to $next"
+          git push
+
       - name: Upload JReleaser output
         if: always()
         uses: actions/upload-artifact@v4
