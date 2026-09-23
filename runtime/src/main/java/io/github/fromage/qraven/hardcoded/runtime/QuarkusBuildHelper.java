@@ -1,9 +1,13 @@
 package io.github.fromage.qraven.hardcoded.runtime;
 
 import java.io.StringReader;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.net.URL;
+import java.net.URLClassLoader;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -371,5 +375,70 @@ public class QuarkusBuildHelper {
         String artifactId = beforeVersion.substring(artifactSlash + 1);
         String groupId = beforeVersion.substring(0, artifactSlash).replace('/', '.');
         return new GAV(groupId, artifactId, version);
+    }
+
+    // --- Reactor-aware classloader isolation ---
+
+    static Path isolatedGenerateCode(ModuleBuild module, List<ModuleBuild> reactorDeps) throws Exception {
+        return (Path) callIsolated("generateCode", module, reactorDeps);
+    }
+
+    static Path isolatedGenerateCodeTests(ModuleBuild module, List<ModuleBuild> reactorDeps) throws Exception {
+        return (Path) callIsolated("generateCodeTests", module, reactorDeps);
+    }
+
+    static void isolatedRun(ModuleBuild module, List<ModuleBuild> reactorDeps) throws Exception {
+        callIsolated("run", module, reactorDeps);
+    }
+
+    private static Object callIsolated(String methodName, ModuleBuild module, List<ModuleBuild> reactorDeps)
+            throws Exception {
+        List<URL> urls = new ArrayList<>();
+        URL qravenJar = QuarkusBuildHelper.class.getProtectionDomain().getCodeSource().getLocation();
+        urls.add(qravenJar);
+        for (String jar : ModuleBuild.resolvePaths(module.deploymentClasspath())) {
+            urls.add(Path.of(jar).toUri().toURL());
+        }
+        for (String jar : module.resolvedClasspath()) {
+            urls.add(Path.of(jar).toUri().toURL());
+        }
+
+        try (ReactorAwareClassLoader reactorCl = new ReactorAwareClassLoader(
+                urls.toArray(new URL[0]), QuarkusBuildHelper.class.getClassLoader())) {
+            Class<?> helper = reactorCl.loadClass(QuarkusBuildHelper.class.getName());
+            Method m = helper.getMethod(methodName, ModuleBuild.class, List.class);
+            try {
+                return m.invoke(null, module, reactorDeps);
+            } catch (InvocationTargetException e) {
+                Throwable cause = e.getCause();
+                if (cause instanceof Exception ex) throw ex;
+                if (cause instanceof Error err) throw err;
+                throw e;
+            }
+        }
+    }
+
+    static class ReactorAwareClassLoader extends URLClassLoader {
+        ReactorAwareClassLoader(URL[] urls, ClassLoader parent) {
+            super(urls, parent);
+        }
+
+        @Override
+        protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
+            if (name.startsWith("io.quarkus.") || name.equals(QuarkusBuildHelper.class.getName())) {
+                synchronized (getClassLoadingLock(name)) {
+                    Class<?> c = findLoadedClass(name);
+                    if (c != null) return c;
+                    try {
+                        c = findClass(name);
+                        if (resolve) resolveClass(c);
+                        return c;
+                    } catch (ClassNotFoundException e) {
+                        // fall through to parent
+                    }
+                }
+            }
+            return super.loadClass(name, resolve);
+        }
     }
 }

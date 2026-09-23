@@ -409,7 +409,7 @@ public abstract class ModuleBuild {
                     if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "generate-code", 0);
                     t = System.currentTimeMillis();
                     Files.createDirectories(classesDir());
-                    generatedSourcesDir = QuarkusBuildHelper.generateCode(this, dependencies);
+                    generatedSourcesDir = QuarkusBuildHelper.isolatedGenerateCode(this, dependencies);
                     long gcElapsed = System.currentTimeMillis() - t;
                     recordPhase("generate-code", t);
                     System.err.println("[timing] [" + artifactId() + "] generate-code: " + gcElapsed + "ms");
@@ -576,7 +576,7 @@ public abstract class ModuleBuild {
                 if (hasQuarkusBuildPlugin() && !evaluateSkip(quarkusBuildSkipWhen())) {
                     if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "quarkus-build", 0);
                     t = System.currentTimeMillis();
-                    QuarkusBuildHelper.run(this, dependencies);
+                    QuarkusBuildHelper.isolatedRun(this, dependencies);
                     recordPhase("quarkus-build", t);
                 }
             }
@@ -604,7 +604,8 @@ public abstract class ModuleBuild {
             }
             Throwable root = e;
             while (root.getCause() != null) root = root.getCause();
-            if (root instanceof NoClassDefFoundError || root instanceof ClassNotFoundException) {
+            if (root instanceof NoClassDefFoundError || root instanceof ClassNotFoundException
+                    || root instanceof NoSuchMethodError) {
                 java.io.StringWriter sw = new java.io.StringWriter();
                 e.printStackTrace(new java.io.PrintWriter(sw));
                 msg.append("\n  Full stack trace:\n").append(sw);
@@ -732,7 +733,7 @@ public abstract class ModuleBuild {
                 && hasTestCodeGenSourceFiles()) {
             if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "generate-code-tests", 0);
             t = System.currentTimeMillis();
-            generatedTestSourcesDir = QuarkusBuildHelper.generateCodeTests(this, dependencies);
+            generatedTestSourcesDir = QuarkusBuildHelper.isolatedGenerateCodeTests(this, dependencies);
             if (generatedTestSourcesDir != null && Files.isDirectory(generatedTestSourcesDir)) {
                 addGeneratedSourceDirs(generatedTestSourcesDir, testExtraDirs);
             }
