@@ -55,8 +55,7 @@ jobs:
           mvn versions:set -DnewVersion="$next" -DgenerateBackupPoms=false
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add pom.xml cli/pom.xml runtime/pom.xml
-          git commit -m "Bump version to $next"
+          git commit -a -m "Bump version to $next"
           git push
 
       - name: Upload JReleaser output
