@@ -409,17 +409,7 @@ public abstract class ModuleBuild {
                     if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "generate-code", 0);
                     t = System.currentTimeMillis();
                     Files.createDirectories(classesDir());
-                    try {
-                        generatedSourcesDir = QuarkusBuildHelper.generateCode(this, dependencies);
-                    } catch (Exception e) {
-                        Throwable cause = e;
-                        while (cause.getCause() != null && (cause.getMessage() == null
-                                || cause instanceof java.lang.reflect.InvocationTargetException)) {
-                            cause = cause.getCause();
-                        }
-                        System.err.println("[" + artifactId() + "] generate-code failed: " + cause.getMessage());
-                        cause.printStackTrace(System.err);
-                    }
+                    generatedSourcesDir = QuarkusBuildHelper.generateCode(this, dependencies);
                     long gcElapsed = System.currentTimeMillis() - t;
                     recordPhase("generate-code", t);
                     System.err.println("[timing] [" + artifactId() + "] generate-code: " + gcElapsed + "ms");
@@ -591,17 +581,18 @@ public abstract class ModuleBuild {
                 }
             }
 
-            if (testDependencies.isEmpty()) {
+            if (testDependencies.isEmpty() && testJarDependencies.isEmpty()) {
                 buildSucceeded = true;
             }
             long totalElapsed = System.currentTimeMillis() - start;
             if (totalElapsed > 500) {
                 System.err.println("[timing] [" + artifactId() + "] doBuild total: " + totalElapsed + "ms");
             }
-            if (testDependencies.isEmpty() && progress != null) {
+            if (testDependencies.isEmpty() && testJarDependencies.isEmpty() && progress != null) {
                 progress.moduleCompleted(threadIdx, true);
             }
         } catch (Throwable e) {
+            mainBuildSucceeded = false;
             mainBuildDone.complete(null);
             long elapsed = System.currentTimeMillis() - start;
             StringBuilder msg = new StringBuilder();
@@ -712,7 +703,7 @@ public abstract class ModuleBuild {
         }
     }
 
-    private void compileTests(List<String> testCp, Set<String> added, boolean skipFormat) {
+    private void compileTests(List<String> testCp, Set<String> added, boolean skipFormat) throws Exception {
         int threadIdx = getThreadIndex();
         long t;
         testCp.add(classesDir().toString());
@@ -741,18 +732,9 @@ public abstract class ModuleBuild {
                 && hasTestCodeGenSourceFiles()) {
             if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "generate-code-tests", 0);
             t = System.currentTimeMillis();
-            try {
-                generatedTestSourcesDir = QuarkusBuildHelper.generateCodeTests(this, dependencies);
-                if (generatedTestSourcesDir != null && Files.isDirectory(generatedTestSourcesDir)) {
-                    addGeneratedSourceDirs(generatedTestSourcesDir, testExtraDirs);
-                }
-            } catch (Exception e) {
-                Throwable cause = e;
-                while (cause.getCause() != null && (cause.getMessage() == null
-                        || cause instanceof java.lang.reflect.InvocationTargetException)) {
-                    cause = cause.getCause();
-                }
-                System.err.println("[" + artifactId() + "] generate-code-tests failed: " + cause.getMessage());
+            generatedTestSourcesDir = QuarkusBuildHelper.generateCodeTests(this, dependencies);
+            if (generatedTestSourcesDir != null && Files.isDirectory(generatedTestSourcesDir)) {
+                addGeneratedSourceDirs(generatedTestSourcesDir, testExtraDirs);
             }
             recordPhase("generate-code-tests", t);
         }
