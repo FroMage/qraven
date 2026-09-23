@@ -9,6 +9,7 @@ import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -66,7 +67,7 @@ public class BuildOrchestrator {
                     allDepIds.add(optId);
                 }
             }
-            if (m.hasExtensionPlugin()) {
+            if (m.hasExtensionPlugin() || m.hasGenerateCodeGoal() || m.hasGenerateCodeTestsGoal()) {
                 for (String path : m.deploymentClasspath()) {
                     String reactorId = installPathToArtifactId.get(path);
                     if (reactorId != null && !allDepIds.contains(reactorId)) {
@@ -93,6 +94,12 @@ public class BuildOrchestrator {
                     .filter(d -> !allDepIds.contains(d.artifactId()))
                     .toList();
             m.setTestDependencies(testDeps);
+
+            List<ModuleBuild> testJarDeps = m.testJarModuleDependencyIds().stream()
+                    .map(byId::get)
+                    .filter(Objects::nonNull)
+                    .toList();
+            m.setTestJarDependencies(testJarDeps);
         }
 
         if (projectsFilter != null) {
@@ -135,6 +142,11 @@ public class BuildOrchestrator {
         }
         modules.sort(byPriority);
 
+        Set<String> reactorInstallPaths = new HashSet<>(installPathToArtifactId.size());
+        for (String path : installPathToArtifactId.keySet()) {
+            reactorInstallPaths.add(ModuleBuild.resolvePath(path));
+        }
+
         Set<String> allJars = new LinkedHashSet<>();
         for (ModuleBuild m : modules) {
             allJars.addAll(m.resolvedClasspath());
@@ -142,6 +154,7 @@ public class BuildOrchestrator {
         }
 
         List<String> missing = allJars.stream()
+                .filter(jar -> !reactorInstallPaths.contains(jar))
                 .filter(jar -> !java.nio.file.Files.exists(java.nio.file.Path.of(jar)))
                 .toList();
         if (!missing.isEmpty()) {

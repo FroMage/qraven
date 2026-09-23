@@ -283,11 +283,12 @@ public class ExtensionDescriptorHelper {
 
             Path deployJar = m2.resolve(dg.replace('.', '/'))
                     .resolve(da).resolve(dv).resolve(da + "-" + dv + ".jar");
-            if (Files.exists(deployJar)) {
-                deploymentChildren.add(new ExtensionDescriptorGenerator.DepNode(
-                        dg, da, "", "jar", dv, deployJar, List.of()));
-                deploymentKeys.add(dg + ":" + da);
-            }
+            // Add the node even if the jar doesn't exist yet — for reactor modules the jar
+            // will be built later, and the validation only checks the dependency graph structure.
+            deploymentChildren.add(new ExtensionDescriptorGenerator.DepNode(
+                    dg, da, "", "jar", dv,
+                    Files.exists(deployJar) ? deployJar : null, List.of()));
+            deploymentKeys.add(dg + ":" + da);
         }
     }
 

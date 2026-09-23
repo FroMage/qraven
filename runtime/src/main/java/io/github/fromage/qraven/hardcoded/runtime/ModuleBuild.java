@@ -17,6 +17,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public abstract class ModuleBuild {
 
+    public record ShadeExecution(String id, boolean attached, String classifier,
+            List<String> includeArtifacts, List<ShadeFilter> filters, String mainClass) {}
+    public record ShadeFilter(String artifact, List<String> excludes) {}
+
     private static final String HOME = System.getProperty("user.home");
 
     protected final BuildRuntime runtime;
@@ -25,6 +29,7 @@ public abstract class ModuleBuild {
     volatile boolean mainBuildSucceeded;
     private List<ModuleBuild> dependencies = List.of();
     private List<ModuleBuild> testDependencies = List.of();
+    private List<ModuleBuild> testJarDependencies = List.of();
     private ProgressDisplay progress;
     private BuildStats stats;
     private ConcurrentHashMap<Long, Integer> threadIndices;
@@ -92,6 +97,7 @@ public abstract class ModuleBuild {
     public boolean hasGenerateCodeTestsGoal() { return false; }
     public List<String> testCompileClasspath() { return List.of(); }
     public List<String> testModuleDependencyIds() { return List.of(); }
+    public List<String> testJarModuleDependencyIds() { return List.of(); }
     public boolean hasAntlrSources() { return false; }
     public boolean antlrVisitor() { return false; }
     public List<String> kotlinCompilerPlugins() { return List.of(); }
@@ -138,6 +144,7 @@ public abstract class ModuleBuild {
     public abstract Map<String, String> allReactorExtensionDeployments();
     public abstract String pluginName();
     public abstract String pluginDescription();
+    public List<ShadeExecution> shadeExecutions() { return List.of(); }
 
     public void setDependencies(List<ModuleBuild> dependencies) {
         this.dependencies = dependencies;
@@ -153,6 +160,14 @@ public abstract class ModuleBuild {
 
     public List<ModuleBuild> getTestDependencies() {
         return testDependencies;
+    }
+
+    public void setTestJarDependencies(List<ModuleBuild> testJarDependencies) {
+        this.testJarDependencies = testJarDependencies;
+    }
+
+    public List<ModuleBuild> getTestJarDependencies() {
+        return testJarDependencies;
     }
 
     public void setProgress(ProgressDisplay progress, BuildStats stats,
@@ -196,6 +211,11 @@ public abstract class ModuleBuild {
         if (buildFuture != null) {
             return buildFuture;
         }
+        // Set buildFuture BEFORE recursing to prevent StackOverflow from dependency cycles
+        // (Java synchronized is re-entrant, so without this, a cycle re-enters with buildFuture still null)
+        CompletableFuture<Void> result = new CompletableFuture<>();
+        buildFuture = result;
+
         CompletableFuture<?>[] depFutures = dependencies.stream()
                 .map(dep -> {
                     dep.buildAsync(executor);
@@ -205,19 +225,30 @@ public abstract class ModuleBuild {
         buildScheduledAt = System.currentTimeMillis();
         CompletableFuture<Void> mainBuild = CompletableFuture.allOf(depFutures)
                 .handleAsync((v, ex) -> { doBuild(); return null; }, executor);
-        if (!testDependencies.isEmpty()) {
-            CompletableFuture<?>[] testDepFutures = testDependencies.stream()
-                    .map(td -> td.mainBuildDone)
-                    .toArray(CompletableFuture[]::new);
-            buildFuture = CompletableFuture.allOf(mainBuild, CompletableFuture.allOf(testDepFutures))
-                    .handleAsync((v, ex) -> { doTestCompilation(); return null; }, executor);
+        if (!testDependencies.isEmpty() || !testJarDependencies.isEmpty()) {
+            List<CompletableFuture<?>> testWaits = new ArrayList<>();
+            testWaits.add(mainBuild);
             for (ModuleBuild td : testDependencies) {
+                testWaits.add(td.mainBuildDone);
                 td.buildAsync(executor);
             }
+            for (ModuleBuild tjd : testJarDependencies) {
+                CompletableFuture<Void> tjdFuture = tjd.buildAsync(executor);
+                testWaits.add(tjdFuture);
+            }
+            CompletableFuture.allOf(testWaits.toArray(CompletableFuture[]::new))
+                    .handleAsync((v, ex) -> { doTestCompilation(); return null; }, executor)
+                    .whenComplete((v, ex) -> {
+                        if (ex != null) result.completeExceptionally(ex);
+                        else result.complete(null);
+                    });
         } else {
-            buildFuture = mainBuild;
+            mainBuild.whenComplete((v, ex) -> {
+                if (ex != null) result.completeExceptionally(ex);
+                else result.complete(null);
+            });
         }
-        return buildFuture;
+        return result;
     }
 
     private int getThreadIndex() {
@@ -512,15 +543,35 @@ public abstract class ModuleBuild {
                 runtime.createJar(classesDir(), jarFile(), manifestEntries());
                 recordPhase("jar", t);
 
+                List<ShadeExecution> shadeExecs = shadeExecutions();
+                if (!shadeExecs.isEmpty()) {
+                    if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "shade", 0);
+                    t = System.currentTimeMillis();
+                    for (ShadeExecution shade : shadeExecs) {
+                        executeShade(shade, fullClasspath);
+                    }
+                    recordPhase("shade", t);
+                }
+
                 if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "install", 0);
                 t = System.currentTimeMillis();
                 runtime.install(jarFile(), pomFile(), groupId(), artifactId(), version(), packaging());
+                for (ShadeExecution shade : shadeExecs) {
+                    if (shade.attached() && shade.classifier() != null) {
+                        Path classifiedJar = targetDir().resolve(
+                                artifactId() + "-" + version() + "-" + shade.classifier() + ".jar");
+                        if (Files.exists(classifiedJar)) {
+                            runtime.installClassified(classifiedJar, groupId(), artifactId(),
+                                    version(), shade.classifier());
+                        }
+                    }
+                }
                 recordPhase("install", t);
 
                 mainBuildSucceeded = true;
                 mainBuildDone.complete(null);
 
-                if (!testDependencies.isEmpty()) {
+                if (!testDependencies.isEmpty() || !testJarDependencies.isEmpty()) {
                     mainBuildClasspath = fullClasspath;
                     mainBuildAdded = added;
                     mainBuildSkipFormat = skipFormat;
@@ -588,6 +639,15 @@ public abstract class ModuleBuild {
                 return;
             }
         }
+        for (ModuleBuild testJarDep : testJarDependencies) {
+            if (!testJarDep.buildSucceeded) {
+                failureMessage = "[" + artifactId() + "] FAILED: test-jar dependency " + testJarDep.artifactId() + " failed";
+                if (progress != null) {
+                    progress.moduleCompleted(getThreadIndex(), false);
+                }
+                return;
+            }
+        }
         try {
             if ((hasTestJavaSources() || hasTestKotlinSources()
                     || hasTestProtobufSources() || hasGenerateCodeTestsGoal())
@@ -618,6 +678,15 @@ public abstract class ModuleBuild {
                             }
                         }
                         addReactorJars(testDep, testCp, testVisited);
+                    }
+                }
+                for (ModuleBuild testJarDep : testJarDependencies) {
+                    Path testClassesDir = testJarDep.testClassesDir();
+                    if (Files.exists(testClassesDir)) {
+                        String tcd = testClassesDir.toString();
+                        if (!testCp.contains(tcd)) {
+                            testCp.add(tcd);
+                        }
                     }
                 }
                 compileTests(testCp, added, mainBuildSkipFormat);
@@ -1060,5 +1129,116 @@ public abstract class ModuleBuild {
             return value != null && !"false".equalsIgnoreCase(value);
         }
         return "true".equalsIgnoreCase(expression);
+    }
+
+    private void executeShade(ShadeExecution shade, List<String> fullClasspath) throws IOException {
+        Path baseJar = jarFile();
+        Path outputJar;
+        if (shade.attached() && shade.classifier() != null) {
+            outputJar = targetDir().resolve(
+                    artifactId() + "-" + version() + "-" + shade.classifier() + ".jar");
+        } else {
+            outputJar = baseJar;
+        }
+
+        List<Path> jarsToMerge = new ArrayList<>();
+        for (String cp : fullClasspath) {
+            Path jar = Path.of(cp);
+            if (!Files.exists(jar) || Files.isDirectory(jar)) continue;
+            if (shade.includeArtifacts().isEmpty()) {
+                jarsToMerge.add(jar);
+            } else {
+                String ga = extractGA(cp);
+                if (ga != null && shade.includeArtifacts().contains(ga)) {
+                    jarsToMerge.add(jar);
+                }
+            }
+        }
+
+        Map<String, List<String>> filterMap = new HashMap<>();
+        for (ShadeFilter filter : shade.filters()) {
+            filterMap.put(filter.artifact(), filter.excludes());
+        }
+
+        java.util.jar.Manifest manifest = new java.util.jar.Manifest();
+        manifest.getMainAttributes().put(java.util.jar.Attributes.Name.MANIFEST_VERSION, "1.0");
+        if (shade.mainClass() != null) {
+            manifest.getMainAttributes().put(java.util.jar.Attributes.Name.MAIN_CLASS, shade.mainClass());
+        }
+
+        Path tmpJar = outputJar.resolveSibling(outputJar.getFileName() + ".shade.tmp");
+        Set<String> written = new HashSet<>();
+        written.add("META-INF/MANIFEST.MF");
+
+        try (var out = new java.util.jar.JarOutputStream(Files.newOutputStream(tmpJar), manifest)) {
+            copyShadeEntries(baseJar, out, written, null);
+            for (Path jar : jarsToMerge) {
+                String ga = extractGA(jar.toString());
+                List<String> excludes = shadeExcludes(filterMap, ga);
+                copyShadeEntries(jar, out, written, excludes);
+            }
+        }
+
+        Files.move(tmpJar, outputJar, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+    }
+
+    private static void copyShadeEntries(Path jarPath, java.util.jar.JarOutputStream out,
+            Set<String> written, List<String> excludes) throws IOException {
+        try (var in = new java.util.jar.JarInputStream(Files.newInputStream(jarPath))) {
+            java.util.jar.JarEntry entry;
+            while ((entry = in.getNextJarEntry()) != null) {
+                String name = entry.getName();
+                if (name.equals("META-INF/MANIFEST.MF")) continue;
+                if (!written.add(name)) continue;
+                if (excludes != null && matchesShadeExclude(name, excludes)) continue;
+                out.putNextEntry(new java.util.jar.JarEntry(name));
+                in.transferTo(out);
+                out.closeEntry();
+            }
+        }
+    }
+
+    private static List<String> shadeExcludes(Map<String, List<String>> filterMap, String ga) {
+        List<String> excludes = new ArrayList<>();
+        if (ga != null) {
+            List<String> specific = filterMap.get(ga);
+            if (specific != null) excludes.addAll(specific);
+        }
+        List<String> wildcard = filterMap.get("*:*");
+        if (wildcard != null) excludes.addAll(wildcard);
+        return excludes.isEmpty() ? null : excludes;
+    }
+
+    private static boolean matchesShadeExclude(String name, List<String> excludes) {
+        for (String pattern : excludes) {
+            if (pattern.endsWith("/**")) {
+                String prefix = pattern.substring(0, pattern.length() - 3);
+                if (name.startsWith(prefix + "/") || name.equals(prefix)) return true;
+            } else if (pattern.endsWith("/*")) {
+                String prefix = pattern.substring(0, pattern.length() - 2);
+                if (name.startsWith(prefix + "/") && !name.substring(prefix.length() + 1).contains("/")) return true;
+            } else if (name.equals(pattern)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static String extractGA(String jarPath) {
+        String home = System.getProperty("user.home");
+        String m2 = home + "/.m2/repository/";
+        if (!jarPath.startsWith(m2)) return null;
+        String relative = jarPath.substring(m2.length());
+        int lastSlash = relative.lastIndexOf('/');
+        if (lastSlash < 0) return null;
+        String beforeFile = relative.substring(0, lastSlash);
+        int versionSlash = beforeFile.lastIndexOf('/');
+        if (versionSlash < 0) return null;
+        String beforeVersion = beforeFile.substring(0, versionSlash);
+        int artifactSlash = beforeVersion.lastIndexOf('/');
+        if (artifactSlash < 0) return null;
+        String artifactId = beforeVersion.substring(artifactSlash + 1);
+        String groupId = beforeVersion.substring(0, artifactSlash).replace('/', '.');
+        return groupId + ":" + artifactId;
     }
 }

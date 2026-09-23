@@ -27,7 +27,7 @@ public class BuildFileGenerator {
 
     private static final String RUNTIME_GROUP_ID = "io.github.fromage.qraven";
     private static final String RUNTIME_ARTIFACT_ID = "qraven-runtime";
-    private static final String RUNTIME_VERSION = "1.0-SNAPSHOT";
+    private static final String RUNTIME_VERSION = loadVersion();
 
     private final Path projectRoot;
     private final Path outputDir;
@@ -280,6 +280,15 @@ public class BuildFileGenerator {
         sb.append("        );\n");
         sb.append("    }\n\n");
 
+        if (!module.getTestJarReactorDependencies().isEmpty()) {
+            sb.append("    @Override\n");
+            sb.append("    public List<String> testJarModuleDependencyIds() {\n");
+            sb.append("        return List.of(\n");
+            sb.append(formatStringList(module.getTestJarReactorDependencies(), "            "));
+            sb.append("        );\n");
+            sb.append("    }\n\n");
+        }
+
         // extensionDescriptorProperties
         Map<String, String> extProps = module.getExtensionDescriptorProperties();
         sb.append("    @Override\n");
@@ -470,6 +479,46 @@ public class BuildFileGenerator {
         sb.append(formatStringList(module.getKotlinPluginOptions(), "            "));
         sb.append("        );\n");
         sb.append("    }\n");
+
+        if (!module.getShadeExecutions().isEmpty()) {
+            sb.append("\n    @Override\n");
+            sb.append("    public List<ShadeExecution> shadeExecutions() {\n");
+            sb.append("        return List.of(\n");
+            List<ModuleInfo.ShadeExecution> shadeExecs = module.getShadeExecutions();
+            for (int i = 0; i < shadeExecs.size(); i++) {
+                ModuleInfo.ShadeExecution exec = shadeExecs.get(i);
+                sb.append("            new ShadeExecution(")
+                        .append(quote(exec.id())).append(", ")
+                        .append(exec.attached()).append(", ")
+                        .append(quoteOrNull(exec.classifier())).append(",\n");
+                sb.append("                List.of(");
+                if (!exec.includeArtifacts().isEmpty()) {
+                    sb.append(exec.includeArtifacts().stream()
+                            .map(this::quote).collect(Collectors.joining(", ")));
+                }
+                sb.append("),\n");
+                sb.append("                List.of(");
+                if (!exec.filters().isEmpty()) {
+                    sb.append("\n");
+                    for (int j = 0; j < exec.filters().size(); j++) {
+                        ModuleInfo.ShadeFilter filter = exec.filters().get(j);
+                        sb.append("                    new ShadeFilter(").append(quote(filter.artifact())).append(", List.of(");
+                        sb.append(filter.excludes().stream()
+                                .map(this::quote).collect(Collectors.joining(", ")));
+                        sb.append("))");
+                        if (j < exec.filters().size() - 1) sb.append(",");
+                        sb.append("\n");
+                    }
+                    sb.append("                ");
+                }
+                sb.append("),\n");
+                sb.append("                ").append(quoteOrNull(exec.mainClass())).append(")");
+                if (i < shadeExecs.size() - 1) sb.append(",");
+                sb.append("\n");
+            }
+            sb.append("        );\n");
+            sb.append("    }\n");
+        }
 
         sb.append("}\n");
         return sb.toString();
@@ -837,5 +886,19 @@ public class BuildFileGenerator {
                 return FileVisitResult.CONTINUE;
             }
         });
+    }
+
+    private static String loadVersion() {
+        try (var is = BuildFileGenerator.class.getResourceAsStream("/qraven-build.properties")) {
+            if (is != null) {
+                var props = new java.util.Properties();
+                props.load(is);
+                String v = props.getProperty("build.version");
+                if (v != null && !v.isBlank()) return v;
+            }
+        } catch (Exception e) {
+            // fall through
+        }
+        return "dev";
     }
 }

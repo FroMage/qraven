@@ -930,4 +930,22 @@ public class BuildRuntime {
             throw new RuntimeException("Failed to install " + groupId + ":" + artifactId + ":" + version, e);
         }
     }
+
+    public void installClassified(Path jarFile, String groupId, String artifactId,
+                                   String version, String classifier) {
+        Path localRepo = Path.of(System.getProperty("user.home"), ".m2", "repository");
+        Path artifactDir = localRepo
+                .resolve(groupId.replace('.', '/'))
+                .resolve(artifactId)
+                .resolve(version);
+        try {
+            Files.createDirectories(artifactDir);
+            Files.copy(jarFile,
+                    artifactDir.resolve(artifactId + "-" + version + "-" + classifier + ".jar"),
+                    StandardCopyOption.REPLACE_EXISTING);
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to install " + groupId + ":" + artifactId + ":"
+                    + version + ":" + classifier, e);
+        }
+    }
 }

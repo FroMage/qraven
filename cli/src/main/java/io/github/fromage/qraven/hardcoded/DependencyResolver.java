@@ -374,15 +374,20 @@ public class DependencyResolver {
     }
 
     public String resolveArtifactPath(String groupId, String artifactId, String version) {
-        Path jarPath = localRepoPath
+        String path = expectedArtifactPath(groupId, artifactId, version);
+        if (new java.io.File(path).exists()) {
+            return path;
+        }
+        return null;
+    }
+
+    public String expectedArtifactPath(String groupId, String artifactId, String version) {
+        return localRepoPath
                 .resolve(groupId.replace('.', '/'))
                 .resolve(artifactId)
                 .resolve(version)
-                .resolve(artifactId + "-" + version + ".jar");
-        if (jarPath.toFile().exists()) {
-            return jarPath.toAbsolutePath().toString();
-        }
-        return null;
+                .resolve(artifactId + "-" + version + ".jar")
+                .toAbsolutePath().toString();
     }
 
     private Dependency toAetherDep(org.apache.maven.model.Dependency mavenDep) {

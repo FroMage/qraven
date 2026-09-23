@@ -169,7 +169,7 @@ public class PomParser {
                             info.getGroupId() + ":" + info.getArtifactId());
                     if (model == null) return;
 
-                    extractCompilerConfig(model, info);
+                    extractCompilerConfig(model, info, reactorGAs);
 
                     if (!"pom".equals(info.getPackaging())) {
                         resolveDependencies(model, info, reactorGAs, resolveTimings);
@@ -222,6 +222,8 @@ public class PomParser {
                 }
             }
         }
+
+        resolveReactorAnnotationProcessorClasspaths(modules, reactorGAs);
 
         // Release models — no longer needed
         effectiveModels.clear();
@@ -548,6 +550,7 @@ public class PomParser {
         detectKotlinPlugin(model, info);
         detectExtensionPlugin(model, info);
         detectQuarkusBuildPlugin(model, info);
+        detectShadePlugin(model, info);
         extractManifestEntries(model, info);
 
         return info;
@@ -924,6 +927,92 @@ public class PomParser {
         }
     }
 
+    private void detectShadePlugin(Model model, ModuleInfo info) {
+        if (model.getBuild() == null) return;
+        List<ModuleInfo.ShadeExecution> executions = new ArrayList<>();
+        for (Plugin plugin : model.getBuild().getPlugins()) {
+            if (!"maven-shade-plugin".equals(plugin.getArtifactId())) continue;
+
+            Xpp3Dom pluginConfig = (Xpp3Dom) plugin.getConfiguration();
+
+            for (PluginExecution exec : plugin.getExecutions()) {
+                if (!exec.getGoals().contains("shade")) continue;
+
+                Xpp3Dom execConfig = (Xpp3Dom) exec.getConfiguration();
+                Xpp3Dom config = execConfig != null ? execConfig : pluginConfig;
+                if (config == null) continue;
+
+                boolean attached = false;
+                String classifier = null;
+                String mainClass = null;
+                List<String> includeArtifacts = new ArrayList<>();
+                List<ModuleInfo.ShadeFilter> filters = new ArrayList<>();
+
+                Xpp3Dom attachedNode = config.getChild("shadedArtifactAttached");
+                if (attachedNode != null) {
+                    attached = "true".equals(attachedNode.getValue());
+                }
+
+                Xpp3Dom classifierNode = config.getChild("shadedClassifierName");
+                if (classifierNode != null) {
+                    classifier = classifierNode.getValue();
+                }
+
+                Xpp3Dom artifactSet = config.getChild("artifactSet");
+                if (artifactSet != null) {
+                    Xpp3Dom includes = artifactSet.getChild("includes");
+                    if (includes != null) {
+                        for (Xpp3Dom include : includes.getChildren("include")) {
+                            if (include.getValue() != null) {
+                                includeArtifacts.add(include.getValue().trim());
+                            }
+                        }
+                    }
+                }
+
+                Xpp3Dom filtersNode = config.getChild("filters");
+                if (filtersNode != null) {
+                    for (Xpp3Dom filter : filtersNode.getChildren("filter")) {
+                        Xpp3Dom artifactNode = filter.getChild("artifact");
+                        if (artifactNode == null) continue;
+                        String artifact = artifactNode.getValue();
+                        List<String> excludes = new ArrayList<>();
+                        Xpp3Dom excludesNode = filter.getChild("excludes");
+                        if (excludesNode != null) {
+                            for (Xpp3Dom exclude : excludesNode.getChildren("exclude")) {
+                                if (exclude.getValue() != null) {
+                                    excludes.add(exclude.getValue().trim());
+                                }
+                            }
+                        }
+                        if (!excludes.isEmpty()) {
+                            filters.add(new ModuleInfo.ShadeFilter(artifact, excludes));
+                        }
+                    }
+                }
+
+                Xpp3Dom transformers = config.getChild("transformers");
+                if (transformers != null) {
+                    for (Xpp3Dom transformer : transformers.getChildren("transformer")) {
+                        String impl = transformer.getAttribute("implementation");
+                        if (impl != null && impl.contains("ManifestResourceTransformer")) {
+                            Xpp3Dom mainClassNode = transformer.getChild("mainClass");
+                            if (mainClassNode != null) {
+                                mainClass = mainClassNode.getValue();
+                            }
+                        }
+                    }
+                }
+
+                executions.add(new ModuleInfo.ShadeExecution(
+                        exec.getId(), attached, classifier, includeArtifacts, filters, mainClass));
+            }
+        }
+        if (!executions.isEmpty()) {
+            info.setShadeExecutions(executions);
+        }
+    }
+
     private String extractConfigValue(String elementName, Xpp3Dom execConfig, Xpp3Dom pluginConfig) {
         if (execConfig != null) {
             Xpp3Dom node = execConfig.getChild(elementName);
@@ -945,7 +1034,7 @@ public class PomParser {
         Properties modelProps = model.getProperties();
         if (modelProps != null) {
             for (String key : modelProps.stringPropertyNames()) {
-                if (key.startsWith("quarkus.") || key.startsWith("avro.codegen.")) {
+                if (key.startsWith("quarkus.") || key.startsWith("platform.") || key.startsWith("avro.codegen.")) {
                     buildProps.put(key, modelProps.getProperty(key));
                 }
             }
@@ -1116,15 +1205,25 @@ public class PomParser {
     private boolean checkHasCodeGenProviders(List<String> deploymentClasspath,
             Set<String> deploymentGAVs, Set<String> reactorGAs, List<ModuleInfo> allModules,
             ModuleInfo module) {
-        // Check reactor deployment modules via their source trees
+        // Check reactor deployment modules and their transitive deps
         for (String gav : deploymentGAVs) {
             String[] parts = gav.split(":");
             if (parts.length < 2) continue;
             String ga = parts[0] + ":" + parts[1];
             if (!reactorGAs.contains(ga)) continue;
+            Set<String> deployModuleAndDeps = new LinkedHashSet<>();
+            deployModuleAndDeps.add(parts[1]);
             for (ModuleInfo m : allModules) {
                 if (m.getArtifactId().equals(parts[1]) && m.getGroupId().equals(parts[0])) {
-                    java.nio.file.Path resourcesService = m.getBaseDir().resolve("src/main/resources/" + CODEGEN_SERVICE);
+                    deployModuleAndDeps.addAll(m.getReactorDependencies());
+                    collectTransitiveReactorDeps(deployModuleAndDeps, allModules, new LinkedHashSet<>());
+                    break;
+                }
+            }
+            for (String depId : deployModuleAndDeps) {
+                for (ModuleInfo m : allModules) {
+                    if (!m.getArtifactId().equals(depId)) continue;
+                    java.nio.file.Path resourcesService = projectRoot.resolve(m.getBaseDir()).resolve("src/main/resources/" + CODEGEN_SERVICE);
                     if (java.nio.file.Files.exists(resourcesService)) return true;
                     break;
                 }
@@ -1136,7 +1235,7 @@ public class PomParser {
         for (String depId : reactorDepIds) {
             for (ModuleInfo m : allModules) {
                 if (!m.getArtifactId().equals(depId)) continue;
-                java.nio.file.Path resourcesService = m.getBaseDir().resolve("src/main/resources/" + CODEGEN_SERVICE);
+                java.nio.file.Path resourcesService = projectRoot.resolve(m.getBaseDir()).resolve("src/main/resources/" + CODEGEN_SERVICE);
                 if (java.nio.file.Files.exists(resourcesService)) return true;
                 break;
             }
@@ -1371,10 +1470,7 @@ public class PomParser {
         }
 
         Set<String> runtimePaths = new LinkedHashSet<>(info.getCompileClasspath());
-        String ownJar = resolver.resolveArtifactPath(info.getGroupId(), info.getArtifactId(), info.getVersion());
-        if (ownJar != null) {
-            runtimePaths.add(ownJar);
-        }
+        runtimePaths.add(resolver.expectedArtifactPath(info.getGroupId(), info.getArtifactId(), info.getVersion()));
         Set<String> deploymentArtifactIds = new LinkedHashSet<>();
         for (String gav : deploymentGAVs) {
             String[] dp = gav.split(":");
@@ -1393,10 +1489,7 @@ public class PomParser {
             for (ModuleInfo m : allModules) {
                 if (!m.getArtifactId().equals(depId)) continue;
                 if ("pom".equals(m.getPackaging())) continue;
-                String jarPath = resolver.resolveArtifactPath(m.getGroupId(), m.getArtifactId(), m.getVersion());
-                if (jarPath != null) {
-                    runtimePaths.add(jarPath);
-                }
+                runtimePaths.add(resolver.expectedArtifactPath(m.getGroupId(), m.getArtifactId(), m.getVersion()));
                 runtimePaths.addAll(m.getCompileClasspath());
                 break;
             }
@@ -1433,8 +1526,8 @@ public class PomParser {
             if (!m.getArtifactId().equals(artifactId)) continue;
             if ("pom".equals(m.getPackaging())) continue;
 
-            String jarPath = resolver.resolveArtifactPath(m.getGroupId(), m.getArtifactId(), m.getVersion());
-            if (jarPath != null && !exclude.contains(jarPath) && !result.contains(jarPath)) {
+            String jarPath = resolver.expectedArtifactPath(m.getGroupId(), m.getArtifactId(), m.getVersion());
+            if (!exclude.contains(jarPath) && !result.contains(jarPath)) {
                 result.add(jarPath);
             }
 
@@ -1499,22 +1592,25 @@ public class PomParser {
         }
     }
 
-    private void extractCompilerConfig(Model model, ModuleInfo info) {
+    private void extractCompilerConfig(Model model, ModuleInfo info, Set<String> reactorGAs) {
         List<String> compilerArgs = new ArrayList<>();
         List<String> annotationProcessorPaths = new ArrayList<>();
 
         List<Dependency> managedDeps = model.getDependencyManagement() != null
                 ? model.getDependencyManagement().getDependencies() : List.of();
+        String projectVersion = info.getVersion();
 
         if (model.getBuild() != null && model.getBuild().getPluginManagement() != null) {
             extractCompilerConfigFromPlugins(
                     model.getBuild().getPluginManagement().getPlugins(),
-                    compilerArgs, annotationProcessorPaths, managedDeps);
+                    compilerArgs, annotationProcessorPaths, managedDeps,
+                    reactorGAs, projectVersion);
         }
 
         if (model.getBuild() != null) {
             extractCompilerConfigFromPlugins(model.getBuild().getPlugins(),
-                    compilerArgs, annotationProcessorPaths, managedDeps);
+                    compilerArgs, annotationProcessorPaths, managedDeps,
+                    reactorGAs, projectVersion);
         }
 
         Properties props = model.getProperties();
@@ -1581,21 +1677,25 @@ public class PomParser {
     private void extractCompilerConfigFromPlugins(List<Plugin> plugins,
                                                    List<String> compilerArgs,
                                                    List<String> annotationProcessorPaths,
-                                                   List<Dependency> managedDeps) {
+                                                   List<Dependency> managedDeps,
+                                                   Set<String> reactorGAs,
+                                                   String projectVersion) {
         for (Plugin plugin : plugins) {
             if (!"maven-compiler-plugin".equals(plugin.getArtifactId())) {
                 continue;
             }
             Xpp3Dom config = (Xpp3Dom) plugin.getConfiguration();
             if (config != null) {
-                extractCompilerConfig(config, compilerArgs, annotationProcessorPaths, managedDeps);
+                extractCompilerConfig(config, compilerArgs, annotationProcessorPaths, managedDeps,
+                        reactorGAs, projectVersion);
             }
 
             if (plugin.getExecutions() != null) {
                 for (PluginExecution exec : plugin.getExecutions()) {
                     Xpp3Dom execConfig = (Xpp3Dom) exec.getConfiguration();
                     if (execConfig != null) {
-                        extractCompilerConfig(execConfig, compilerArgs, annotationProcessorPaths, managedDeps);
+                        extractCompilerConfig(execConfig, compilerArgs, annotationProcessorPaths, managedDeps,
+                                reactorGAs, projectVersion);
                     }
                 }
             }
@@ -1605,7 +1705,9 @@ public class PomParser {
     private void extractCompilerConfig(Xpp3Dom config,
                                        List<String> compilerArgs,
                                        List<String> annotationProcessorPaths,
-                                       List<Dependency> managedDeps) {
+                                       List<Dependency> managedDeps,
+                                       Set<String> reactorGAs,
+                                       String projectVersion) {
         Xpp3Dom releaseNode = config.getChild("release");
         if (releaseNode != null && releaseNode.getValue() != null && !releaseNode.getValue().isBlank()) {
             if (!compilerArgs.contains("--release")) {
@@ -1664,13 +1766,60 @@ public class PomParser {
                             }
                         }
                     }
+                    if ((ver == null || ver.isBlank())
+                            && reactorGAs.contains(gidNode.getValue() + ":" + aidNode.getValue())) {
+                        ver = projectVersion;
+                    }
                     if (ver != null && !ver.isBlank()) {
-                        List<String> resolved = resolver.resolveAnnotationProcessorPath(
-                                gidNode.getValue(), aidNode.getValue(), ver,
-                                managedDeps);
-                        annotationProcessorPaths.addAll(resolved);
+                        if (reactorGAs.contains(gidNode.getValue() + ":" + aidNode.getValue())) {
+                            annotationProcessorPaths.add(
+                                    resolver.expectedArtifactPath(gidNode.getValue(), aidNode.getValue(), ver));
+                        } else {
+                            List<String> resolved = resolver.resolveAnnotationProcessorPath(
+                                    gidNode.getValue(), aidNode.getValue(), ver,
+                                    managedDeps);
+                            annotationProcessorPaths.addAll(resolved);
+                        }
                     }
                 }
+            }
+        }
+    }
+
+    private void resolveReactorAnnotationProcessorClasspaths(List<ModuleInfo> modules, Set<String> reactorGAs) {
+        Map<String, ModuleInfo> byArtifactId = new LinkedHashMap<>();
+        for (ModuleInfo m : modules) {
+            byArtifactId.put(m.getArtifactId(), m);
+        }
+        for (ModuleInfo info : modules) {
+            List<String> apPaths = info.getAnnotationProcessorPaths();
+            if (apPaths.isEmpty()) continue;
+            List<String> expanded = new ArrayList<>();
+            for (String path : apPaths) {
+                expanded.add(path);
+                for (ModuleInfo m : modules) {
+                    String expectedPath = resolver.expectedArtifactPath(m.getGroupId(), m.getArtifactId(), m.getVersion());
+                    if (expectedPath.equals(path)) {
+                        for (String cp : m.getCompileClasspath()) {
+                            if (!expanded.contains(cp) && !apPaths.contains(cp)) {
+                                expanded.add(cp);
+                            }
+                        }
+                        for (String depId : m.getReactorDependencies()) {
+                            ModuleInfo dep = byArtifactId.get(depId);
+                            if (dep != null) {
+                                String depPath = resolver.expectedArtifactPath(dep.getGroupId(), dep.getArtifactId(), dep.getVersion());
+                                if (!expanded.contains(depPath) && !apPaths.contains(depPath)) {
+                                    expanded.add(depPath);
+                                }
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+            if (expanded.size() > apPaths.size()) {
+                info.setAnnotationProcessorPaths(expanded);
             }
         }
     }
@@ -1716,18 +1865,10 @@ public class PomParser {
             if (reactorGAs.contains(ga)) {
                 if (hasTestSources && "test".equals(scope)) {
                     String type = dep.getType() != null ? dep.getType() : "jar";
-                    if ("jar".equals(type)) {
-                        info.getTestReactorDependencies().add(dep.getArtifactId());
+                    if ("test-jar".equals(type)) {
+                        info.getTestJarReactorDependencies().add(dep.getArtifactId());
                     } else {
-                        String version = dep.getVersion();
-                        if (version == null || version.isBlank()) {
-                            version = managedVersions.get(ga);
-                        }
-                        if (version != null && !version.isBlank()) {
-                            Dependency testDep = dep.clone();
-                            testDep.setVersion(version);
-                            testExternalDeps.add(testDep);
-                        }
+                        info.getTestReactorDependencies().add(dep.getArtifactId());
                     }
                 }
                 continue;

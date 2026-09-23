@@ -62,6 +62,7 @@ public class ModuleInfo {
     private Set<String> optionalClasspathEntries = new LinkedHashSet<>();
     private Set<String> optionalReactorDependencies = new LinkedHashSet<>();
     private List<String> testReactorDependencies = new ArrayList<>();
+    private List<String> testJarReactorDependencies = new ArrayList<>();
     private boolean apCacheable;
     private boolean hasCodeGenProviders;
     private boolean hasSisuPlugin;
@@ -76,8 +77,12 @@ public class ModuleInfo {
     private String parentArtifactId;
     private String projectName;
     private String projectDescription;
+    private List<ShadeExecution> shadeExecutions = new ArrayList<>();
 
     public record ResourceDir(String directory, boolean filtering, String targetPath) {}
+    public record ShadeExecution(String id, boolean attached, String classifier,
+            List<String> includeArtifacts, List<ShadeFilter> filters, String mainClass) {}
+    public record ShadeFilter(String artifact, List<String> excludes) {}
 
     public String getGroupId() { return groupId; }
     public void setGroupId(String groupId) { this.groupId = groupId; }
@@ -233,6 +238,8 @@ public class ModuleInfo {
     public void setOptionalReactorDependencies(Set<String> optionalReactorDependencies) { this.optionalReactorDependencies = optionalReactorDependencies; }
     public List<String> getTestReactorDependencies() { return testReactorDependencies; }
     public void setTestReactorDependencies(List<String> testReactorDependencies) { this.testReactorDependencies = testReactorDependencies; }
+    public List<String> getTestJarReactorDependencies() { return testJarReactorDependencies; }
+    public void setTestJarReactorDependencies(List<String> testJarReactorDependencies) { this.testJarReactorDependencies = testJarReactorDependencies; }
 
     public Map<String, Set<String>> getReactorDependencyExclusions() { return reactorDependencyExclusions; }
     public void addReactorDependencyExclusion(String depArtifactId, String excludedArtifactId) {
@@ -279,6 +286,9 @@ public class ModuleInfo {
 
     public String getProjectDescription() { return projectDescription; }
     public void setProjectDescription(String projectDescription) { this.projectDescription = projectDescription; }
+
+    public List<ShadeExecution> getShadeExecutions() { return shadeExecutions; }
+    public void setShadeExecutions(List<ShadeExecution> shadeExecutions) { this.shadeExecutions = shadeExecutions; }
 
     @Override
     public String toString() {

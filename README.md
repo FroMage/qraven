@@ -301,10 +301,13 @@ Qraven replicates the behavior of the following Maven plugins during build:
 ### Dependency enforcement
 - **maven-enforcer-plugin** (simple) -- Checks compile classpath against Quarkus banned dependency lists (`quarkus-banned-dependencies.xml`, `quarkus-banned-dependencies-okhttp.xml`). Supports exact GA matches (`groupId:artifactId`), group wildcards (`groupId:*`), and prefix patterns (`groupId:prefix-*`). Reports violations as warnings. Disabled with `-Dno-format`.
 
+### Uber-jar / shading
+- **maven-shade-plugin** -- Merges dependency JARs into the module's own JAR after packaging. Supports `<artifactSet>/<includes>` to select which dependencies to merge (empty = all), per-artifact `<filters>/<excludes>` with glob patterns (`**` recursive, `*` single-level), `<shadedArtifactAttached>` to create a classified artifact instead of replacing the main JAR, `<shadedClassifierName>` for the classifier, and `ManifestResourceTransformer` for setting the main class. Classified artifacts are installed to `~/.m2/repository` alongside the main JAR. Used by `quarkus-grpc-protoc-plugin` (two executions: one shading jprotoc into the main artifact, one creating a `-shaded.jar` fat jar for the gRPC code generator) and `quarkus-bootstrap-gradle-resolver` (shading gradle-tooling-api).
+
 ### Not yet supported
 - **avro-maven-plugin** -- Avro schema (`.avsc`) to Java code generation (Avro codegen runs via the Quarkus `generate-code` step instead)
 - **maven-surefire-plugin / maven-failsafe-plugin** -- Test execution
-- **maven-shade-plugin / maven-assembly-plugin** -- Uber-jar / assembly creation
+- **maven-assembly-plugin** -- Assembly creation
 
 ## Comparison with Maven
 
@@ -344,6 +347,7 @@ Both build the same ~1438 reactor modules. `-Prelocations` currently adds an emp
 | test-compile | `maven-compiler-plugin:testCompile` | `runtime.compileTests()` (in-process javac API) | **Equivalent** — see below |
 | test | `maven-surefire-plugin:test` | — | Skipped by both (`-DskipTests`) |
 | package | `maven-jar-plugin:jar` | `runtime.createJar()` | **Equivalent** |
+| package | `maven-shade-plugin:shade` | `executeShade()` | **Equivalent** — see below |
 | package | `maven-source-plugin:jar-no-fork` | — | **Missing** — no `-sources.jar` produced |
 | verify | `forbiddenapis:check` | — | **Missing** |
 | install | `maven-install-plugin:install` | `runtime.install()` | **Simplified** — see below |
@@ -374,7 +378,7 @@ Maven with `-DskipTests` still compiles test sources (only `-Dmaven.test.skip` s
 |---------|-----------------|--------|
 | `bridger:transform` | 2–3 (arc/runtime, core/processor) | Bytecode transforms for `$IMPL` binary compat not applied |
 | `module-services-plugin` | ~9 with `module-info.java` | `META-INF/services/` files not generated from module-info |
-| `maven-shade-plugin` | 2 (grpc/protoc, bootstrap/gradle-resolver) | Shaded/relocated JARs not produced |
+| ~~`maven-shade-plugin`~~ | ~~2 (grpc/protoc, bootstrap/gradle-resolver)~~ | **Fixed** — shaded JARs now produced and installed |
 | Source JARs | All | `-sources.jar` not produced (blocks releases, not needed for dev) |
 | `forbiddenapis` | All | Banned API usage checks not run |
 
