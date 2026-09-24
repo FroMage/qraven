@@ -6,7 +6,7 @@
     <parent>
         <groupId>io.github.fromage.qraven</groupId>
         <artifactId>qraven-parent</artifactId>
-        <version>1.5-SNAPSHOT</version>
+        <version>1.7-SNAPSHOT</version>
     </parent>
     <artifactId>qraven-cli</artifactId>
     <name>Qraven - CLI</name>
