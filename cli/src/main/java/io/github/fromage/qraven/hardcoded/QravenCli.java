@@ -34,6 +34,8 @@ public class QravenCli {
         boolean noGenerate = false;
         boolean noBuild = false;
         boolean forceBootstrap = false;
+        boolean quickly = false;
+        boolean noQuickly = false;
 
         List<String> commonBuildArgs = new ArrayList<>();
         List<String> mainBuildArgs = new ArrayList<>();
@@ -55,11 +57,8 @@ public class QravenCli {
                 case "--no-generate", "-ng" -> noGenerate = true;
                 case "--no-build", "-nb" -> noBuild = true;
                 case "--force-bootstrap", "-fb" -> forceBootstrap = true;
-                case "--quickly" -> {
-                    commonBuildArgs.add("-DskipTests");
-                    commonBuildArgs.add("-DskipITs");
-                    commonBuildArgs.add("-Dquarkus.build.skip");
-                }
+                case "--quickly" -> quickly = true;
+                case "--no-quickly" -> noQuickly = true;
                 case "--projects", "-pl" -> {
                     mainBuildArgs.add("-pl");
                     mainBuildArgs.add(args[++i]);
@@ -82,6 +81,15 @@ public class QravenCli {
 
         if (outputDir == null) {
             outputDir = projectDir.resolve("target/qraven");
+        }
+
+        if (!noQuickly && !quickly && isQuarkusProject(projectDir)) {
+            quickly = true;
+        }
+        if (quickly && !noQuickly) {
+            commonBuildArgs.add("-DskipTests");
+            commonBuildArgs.add("-DskipITs");
+            commonBuildArgs.add("-Dquarkus.build.skip");
         }
 
         Path nativeImageBin = null;
@@ -360,6 +368,17 @@ public class QravenCli {
         }
     }
 
+    private static boolean isQuarkusProject(Path projectDir) {
+        Path pom = projectDir.resolve("pom.xml");
+        if (!Files.exists(pom)) return false;
+        try {
+            String content = Files.readString(pom);
+            return content.contains("<groupId>io.quarkus</groupId>");
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
     private static String regenerationReason(Path projectDir, Path buildJar) {
         if (!Files.exists(buildJar)) return "build.jar not found";
         try {
@@ -432,7 +451,8 @@ public class QravenCli {
 
                 Build options:
                   --no-build, -nb           Skip build execution (generate only)
-                  --quickly                 Alias for -DskipTests -DskipITs -Dquarkus.build.skip
+                  --quickly                 Skip tests and quarkus-build (default for Quarkus projects)
+                  --no-quickly              Disable auto-quickly for Quarkus projects
                   -pl, --projects <list>    Comma-separated list of module artifactIds to build
                   -am, --also-make          Build dependencies of modules specified by -pl
                   -i, --incremental         Only rebuild modules with changed sources
