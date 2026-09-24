@@ -409,7 +409,7 @@ public abstract class ModuleBuild {
                     if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "generate-code", 0);
                     t = System.currentTimeMillis();
                     Files.createDirectories(classesDir());
-                    generatedSourcesDir = QuarkusBuildHelper.isolatedGenerateCode(this, dependencies);
+                    generatedSourcesDir = QuarkusBuildHelper.generateCode(this, dependencies);
                     long gcElapsed = System.currentTimeMillis() - t;
                     recordPhase("generate-code", t);
                     System.err.println("[timing] [" + artifactId() + "] generate-code: " + gcElapsed + "ms");
@@ -576,7 +576,7 @@ public abstract class ModuleBuild {
                 if (hasQuarkusBuildPlugin() && !evaluateSkip(quarkusBuildSkipWhen())) {
                     if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "quarkus-build", 0);
                     t = System.currentTimeMillis();
-                    QuarkusBuildHelper.isolatedRun(this, dependencies);
+                    QuarkusBuildHelper.run(this, dependencies);
                     recordPhase("quarkus-build", t);
                 }
             }
@@ -733,7 +733,7 @@ public abstract class ModuleBuild {
                 && hasTestCodeGenSourceFiles()) {
             if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "generate-code-tests", 0);
             t = System.currentTimeMillis();
-            generatedTestSourcesDir = QuarkusBuildHelper.isolatedGenerateCodeTests(this, dependencies);
+            generatedTestSourcesDir = QuarkusBuildHelper.generateCodeTests(this, dependencies);
             if (generatedTestSourcesDir != null && Files.isDirectory(generatedTestSourcesDir)) {
                 addGeneratedSourceDirs(generatedTestSourcesDir, testExtraDirs);
             }

@@ -11,6 +11,8 @@ import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
@@ -57,6 +59,7 @@ public class BuildFileGenerator {
     }
 
     private List<ModuleInfo> preBuiltModules = List.of();
+    private Map<String, String> reactorVersions = Map.of();
 
     public void setPreBuiltModules(List<ModuleInfo> preBuiltModules) {
         this.preBuiltModules = preBuiltModules;
@@ -122,6 +125,15 @@ public class BuildFileGenerator {
             Path sourceFile = srcDir.resolve("Build_" + className + ".java");
             Files.writeString(sourceFile, source);
         }
+
+        Map<String, String> rv = new HashMap<>();
+        for (ModuleInfo m : modules) {
+            rv.put(m.getGroupId() + ":" + m.getArtifactId(), m.getVersion());
+        }
+        for (ModuleInfo m : preBuiltModules) {
+            rv.put(m.getGroupId() + ":" + m.getArtifactId(), m.getVersion());
+        }
+        this.reactorVersions = rv;
 
         Path mainFile = srcDir.resolve("Build.java");
         Files.writeString(mainFile, generateMainClass(modules));
@@ -669,7 +681,45 @@ public class BuildFileGenerator {
             }
         }
 
+        runtimeClasspath = substituteReactorVersions(runtimeClasspath);
         createBuildJar(classesDir, runtimeClasspath, buildJar);
+    }
+
+    private List<String> substituteReactorVersions(List<String> classpath) {
+        if (reactorVersions.isEmpty()) return classpath;
+        String m2 = System.getProperty("user.home") + "/.m2/repository/";
+        List<String> result = new ArrayList<>(classpath.size());
+        for (String entry : classpath) {
+            if (!entry.startsWith(m2)) {
+                result.add(entry);
+                continue;
+            }
+            String relative = entry.substring(m2.length());
+            String[] parts = relative.split("/");
+            if (parts.length < 4) {
+                result.add(entry);
+                continue;
+            }
+            String version = parts[parts.length - 2];
+            String artifactId = parts[parts.length - 3];
+            String groupId = String.join(".", Arrays.copyOf(parts, parts.length - 3));
+            String ga = groupId + ":" + artifactId;
+
+            String reactorVersion = reactorVersions.get(ga);
+            if (reactorVersion != null && !reactorVersion.equals(version)) {
+                String fileName = parts[parts.length - 1];
+                String newFileName = fileName.replace(artifactId + "-" + version,
+                        artifactId + "-" + reactorVersion);
+                String newPath = m2 + groupId.replace('.', '/') + "/" + artifactId
+                        + "/" + reactorVersion + "/" + newFileName;
+                if (new File(newPath).exists()) {
+                    result.add(newPath);
+                    continue;
+                }
+            }
+            result.add(entry);
+        }
+        return result;
     }
 
     private void resolveProtocPaths(List<ModuleInfo> modules) {
