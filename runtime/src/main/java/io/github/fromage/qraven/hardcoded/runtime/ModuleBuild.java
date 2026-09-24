@@ -318,6 +318,14 @@ public abstract class ModuleBuild {
                     buildSucceeded = true;
                     mainBuildSucceeded = true;
                     mainBuildDone.complete(null);
+                    if (!testDependencies.isEmpty() || !testJarDependencies.isEmpty()) {
+                        List<String> fullClasspath = new ArrayList<>(resolvedClasspath());
+                        Set<String> added = new HashSet<>();
+                        addReactorJars(this, fullClasspath, added);
+                        mainBuildClasspath = fullClasspath;
+                        mainBuildAdded = added;
+                        mainBuildSkipFormat = evaluateSkip("${no-format}");
+                    }
                     if (progress != null) {
                         progress.moduleStarted(threadIdx, artifactId(), "up-to-date", 0);
                         progress.moduleCompleted(threadIdx, true);
@@ -695,6 +703,14 @@ public abstract class ModuleBuild {
             while (cause != null) {
                 msg.append("\n  Caused by: ").append(cause.getClass().getName()).append(": ").append(cause.getMessage());
                 cause = cause.getCause();
+            }
+            Throwable root = e;
+            while (root.getCause() != null) root = root.getCause();
+            if (root instanceof NoClassDefFoundError || root instanceof ClassNotFoundException
+                    || root instanceof NoSuchMethodError || root instanceof NullPointerException) {
+                java.io.StringWriter sw = new java.io.StringWriter();
+                e.printStackTrace(new java.io.PrintWriter(sw));
+                msg.append("\n  Full stack trace:\n").append(sw);
             }
             failureMessage = msg.toString();
             if (progress != null) {
