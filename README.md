@@ -35,7 +35,7 @@ This produces two modules:
 After the Maven build:
 
 ```bash
-jbang app install --name qraven --force io.github.fromage.qraven:qraven-cli:1.1-SNAPSHOT
+jbang app install --name qraven --force io.github.fromage.qraven:qraven-cli:1.5-SNAPSHOT
 ```
 
 JBang resolves all dependencies from the POM automatically.
@@ -46,10 +46,11 @@ Run `qraven` from your Maven project root:
 
 ```bash
 # Auto-generate if pom files changed, then build
+# (--quickly is automatic for Quarkus projects)
 qraven
 
-# Build skipping tests
-qraven --quickly
+# Build with tests enabled (overrides the Quarkus default)
+qraven --no-quickly
 
 # Build a single module and its dependencies
 qraven -pl quarkus-arc -am
@@ -82,15 +83,18 @@ Generation options:
 
 Build options:
   --no-build, -nb           Skip build execution (generate only)
-  --quickly                 Alias for -DskipTests -DskipITs -Dquarkus.build.skip
+  --quickly                 Skip tests and quarkus-build (default for Quarkus projects)
+  --no-quickly              Disable auto-quickly for Quarkus projects
   -pl, --projects <list>    Comma-separated list of module artifactIds to build
   -am, --also-make          Build dependencies of modules specified by -pl
   -i, --incremental         Only rebuild modules with changed sources
   --no-kotlin               Skip Kotlin modules and their dependents
+  --no-fast-kotlin          Disable JIT warmup for Kotlin compiler (enabled by default)
   -D<key>=<value>           Set a system property
 
 Other options:
   -h, --help                Show this help message and exit
+  -V, --version             Show version and exit
   -p, --project <path>      Project root directory (default: current directory)
   -t, --threads <n>         Thread count (default: available CPUs)
   -o, --output <path>       Output directory (default: <project>/target/qraven)
@@ -125,6 +129,19 @@ When building a project that contains `qraven-runtime`'s own transitive dependen
 Use `--force-bootstrap` to force a bootstrap build even when jars appear fresh.
 
 The key detail: `build.jar` packaging is **deferred** until after bootstrap runs, because its `Class-Path` manifest references jars in `~/.m2/repository` that don't exist until bootstrap installs them.
+
+**Classpath version substitution:** `build.jar`'s manifest classpath is derived from `qraven-runtime`'s transitive dependencies (e.g. `quarkus-bootstrap-core:3.39.4`). When the reactor being built includes a newer version of these same artifacts, qraven substitutes the classpath entries to point to the reactor-built jars instead. This avoids `NoSuchMethodError` from version mismatches between qraven's bundled dependency versions and the reactor's versions.
+
+### Incremental mode
+
+With `-i` / `--incremental`, qraven skips modules whose sources, resources, pom, and test sources are all older than the installed artifact in `~/.m2`. A module is also rebuilt when any of its dependencies was rebuilt in the same run.
+
+Test compilation is also skipped for up-to-date modules unless a test dependency was rebuilt. When a module is rebuilt, its reasons are logged:
+
+```
+[incremental] [quarkus-core] not up-to-date: sources newer than artifact
+[incremental] [quarkus-arc] not up-to-date: dependency rebuilt: quarkus-core
+```
 
 ### Running build.jar directly
 
@@ -257,7 +274,7 @@ Benchmarked on quarkus-renarde (20 modules):
 | qraven native (GraalVM 21) | ~2.5s | 11x |
 | qraven native + classpath warmup | ~1.4s | 20x |
 
-Tested on Quarkus (1363 modules): native build completes in ~189s vs ~289s for JVM (1.5x speedup), with 95.4% module success rate matching JVM results.
+Tested on Quarkus (~1438 modules): native build completes in ~189s vs ~289s for JVM (1.5x speedup), with 95.4% module success rate matching JVM results.
 
 See `BENCHMARKS.txt` for detailed measurements and optimization notes.
 
