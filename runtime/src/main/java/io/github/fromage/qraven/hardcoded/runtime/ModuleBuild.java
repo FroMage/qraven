@@ -631,6 +631,27 @@ public abstract class ModuleBuild {
         if (!mainBuildSucceeded) {
             return;
         }
+        if (skippedIncremental) {
+            boolean testDepsAllSkipped = true;
+            for (ModuleBuild testDep : testDependencies) {
+                if (!testDep.wasSkippedIncremental()) {
+                    testDepsAllSkipped = false;
+                    break;
+                }
+            }
+            if (testDepsAllSkipped) {
+                for (ModuleBuild testJarDep : testJarDependencies) {
+                    if (!testJarDep.wasSkippedIncremental()) {
+                        testDepsAllSkipped = false;
+                        break;
+                    }
+                }
+            }
+            if (testDepsAllSkipped) {
+                buildSucceeded = true;
+                return;
+            }
+        }
         for (ModuleBuild testDep : testDependencies) {
             if (!testDep.mainBuildSucceeded) {
                 failureMessage = "[" + artifactId() + "] FAILED: test dependency " + testDep.artifactId() + " failed";
