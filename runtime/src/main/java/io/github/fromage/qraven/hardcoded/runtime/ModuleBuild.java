@@ -315,7 +315,6 @@ public abstract class ModuleBuild {
             } else {
                 if (incremental && isUpToDate()) {
                     skippedIncremental = true;
-                    buildSucceeded = true;
                     mainBuildSucceeded = true;
                     mainBuildDone.complete(null);
                     if (!testDependencies.isEmpty() || !testJarDependencies.isEmpty()) {
@@ -325,6 +324,8 @@ public abstract class ModuleBuild {
                         mainBuildClasspath = fullClasspath;
                         mainBuildAdded = added;
                         mainBuildSkipFormat = evaluateSkip("${no-format}");
+                    } else {
+                        buildSucceeded = true;
                     }
                     if (progress != null) {
                         progress.moduleStarted(threadIdx, artifactId(), "up-to-date", 0);
@@ -697,6 +698,7 @@ public abstract class ModuleBuild {
                 progress.moduleCompleted(threadIdx, true);
             }
         } catch (Throwable e) {
+            buildSucceeded = false;
             StringBuilder msg = new StringBuilder();
             msg.append("[").append(artifactId()).append("] FAILED (test compilation): ").append(e.getMessage());
             Throwable cause = e.getCause();
