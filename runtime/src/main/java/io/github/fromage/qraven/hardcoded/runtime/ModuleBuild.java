@@ -914,7 +914,10 @@ public abstract class ModuleBuild {
 
     private boolean isUpToDate() {
         Path installedArtifact = installedArtifactPath();
-        if (!Files.exists(installedArtifact)) return false;
+        if (!Files.exists(installedArtifact)) {
+            System.err.println("[incremental] [" + artifactId() + "] not up-to-date: installed artifact missing: " + installedArtifact);
+            return false;
+        }
 
         long artifactMtime;
         try {
@@ -925,24 +928,35 @@ public abstract class ModuleBuild {
 
         for (ModuleBuild dep : dependencies) {
             if (dep.mainBuildSucceeded && !dep.wasSkippedIncremental()) {
+                System.err.println("[incremental] [" + artifactId() + "] not up-to-date: dependency rebuilt: " + dep.artifactId());
                 return false;
             }
         }
 
         if ("pom".equals(packaging())) {
             try {
-                return Files.getLastModifiedTime(pomFile()).toMillis() <= artifactMtime;
+                if (Files.getLastModifiedTime(pomFile()).toMillis() > artifactMtime) {
+                    System.err.println("[incremental] [" + artifactId() + "] not up-to-date: pom.xml newer than artifact");
+                    return false;
+                }
+                return true;
             } catch (IOException e) {
                 return false;
             }
         }
 
         long newestInput = newestMtime(sourceDir());
-        if (newestInput > artifactMtime) return false;
+        if (newestInput > artifactMtime) {
+            System.err.println("[incremental] [" + artifactId() + "] not up-to-date: sources newer than artifact");
+            return false;
+        }
 
         if (hasKotlinSources()) {
             newestInput = newestMtime(kotlinSourceDir());
-            if (newestInput > artifactMtime) return false;
+            if (newestInput > artifactMtime) {
+                System.err.println("[incremental] [" + artifactId() + "] not up-to-date: kotlin sources newer");
+                return false;
+            }
         }
 
         Path base = runtime.getProjectRoot().resolve(baseDir());
@@ -950,37 +964,58 @@ public abstract class ModuleBuild {
             Path dir = base.resolve(rd[0]);
             if (Files.isDirectory(dir)) {
                 newestInput = newestMtime(dir);
-                if (newestInput > artifactMtime) return false;
+                if (newestInput > artifactMtime) {
+                    System.err.println("[incremental] [" + artifactId() + "] not up-to-date: resources newer in " + rd[0]);
+                    return false;
+                }
             }
         }
 
         if (hasProtobufSources()) {
             newestInput = newestMtime(protoSourceDir());
-            if (newestInput > artifactMtime) return false;
+            if (newestInput > artifactMtime) {
+                System.err.println("[incremental] [" + artifactId() + "] not up-to-date: protobuf sources newer");
+                return false;
+            }
         }
 
         if (hasAntlrSources()) {
             newestInput = newestMtime(antlrSourceDir());
-            if (newestInput > artifactMtime) return false;
+            if (newestInput > artifactMtime) {
+                System.err.println("[incremental] [" + artifactId() + "] not up-to-date: antlr sources newer");
+                return false;
+            }
         }
 
         if (hasTestProtobufSources() && !evaluateSkip("${maven.test.skip}")) {
             newestInput = newestMtime(testProtoSourceDir());
-            if (newestInput > artifactMtime) return false;
+            if (newestInput > artifactMtime) {
+                System.err.println("[incremental] [" + artifactId() + "] not up-to-date: test protobuf sources newer");
+                return false;
+            }
         }
 
         if (hasTestJavaSources() && !evaluateSkip("${maven.test.skip}")) {
             newestInput = newestMtime(testSourceDir());
-            if (newestInput > artifactMtime) return false;
+            if (newestInput > artifactMtime) {
+                System.err.println("[incremental] [" + artifactId() + "] not up-to-date: test sources newer");
+                return false;
+            }
         }
 
         if (hasTestKotlinSources() && !evaluateSkip("${maven.test.skip}")) {
             newestInput = newestMtime(testKotlinSourceDir());
-            if (newestInput > artifactMtime) return false;
+            if (newestInput > artifactMtime) {
+                System.err.println("[incremental] [" + artifactId() + "] not up-to-date: test kotlin sources newer");
+                return false;
+            }
         }
 
         try {
-            if (Files.getLastModifiedTime(pomFile()).toMillis() > artifactMtime) return false;
+            if (Files.getLastModifiedTime(pomFile()).toMillis() > artifactMtime) {
+                System.err.println("[incremental] [" + artifactId() + "] not up-to-date: pom.xml newer than artifact");
+                return false;
+            }
         } catch (IOException e) {
             return false;
         }
