@@ -1,0 +1,2 @@
+This file should be copied verbatim.
+No ${property} interpolation here.

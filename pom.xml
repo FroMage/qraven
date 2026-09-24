@@ -36,6 +36,7 @@
     <modules>
         <module>runtime</module>
         <module>cli</module>
+        <module>tests</module>
     </modules>
 
     <properties>

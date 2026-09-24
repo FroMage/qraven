@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>com.test.ext</groupId>
+        <artifactId>fake-quarkus-extension-parent</artifactId>
+        <version>1.0.0</version>
+    </parent>
+    <artifactId>fake-extension</artifactId>
+    <name>Fake Extension Runtime</name>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>io.quarkus</groupId>
+                <artifactId>quarkus-extension-maven-plugin</artifactId>
+                <version>3.0.0</version>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>extension-descriptor</goal>
+                        </goals>
+                        <configuration>
+                            <deployment>com.test.ext:fake-extension-deployment:${project.version}</deployment>
+                        </configuration>
+                    </execution>
+                </executions>
+                <configuration>
+                    <parentFirstArtifacts>
+                        <parentFirstArtifact>com.test.ext:fake-extension</parentFirstArtifact>
+                    </parentFirstArtifacts>
+                    <capabilities>
+                        <provides>com.test.ext.fake</provides>
+                    </capabilities>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>
