@@ -590,4 +590,148 @@ class PomParserTest {
             assertThat(runtime.isHasQuarkusBuildPlugin()).isFalse();
         }
     }
+
+    @Nested
+    class KotlinProject {
+
+        static List<ModuleInfo> modules;
+
+        @BeforeAll
+        static void parse() {
+            modules = parseProject("kotlin-project");
+        }
+
+        @Test
+        void parsesAllModules() {
+            assertThat(modules).hasSize(3);
+        }
+
+        @Test
+        void libHasKotlinSources() {
+            ModuleInfo lib = findModule(modules, "kotlin-lib");
+            assertThat(lib.isHasKotlinSources()).isTrue();
+        }
+
+        @Test
+        void libHasNoJavaSources() {
+            ModuleInfo lib = findModule(modules, "kotlin-lib");
+            assertThat(lib.isHasJavaSources()).isFalse();
+        }
+
+        @Test
+        void libHasTestKotlinSources() {
+            ModuleInfo lib = findModule(modules, "kotlin-lib");
+            assertThat(lib.isHasTestKotlinSources()).isTrue();
+        }
+
+        @Test
+        void mixedHasKotlinSources() {
+            ModuleInfo mixed = findModule(modules, "kotlin-mixed");
+            assertThat(mixed.isHasKotlinSources()).isTrue();
+        }
+
+        @Test
+        void mixedHasJavaSources() {
+            ModuleInfo mixed = findModule(modules, "kotlin-mixed");
+            assertThat(mixed.isHasJavaSources()).isTrue();
+        }
+
+        @Test
+        void mixedHasTestJavaSources() {
+            ModuleInfo mixed = findModule(modules, "kotlin-mixed");
+            assertThat(mixed.isHasTestJavaSources()).isTrue();
+        }
+
+        @Test
+        void mixedDependsOnLib() {
+            ModuleInfo mixed = findModule(modules, "kotlin-mixed");
+            assertThat(mixed.getReactorDependencies()).contains("kotlin-lib");
+        }
+
+        @Test
+        void libHasKotlinPluginOptions() {
+            ModuleInfo lib = findModule(modules, "kotlin-lib");
+            assertThat(lib.getKotlinPluginOptions()).isNotEmpty();
+            assertThat(lib.getKotlinPluginOptions())
+                    .anyMatch(o -> o.contains("com.test.MyOpen"));
+        }
+
+        @Test
+        void parentHasNoKotlinSources() {
+            ModuleInfo parent = findModule(modules, "kotlin-project-parent");
+            assertThat(parent.isHasKotlinSources()).isFalse();
+        }
+    }
+
+    @Nested
+    class ProtobufProject {
+
+        static List<ModuleInfo> modules;
+
+        @BeforeAll
+        static void parse() {
+            modules = parseProject("protobuf-project");
+        }
+
+        @Test
+        void parsesSingleModule() {
+            assertThat(modules).hasSize(1);
+        }
+
+        @Test
+        void detectsProtobufSources() {
+            assertThat(modules.get(0).isHasProtobufSources()).isTrue();
+        }
+
+        @Test
+        void detectsTestProtobufSources() {
+            assertThat(modules.get(0).isHasTestProtobufSources()).isTrue();
+        }
+
+        @Test
+        void detectsGrpc() {
+            assertThat(modules.get(0).isProtobufUsesGrpc()).isTrue();
+        }
+
+        @Test
+        void detectsMutiny() {
+            assertThat(modules.get(0).isProtobufUsesMutiny()).isTrue();
+        }
+
+        @Test
+        void hasJavaSources() {
+            assertThat(modules.get(0).isHasJavaSources()).isTrue();
+        }
+    }
+
+    @Nested
+    class AntlrProject {
+
+        static List<ModuleInfo> modules;
+
+        @BeforeAll
+        static void parse() {
+            modules = parseProject("antlr-project");
+        }
+
+        @Test
+        void parsesSingleModule() {
+            assertThat(modules).hasSize(1);
+        }
+
+        @Test
+        void detectsAntlrSources() {
+            assertThat(modules.get(0).isHasAntlrSources()).isTrue();
+        }
+
+        @Test
+        void detectsVisitorFlag() {
+            assertThat(modules.get(0).isAntlrVisitor()).isTrue();
+        }
+
+        @Test
+        void hasJavaSources() {
+            assertThat(modules.get(0).isHasJavaSources()).isTrue();
+        }
+    }
 }
