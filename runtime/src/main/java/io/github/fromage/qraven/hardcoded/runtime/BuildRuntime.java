@@ -608,6 +608,8 @@ public class BuildRuntime {
                     ? System.getProperty("user.home") + pluginJar.substring(5) : pluginJar;
             if (Files.exists(Path.of(resolved))) {
                 args.add("-Xplugin=" + resolved);
+            } else {
+                System.err.println("WARNING: Kotlin compiler plugin JAR not found: " + resolved);
             }
         }
         for (String option : pluginOptions) {

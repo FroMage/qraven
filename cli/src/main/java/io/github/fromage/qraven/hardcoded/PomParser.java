@@ -805,15 +805,24 @@ public class PomParser {
                 .resolve(artifactId)
                 .resolve(kotlinVersion)
                 .resolve(artifactId + "-" + kotlinVersion + ".jar");
-        if (Files.exists(jar)) {
-            String m2 = localRepoDir.toString();
-            String home = System.getProperty("user.home");
-            if (m2.startsWith(home)) {
-                return "$HOME" + m2.substring(home.length()) + "/" + localRepoDir.relativize(jar);
+        if (!Files.exists(jar)) {
+            List<String> jars = resolver.resolveAnnotationProcessorPath(
+                    "org.jetbrains.kotlin", artifactId, kotlinVersion, null);
+            if (!jars.isEmpty()) {
+                jar = Path.of(jars.getFirst());
+                System.out.println("Resolved Kotlin compiler plugin " + pluginName + " (" + kotlinVersion + ")");
+            } else {
+                System.err.println("WARNING: could not resolve Kotlin compiler plugin " + pluginName
+                        + " (org.jetbrains.kotlin:" + artifactId + ":" + kotlinVersion + ")");
+                return null;
             }
-            return jar.toString();
         }
-        return null;
+        String m2 = localRepoDir.toString();
+        String home = System.getProperty("user.home");
+        if (jar.toString().startsWith(home)) {
+            return "$HOME" + jar.toString().substring(home.length());
+        }
+        return jar.toString();
     }
 
     private static String kotlinPluginId(String shortName) {
