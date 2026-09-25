@@ -3,8 +3,11 @@ package io.github.fromage.qraven.hardcoded;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.LinkedList;
@@ -398,22 +401,29 @@ public class QravenCli {
                 }
             }
 
-            try (var stream = Files.walk(projectDir)) {
-                var changed = stream
-                        .filter(p -> p.getFileName().toString().equals("pom.xml"))
-                        .filter(p -> !p.toString().contains("/target/"))
-                        .filter(p -> {
-                            try {
-                                return Files.getLastModifiedTime(p).toMillis() > buildJarTime;
-                            } catch (IOException e) {
-                                return true;
-                            }
-                        })
-                        .findFirst();
-                if (changed.isPresent()) {
-                    Path relative = projectDir.relativize(changed.get());
-                    return "pom changed: " + relative;
+            String[] result = new String[1];
+            Files.walkFileTree(projectDir, new SimpleFileVisitor<>() {
+                @Override
+                public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
+                    String name = dir.getFileName().toString();
+                    if (name.equals("target") || name.startsWith(".")) {
+                        return FileVisitResult.SKIP_SUBTREE;
+                    }
+                    return FileVisitResult.CONTINUE;
                 }
+
+                @Override
+                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+                    if (file.getFileName().toString().equals("pom.xml")
+                            && attrs.lastModifiedTime().toMillis() > buildJarTime) {
+                        result[0] = "pom changed: " + projectDir.relativize(file);
+                        return FileVisitResult.TERMINATE;
+                    }
+                    return FileVisitResult.CONTINUE;
+                }
+            });
+            if (result[0] != null) {
+                return result[0];
             }
             return null;
         } catch (IOException e) {
