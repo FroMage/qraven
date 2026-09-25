@@ -76,6 +76,12 @@ public class BuildOrchestrator {
                     }
                 }
             }
+            for (String path : m.annotationProcessorPaths()) {
+                String reactorId = installPathToArtifactId.get(path);
+                if (reactorId != null && !allDepIds.contains(reactorId)) {
+                    allDepIds.add(reactorId);
+                }
+            }
             List<String> unresolved = allDepIds.stream()
                     .filter(id -> !byId.containsKey(id))
                     .toList();

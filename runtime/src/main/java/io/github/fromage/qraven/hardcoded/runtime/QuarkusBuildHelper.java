@@ -68,6 +68,8 @@ public class QuarkusBuildHelper {
 
         var appModel = modelBuilder.build();
 
+        String baseName = module.artifactId() + "-" + module.version();
+
         Properties buildSystemProps = new Properties();
         for (Map.Entry<String, String> e : module.quarkusBuildProperties().entrySet()) {
             String val = e.getValue();
@@ -89,6 +91,7 @@ public class QuarkusBuildHelper {
                 buildSystemProps.put(e.getKey(), val);
             }
         }
+        buildSystemProps.putIfAbsent("quarkus.build.base-name", baseName);
 
         return QuarkusBootstrap.builder()
                 .setBaseClassLoader(QuarkusBuildHelper.class.getClassLoader())
@@ -96,7 +99,8 @@ public class QuarkusBuildHelper {
                 .setAppArtifact(appModel.getAppArtifact())
                 .setProjectRoot(module.targetDir().getParent())
                 .setTargetDirectory(module.targetDir())
-                .setBaseName(module.artifactId() + "-" + module.version())
+                .setBaseName(baseName)
+                .setOriginalBaseName(baseName)
                 .setBuildSystemProperties(buildSystemProps)
                 .setLocalProjectDiscovery(false)
                 .setIsolateDeployment(true)
@@ -105,8 +109,84 @@ public class QuarkusBuildHelper {
     }
 
     static void run(ModuleBuild module, List<ModuleBuild> reactorDeps) throws Exception {
+        String id = module.artifactId();
+        List<String> resolvedDeploymentCp = ModuleBuild.resolvePaths(module.deploymentClasspath());
+        int missingBefore = 0;
+        long minSize = Long.MAX_VALUE;
+        String smallestJar = null;
+        for (String cp : resolvedDeploymentCp) {
+            Path p = Path.of(cp);
+            if (!Files.exists(p)) {
+                System.err.println("[quarkus-build] [" + id + "] PRE-BOOTSTRAP MISSING: " + cp);
+                missingBefore++;
+            } else {
+                long size = Files.size(p);
+                if (size < minSize) {
+                    minSize = size;
+                    smallestJar = cp;
+                }
+                if (size == 0) {
+                    System.err.println("[quarkus-build] [" + id + "] ZERO-SIZE deployment JAR: " + cp);
+                }
+            }
+        }
+        if (missingBefore > 0) {
+            System.err.println("[quarkus-build] [" + id + "] " + missingBefore + " deployment JARs missing BEFORE bootstrap!");
+        }
+        if (smallestJar != null) {
+            System.err.println("[quarkus-build] [" + id + "] smallest deployment JAR: " + minSize + " bytes: " + smallestJar);
+        }
+
+        long t0 = System.currentTimeMillis();
         try (CuratedApplication app = bootstrap(module, reactorDeps)) {
+            long t1 = System.currentTimeMillis();
+            System.err.println("[quarkus-build] [" + id + "] bootstrap took " + (t1 - t0) + "ms");
+            System.err.println("[quarkus-build] [" + id + "] bootstrap targetDir: " + app.getQuarkusBootstrap().getTargetDirectory());
+            System.err.println("[quarkus-build] [" + id + "] bootstrap baseName: " + app.getQuarkusBootstrap().getBaseName());
+            System.err.println("[quarkus-build] [" + id + "] appModel deps: " + app.getApplicationModel().getDependencies().size());
+            System.err.println("[quarkus-build] [" + id + "] isolateDeployment: " + app.getQuarkusBootstrap().isIsolateDeployment());
             app.createAugmentor().createProductionApplication();
+            long t2 = System.currentTimeMillis();
+            System.err.println("[quarkus-build] [" + id + "] augmentation took " + (t2 - t1) + "ms, total " + (t2 - t0) + "ms");
+            Path metricsFile = module.targetDir().resolve("build-metrics.json");
+            Path quarkusApp = module.targetDir().resolve("quarkus-app");
+            System.err.println("[quarkus-build] [" + id + "] SUCCESS: build-metrics.json="
+                    + Files.exists(metricsFile) + ", quarkus-app=" + Files.isDirectory(quarkusApp));
+        } catch (Exception e) {
+            long elapsed = System.currentTimeMillis() - t0;
+            boolean noArtifacts = e instanceof IllegalStateException
+                    && e.getMessage() != null && e.getMessage().contains("No artifact results");
+            System.err.println("[quarkus-build] [" + id + "] FAILED after " + elapsed + "ms: "
+                    + (noArtifacts ? "No artifact results produced" : e));
+            System.err.println("[quarkus-build] [" + id + "] classesDir exists: " + Files.isDirectory(module.classesDir()));
+            System.err.println("[quarkus-build] [" + id + "] targetDir: " + module.targetDir());
+            System.err.println("[quarkus-build] [" + id + "] deploymentCp count: " + resolvedDeploymentCp.size());
+            int missing = 0;
+            for (String cp : resolvedDeploymentCp) {
+                Path p = Path.of(cp);
+                if (!Files.exists(p)) {
+                    System.err.println("[quarkus-build] [" + id + "] POST-FAIL MISSING: " + cp);
+                    missing++;
+                } else {
+                    long size = Files.size(p);
+                    if (size == 0) {
+                        System.err.println("[quarkus-build] [" + id + "] POST-FAIL ZERO-SIZE: " + cp);
+                    }
+                }
+            }
+            if (missing > 0) {
+                System.err.println("[quarkus-build] [" + id + "] " + missing + " deployment JARs missing POST-FAIL!");
+            }
+            Path metricsFile = module.targetDir().resolve("build-metrics.json");
+            if (Files.exists(metricsFile)) {
+                System.err.println("[quarkus-build] [" + id + "] build-metrics.json exists (" + Files.size(metricsFile) + " bytes)");
+            } else {
+                System.err.println("[quarkus-build] [" + id + "] build-metrics.json NOT found");
+            }
+            Path quarkusApp = module.targetDir().resolve("quarkus-app");
+            System.err.println("[quarkus-build] [" + id + "] quarkus-app dir exists: " + Files.isDirectory(quarkusApp));
+            e.printStackTrace(System.err);
+            throw e;
         }
     }
 
