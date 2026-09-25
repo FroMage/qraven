@@ -736,6 +736,13 @@ public class BuildFileGenerator {
         else arch = osArch;
         String classifier = os + "-" + arch;
 
+        String protocVersion = modules.stream()
+                .map(ModuleInfo::getProtocVersion).filter(v -> v != null)
+                .findFirst().orElse(null);
+        String grpcVersion = modules.stream()
+                .map(ModuleInfo::getGrpcVersion).filter(v -> v != null)
+                .findFirst().orElse(null);
+
         Path m2 = Path.of(System.getProperty("user.home"), ".m2", "repository");
 
         Path protocBase = m2.resolve("com/google/protobuf/protoc");
@@ -751,6 +758,14 @@ public class BuildFileGenerator {
                         .findFirst().orElse(null);
             } catch (IOException e) {
                 // ignore
+            }
+        }
+        if (protocPath == null && protocVersion != null) {
+            Path resolved = resolver.resolveClassifiedArtifact(
+                    "com.google.protobuf", "protoc", protocVersion, classifier, "exe");
+            if (resolved != null) {
+                protocPath = resolved.toString();
+                System.out.println("Resolved protoc " + protocVersion + " via download");
             }
         }
 
@@ -769,6 +784,14 @@ public class BuildFileGenerator {
                             .findFirst().orElse(null);
                 } catch (IOException e) {
                     // ignore
+                }
+            }
+            if (grpcJavaPluginPath == null && grpcVersion != null) {
+                Path resolved = resolver.resolveClassifiedArtifact(
+                        "io.grpc", "protoc-gen-grpc-java", grpcVersion, classifier, "exe");
+                if (resolved != null) {
+                    grpcJavaPluginPath = resolved.toString();
+                    System.out.println("Resolved protoc-gen-grpc-java " + grpcVersion + " via download");
                 }
             }
         }

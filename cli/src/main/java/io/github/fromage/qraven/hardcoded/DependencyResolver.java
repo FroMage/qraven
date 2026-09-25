@@ -373,6 +373,22 @@ public class DependencyResolver {
         return null;
     }
 
+    public Path resolveClassifiedArtifact(String groupId, String artifactId, String version,
+                                           String classifier, String extension) {
+        Artifact artifact = new DefaultArtifact(groupId, artifactId, classifier, extension, version);
+        ArtifactRequest request = new ArtifactRequest(artifact, remoteRepos, null);
+        try {
+            ArtifactResult result = repoSystem.resolveArtifact(session, request);
+            if (result.isResolved()) {
+                return result.getArtifact().getFile().toPath();
+            }
+        } catch (ArtifactResolutionException e) {
+            warn("WARNING: Could not resolve " + groupId + ":" + artifactId + ":" + version
+                    + ":" + classifier + ":" + extension + ": " + e.getMessage());
+        }
+        return null;
+    }
+
     public String resolveArtifactPath(String groupId, String artifactId, String version) {
         String path = expectedArtifactPath(groupId, artifactId, version);
         if (new java.io.File(path).exists()) {
