@@ -809,7 +809,7 @@ public class PomParser {
             List<String> jars = resolver.resolveAnnotationProcessorPath(
                     "org.jetbrains.kotlin", artifactId, kotlinVersion, null);
             if (!jars.isEmpty()) {
-                jar = Path.of(jars.getFirst());
+                jar = Path.of(jars.get(0));
                 System.out.println("Resolved Kotlin compiler plugin " + pluginName + " (" + kotlinVersion + ")");
             } else {
                 System.err.println("WARNING: could not resolve Kotlin compiler plugin " + pluginName
