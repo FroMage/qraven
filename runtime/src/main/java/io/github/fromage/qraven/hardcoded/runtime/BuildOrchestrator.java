@@ -327,11 +327,15 @@ public class BuildOrchestrator {
         if (!modules.isEmpty()) {
             System.out.println(modules.get(0).runtime.apCacheStats());
         }
+        // Close the build log stream before appending the failure summary,
+        // otherwise the still-open PrintStream can interfere with the append
+        if (buildLog != null) {
+            buildLog.close();
+        }
         if (!directFailures.isEmpty()) {
             System.err.println("Direct failures: " + String.join(", ", directFailures));
             if (logFile != null) {
                 try {
-                    // Append failure summary to the build log (which already has JUL/stderr output)
                     try (PrintWriter pw = new PrintWriter(Files.newBufferedWriter(logFile,
                             StandardOpenOption.CREATE, StandardOpenOption.APPEND))) {
                         pw.println();
@@ -363,9 +367,6 @@ public class BuildOrchestrator {
                     }
                 }
             }
-        }
-        if (buildLog != null) {
-            buildLog.close();
         }
         if (!cascadeFailures.isEmpty()) {
             System.err.println("Cascade failures (" + cascadeFailures.size() + "): "
