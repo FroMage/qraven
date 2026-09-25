@@ -67,7 +67,8 @@ public class BuildOrchestrator {
                     allDepIds.add(optId);
                 }
             }
-            if (m.hasExtensionPlugin() || m.hasGenerateCodeGoal() || m.hasGenerateCodeTestsGoal()) {
+            if (m.hasExtensionPlugin() || m.hasGenerateCodeGoal() || m.hasGenerateCodeTestsGoal()
+                    || m.hasQuarkusBuildPlugin()) {
                 for (String path : m.deploymentClasspath()) {
                     String reactorId = installPathToArtifactId.get(path);
                     if (reactorId != null && !allDepIds.contains(reactorId)) {
@@ -371,6 +372,9 @@ public class BuildOrchestrator {
         if (!cascadeFailures.isEmpty()) {
             System.err.println("Cascade failures (" + cascadeFailures.size() + "): "
                     + String.join(", ", cascadeFailures));
+        }
+        if (!directFailures.isEmpty()) {
+            System.exit(1);
         }
     }
 

@@ -784,7 +784,6 @@ public class BuildFileGenerator {
     }
 
     private void resolveAntlrToolClasspath(List<ModuleInfo> modules) {
-        Path m2 = Path.of(System.getProperty("user.home"), ".m2", "repository");
         String antlrVersion = null;
         for (ModuleInfo module : modules) {
             if (!module.isHasAntlrSources()) continue;
@@ -808,56 +807,13 @@ public class BuildFileGenerator {
             return;
         }
 
-        List<String> jars = new ArrayList<>();
-        String[][] deps = {
-            {"org/antlr/antlr4/" + antlrVersion, "antlr4-" + antlrVersion + ".jar"},
-            {"org/antlr/antlr4-runtime/" + antlrVersion, "antlr4-runtime-" + antlrVersion + ".jar"},
-        };
-        boolean allFound = true;
-        for (String[] dep : deps) {
-            Path jar = m2.resolve(dep[0]).resolve(dep[1]);
-            if (!Files.exists(jar)) {
-                System.err.println("WARNING: ANTLR4 dependency not found: " + jar);
-                allFound = false;
-                continue;
-            }
-            jars.add(jar.toString());
-        }
-        // ANTLR4 tool transitive deps - find whatever version is available
-        String[][] transitiveDeps = {
-            {"org/antlr/antlr-runtime", "antlr-runtime"},
-            {"org/antlr/ST4", "ST4"},
-            {"org/abego/treelayout/org.abego.treelayout.core", "org.abego.treelayout.core"},
-        };
-        for (String[] dep : transitiveDeps) {
-            Path depDir = m2.resolve(dep[0]);
-            if (!Files.isDirectory(depDir)) {
-                System.err.println("WARNING: ANTLR4 transitive dependency dir not found: " + depDir);
-                allFound = false;
-                continue;
-            }
-            try (var versions = Files.list(depDir)) {
-                String found = versions.filter(Files::isDirectory)
-                        .map(v -> {
-                            String ver = v.getFileName().toString();
-                            Path jar = v.resolve(dep[1] + "-" + ver + ".jar");
-                            return Files.exists(jar) ? jar.toString() : null;
-                        })
-                        .filter(p -> p != null)
-                        .findFirst().orElse(null);
-                if (found != null) {
-                    jars.add(found);
-                } else {
-                    System.err.println("WARNING: ANTLR4 transitive dependency jar not found in " + depDir);
-                    allFound = false;
-                }
-            } catch (IOException e) {
-                allFound = false;
-            }
-        }
-        if (allFound && !jars.isEmpty()) {
+        List<String> jars = resolver.resolveAnnotationProcessorPath(
+                "org.antlr", "antlr4", antlrVersion, null);
+        if (!jars.isEmpty()) {
             antlrToolClasspath = String.join(java.io.File.pathSeparator, jars);
             System.out.println("Resolved ANTLR4 tool classpath (" + antlrVersion + ")");
+        } else {
+            System.err.println("WARNING: could not resolve ANTLR4 tool artifact org.antlr:antlr4:" + antlrVersion);
         }
     }
 
