@@ -31,6 +31,10 @@ public class BuildOrchestrator {
     private static final String BOLD = ESC + "1m";
     private static final String RED = ESC + "31m";
     private static final String YELLOW = ESC + "33m";
+    private static final String CYAN = ESC + "36m";
+    private static final String DIM = ESC + "2m";
+    private static final String BOLD_RED = ESC + "1;31m";
+    private static final String BOLD_WHITE = ESC + "1;37m";
     private static final String RESET = ESC + "0m";
 
     private final int threadCount;
@@ -95,10 +99,15 @@ public class BuildOrchestrator {
                     .toList();
             m.setDependencies(deps);
 
+            // Only exclude test deps that addReactorJars actually walks (compile deps).
+            // Deployment modules added to allDepIds for build ordering must NOT be excluded
+            // here — addReactorJars skips them, so they must be on the test classpath.
+            Set<String> compileDepIds = new HashSet<>(m.moduleDependencyIds());
+            compileDepIds.addAll(m.optionalModuleDependencyIds());
             List<ModuleBuild> testDeps = m.testModuleDependencyIds().stream()
                     .map(byId::get)
                     .filter(Objects::nonNull)
-                    .filter(d -> !allDepIds.contains(d.artifactId()))
+                    .filter(d -> !compileDepIds.contains(d.artifactId()))
                     .toList();
             m.setTestDependencies(testDeps);
 
@@ -369,10 +378,11 @@ public class BuildOrchestrator {
                     // ignore append failure
                 }
             }
+            String projectRoot = modules.get(0).runtime.getProjectRoot().toString() + "/";
             System.err.println();
             for (ModuleBuild m : modules) {
                 if (m.getFailureMessage() != null) {
-                    System.err.println(RED + m.getFailureMessage() + RESET);
+                    printFormattedError(m.getFailureMessage(), projectRoot);
                 }
             }
         }
@@ -383,6 +393,69 @@ public class BuildOrchestrator {
         if (!directFailures.isEmpty()) {
             System.exit(1);
         }
+    }
+
+    private static void printFormattedError(String message, String projectRoot) {
+        String[] lines = message.split("\n");
+        boolean firstLine = true;
+        boolean prevWasError = false;
+        for (String line : lines) {
+            String trimmed = line.trim();
+            if (firstLine) {
+                // [module] FAILED after Xms: ...
+                int colonIdx = trimmed.indexOf(": ", trimmed.indexOf("]") + 1);
+                if (colonIdx > 0) {
+                    String header = trimmed.substring(0, colonIdx);
+                    String detail = trimmed.substring(colonIdx + 2);
+                    System.err.println(BOLD_RED + header + ": " + RESET + RED + detail + RESET);
+                } else {
+                    System.err.println(BOLD_RED + trimmed + RESET);
+                }
+                firstLine = false;
+                continue;
+            }
+
+            // Detect error/warning lines: /path/File.java:123: error: message
+            if (trimmed.matches(".+\\.\\w+:\\d+: (error|warning):.*")) {
+                if (prevWasError) {
+                    System.err.println();
+                }
+                prevWasError = true;
+                String relative = trimmed.startsWith(projectRoot)
+                        ? trimmed.substring(projectRoot.length()) : trimmed;
+                int firstColon = relative.indexOf(':');
+                int secondColon = relative.indexOf(':', firstColon + 1);
+                int thirdColon = relative.indexOf(':', secondColon + 1);
+                if (firstColon > 0 && secondColon > firstColon && thirdColon > secondColon) {
+                    String file = relative.substring(0, firstColon);
+                    String lineNum = relative.substring(firstColon + 1, secondColon);
+                    String severity = relative.substring(secondColon + 1, thirdColon).trim();
+                    String msg = relative.substring(thirdColon + 1);
+                    String sevColor = severity.equals("error") ? BOLD_RED : YELLOW;
+                    System.err.println("  " + CYAN + file + RESET + DIM + ":" + RESET
+                            + BOLD_WHITE + lineNum + RESET + DIM + ": " + RESET
+                            + sevColor + severity + RESET + DIM + ":" + RESET + msg);
+                } else {
+                    System.err.println("  " + CYAN + relative + RESET);
+                }
+            } else if (trimmed.startsWith("symbol:") || trimmed.startsWith("location:")) {
+                int colon = trimmed.indexOf(':');
+                String key = trimmed.substring(0, colon + 1);
+                String value = trimmed.substring(colon + 1);
+                System.err.println("    " + DIM + key + RESET + value);
+            } else if (trimmed.equals("^")) {
+                System.err.println(RED + line + RESET);
+            } else if (trimmed.contains("^") && trimmed.replaceAll("[\\s^]", "").isEmpty()) {
+                System.err.println(RED + line + RESET);
+            } else if (trimmed.startsWith("Caused by:")) {
+                System.err.println("  " + DIM + trimmed + RESET);
+            } else if (trimmed.startsWith("method ") || trimmed.startsWith("(")) {
+                System.err.println("    " + DIM + trimmed + RESET);
+            } else {
+                System.err.println(line);
+            }
+        }
+        System.err.println();
     }
 
     private Map<String, Integer> computeForwardReach(List<ModuleBuild> modules) {
