@@ -211,6 +211,8 @@ public class QravenCli {
                 Files.deleteIfExists(bootstrapJar);
             }
 
+            savePomPaths(outputDir, modules, projectDir);
+
             System.out.println();
             System.out.println("Total generation time: " + (System.currentTimeMillis() - totalStart) + "ms");
         } else if (!noGenerate) {
@@ -382,6 +384,17 @@ public class QravenCli {
         }
     }
 
+    private static void savePomPaths(Path outputDir, List<ModuleInfo> modules, Path projectDir) {
+        try {
+            List<String> relativePaths = modules.stream()
+                    .map(m -> projectDir.relativize(m.getPomFile()).toString())
+                    .toList();
+            Files.writeString(outputDir.resolve("pom-paths.txt"), String.join("\n", relativePaths) + "\n");
+        } catch (IOException e) {
+            // non-fatal: next check will fall back to tree walk
+        }
+    }
+
     private static String regenerationReason(Path projectDir, Path buildJar) {
         if (!Files.exists(buildJar)) return "build.jar not found";
         try {
@@ -401,34 +414,53 @@ public class QravenCli {
                 }
             }
 
-            String[] result = new String[1];
-            Files.walkFileTree(projectDir, new SimpleFileVisitor<>() {
-                @Override
-                public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
-                    String name = dir.getFileName().toString();
-                    if (name.equals("target") || name.startsWith(".")) {
-                        return FileVisitResult.SKIP_SUBTREE;
-                    }
-                    return FileVisitResult.CONTINUE;
-                }
-
-                @Override
-                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
-                    if (file.getFileName().toString().equals("pom.xml")
-                            && attrs.lastModifiedTime().toMillis() > buildJarTime) {
-                        result[0] = "pom changed: " + projectDir.relativize(file);
-                        return FileVisitResult.TERMINATE;
-                    }
-                    return FileVisitResult.CONTINUE;
-                }
-            });
-            if (result[0] != null) {
-                return result[0];
+            Path pomPathsFile = buildJar.getParent().resolve("pom-paths.txt");
+            if (Files.exists(pomPathsFile)) {
+                return checkKnownPoms(projectDir, pomPathsFile, buildJarTime);
             }
-            return null;
+            return walkForChangedPoms(projectDir, buildJarTime);
         } catch (IOException e) {
             return "error checking: " + e.getMessage();
         }
+    }
+
+    private static String checkKnownPoms(Path projectDir, Path pomPathsFile, long buildJarTime) throws IOException {
+        for (String line : Files.readAllLines(pomPathsFile)) {
+            if (line.isBlank()) continue;
+            Path pom = projectDir.resolve(line);
+            if (!Files.exists(pom)) {
+                return "pom removed: " + line;
+            }
+            if (Files.getLastModifiedTime(pom).toMillis() > buildJarTime) {
+                return "pom changed: " + line;
+            }
+        }
+        return null;
+    }
+
+    private static String walkForChangedPoms(Path projectDir, long buildJarTime) throws IOException {
+        String[] result = new String[1];
+        Files.walkFileTree(projectDir, new SimpleFileVisitor<>() {
+            @Override
+            public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
+                String name = dir.getFileName().toString();
+                if (name.equals("target") || name.startsWith(".")) {
+                    return FileVisitResult.SKIP_SUBTREE;
+                }
+                return FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+                if (file.getFileName().toString().equals("pom.xml")
+                        && attrs.lastModifiedTime().toMillis() > buildJarTime) {
+                    result[0] = "pom changed: " + projectDir.relativize(file);
+                    return FileVisitResult.TERMINATE;
+                }
+                return FileVisitResult.CONTINUE;
+            }
+        });
+        return result[0];
     }
 
     private static int runBuild(Path jarFile, Path workDir, List<String> args) throws Exception {
