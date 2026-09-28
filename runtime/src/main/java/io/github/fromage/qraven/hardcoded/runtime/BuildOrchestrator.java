@@ -27,6 +27,12 @@ import java.util.logging.Logger;
 
 public class BuildOrchestrator {
 
+    private static final String ESC = "\u001b[";
+    private static final String BOLD = ESC + "1m";
+    private static final String RED = ESC + "31m";
+    private static final String YELLOW = ESC + "33m";
+    private static final String RESET = ESC + "0m";
+
     private final int threadCount;
 
     public BuildOrchestrator(int threadCount) {
@@ -334,7 +340,8 @@ public class BuildOrchestrator {
             buildLog.close();
         }
         if (!directFailures.isEmpty()) {
-            System.err.println("Direct failures: " + String.join(", ", directFailures));
+            System.err.println(BOLD + RED + "Direct failures: " + RESET + RED
+                    + String.join(", ", directFailures) + RESET);
             if (logFile != null) {
                 try {
                     try (PrintWriter pw = new PrintWriter(Files.newBufferedWriter(logFile,
@@ -365,13 +372,13 @@ public class BuildOrchestrator {
             System.err.println();
             for (ModuleBuild m : modules) {
                 if (m.getFailureMessage() != null) {
-                    System.err.println(m.getFailureMessage());
+                    System.err.println(RED + m.getFailureMessage() + RESET);
                 }
             }
         }
         if (!cascadeFailures.isEmpty()) {
-            System.err.println("Cascade failures (" + cascadeFailures.size() + "): "
-                    + String.join(", ", cascadeFailures));
+            System.err.println(YELLOW + "Cascade failures (" + cascadeFailures.size() + "): "
+                    + String.join(", ", cascadeFailures) + RESET);
         }
         if (!directFailures.isEmpty()) {
             System.exit(1);

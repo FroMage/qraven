@@ -826,12 +826,13 @@ public abstract class ModuleBuild {
         Set<String> optionalDeps = includeOwnOptional
                 ? Set.of() : new HashSet<>(module.optionalModuleDependencyIds());
         for (ModuleBuild dep : module.getDependencies()) {
-            if (!visited.add(dep.artifactId())) {
+            if (visited.contains(dep.artifactId())) {
                 continue;
             }
             if (optionalDeps.contains(dep.artifactId())) {
                 continue;
             }
+            visited.add(dep.artifactId());
             if (dep.mainBuildSucceeded && !"pom".equals(dep.packaging())) {
                 Path jar = dep.jarFile();
                 if (Files.exists(jar)) {
