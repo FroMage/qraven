@@ -209,9 +209,15 @@ public abstract class ModuleBuild {
 
     public void buildDirect() {
         buildScheduledAt = System.currentTimeMillis();
-        doBuild();
-        if (!testDependencies.isEmpty() || !testJarDependencies.isEmpty()) {
-            doTestCompilation();
+        try {
+            doBuild();
+            if (!testDependencies.isEmpty() || !testJarDependencies.isEmpty()) {
+                doTestCompilation();
+            }
+        } catch (RuntimeException e) {
+            if (failureMessage == null) {
+                throw e;
+            }
         }
     }
 
