@@ -38,6 +38,15 @@ class StubModuleBuild extends ModuleBuild {
 
     StubModuleBuild withOptionalModuleDeps(String... ids) {
         this.optionalModuleDependencyIds = List.of(ids);
+        // Mirror real PomParser behavior: optional reactor deps are a subset
+        // of moduleDependencyIds, not a separate partition
+        List<String> merged = new ArrayList<>(moduleDependencyIds);
+        for (String id : ids) {
+            if (!merged.contains(id)) {
+                merged.add(id);
+            }
+        }
+        this.moduleDependencyIds = List.copyOf(merged);
         return this;
     }
 

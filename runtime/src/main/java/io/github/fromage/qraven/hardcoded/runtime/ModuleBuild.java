@@ -823,12 +823,13 @@ public abstract class ModuleBuild {
 
     protected void addReactorJarsImpl(ModuleBuild module, List<String> classpath, Set<String> visited,
                                      boolean includeOwnOptional) {
-        // Only walk deps declared in moduleDependencyIds/optionalModuleDependencyIds.
-        // getDependencies() may include extra deps (deployment modules) for build ordering
-        // that must not leak onto the compile classpath.
+        // Only walk deps declared in moduleDependencyIds (which includes optional).
+        // When includeOwnOptional is false, remove optional deps so they don't
+        // leak transitively. getDependencies() may also include extra deps
+        // (deployment modules) for build ordering that must not leak either.
         Set<String> allowedDeps = new HashSet<>(module.moduleDependencyIds());
-        if (includeOwnOptional) {
-            allowedDeps.addAll(module.optionalModuleDependencyIds());
+        if (!includeOwnOptional) {
+            allowedDeps.removeAll(module.optionalModuleDependencyIds());
         }
         for (ModuleBuild dep : module.getDependencies()) {
             if (visited.contains(dep.artifactId())) {
