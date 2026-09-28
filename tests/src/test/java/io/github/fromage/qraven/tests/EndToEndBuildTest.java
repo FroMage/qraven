@@ -177,6 +177,57 @@ class EndToEndBuildTest {
     }
 
     @Test
+    void optionalDeps_fullBuild(@TempDir Path outputDir) throws Exception {
+        Path buildJar = generateBuildJar("optional-deps", outputDir);
+        Path projectDir = TEST_PROJECTS.resolve("optional-deps");
+
+        int exitCode = runBuild(buildJar, projectDir);
+        assertThat(exitCode).isEqualTo(0);
+
+        for (String module : List.of("optional-lib", "lib", "app")) {
+            Path targetJar = projectDir.resolve(module + "/target/" + module + "-1.0.0.jar");
+            assertThat(targetJar).as("JAR for module %s", module).exists();
+        }
+    }
+
+    @Test
+    void optionalDeps_generatedCodeTracksOptionalDeps(@TempDir Path outputDir) throws Exception {
+        Path projectDir = TEST_PROJECTS.resolve("optional-deps");
+        DependencyResolver resolver = new DependencyResolver();
+        PomParser parser = new PomParser(projectDir, resolver);
+        List<ModuleInfo> modules = parser.parseProject();
+
+        BuildFileGenerator generator = new BuildFileGenerator(projectDir, outputDir, 1, resolver);
+        generator.generate(modules);
+
+        Path srcDir = outputDir.resolve("build-src");
+        String libSource = findGeneratedSource(srcDir, "lib");
+        assertThat(libSource).contains("optionalModuleDependencyIds");
+        assertThat(libSource).contains("\"optional-lib\"");
+
+        String appSource = findGeneratedSource(srcDir, "app");
+        assertThat(appSource).doesNotContain("optional-lib");
+    }
+
+    private String findGeneratedSource(Path srcDir, String moduleArtifactId) throws IOException {
+        try (var stream = Files.walk(srcDir)) {
+            return stream.filter(p -> p.toString().endsWith(".java"))
+                    .map(p -> {
+                        try {
+                            return Files.readString(p);
+                        } catch (IOException e) {
+                            return "";
+                        }
+                    })
+                    .filter(content -> content.contains("\"" + moduleArtifactId + "\"")
+                            && content.contains("artifactId()"))
+                    .findFirst()
+                    .orElseThrow(() -> new AssertionError(
+                            "No generated source found for module: " + moduleArtifactId));
+        }
+    }
+
+    @Test
     void multiModule_filteredBuild(@TempDir Path outputDir) throws Exception {
         Path buildJar = generateBuildJar("multi-module", outputDir);
         Path projectDir = TEST_PROJECTS.resolve("multi-module");

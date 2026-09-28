@@ -734,4 +734,48 @@ class PomParserTest {
             assertThat(modules.get(0).isHasJavaSources()).isTrue();
         }
     }
+
+    @Nested
+    class OptionalDeps {
+
+        static List<ModuleInfo> modules;
+
+        @BeforeAll
+        static void parse() {
+            modules = parseProject("optional-deps");
+        }
+
+        @Test
+        void parsesAllModules() {
+            assertThat(modules).hasSize(4);
+        }
+
+        @Test
+        void libHasOptionalLibAsReactorDep() {
+            ModuleInfo lib = findModule(modules, "lib");
+            assertThat(lib.getReactorDependencies()).contains("optional-lib");
+        }
+
+        @Test
+        void libMarksOptionalLibAsOptional() {
+            ModuleInfo lib = findModule(modules, "lib");
+            assertThat(lib.getOptionalReactorDependencies()).contains("optional-lib");
+        }
+
+        @Test
+        void appDoesNotHaveOptionalLibAsReactorDep() {
+            ModuleInfo app = findModule(modules, "app");
+            assertThat(app.getReactorDependencies()).contains("lib");
+            assertThat(app.getReactorDependencies()).doesNotContain("optional-lib");
+        }
+
+        @Test
+        void appDoesNotHaveCommonsTextOnClasspath() {
+            ModuleInfo app = findModule(modules, "app");
+            for (String cp : app.getCompileClasspath()) {
+                assertThat(cp).as("app compile classpath should not contain commons-text")
+                        .doesNotContain("commons-text");
+            }
+        }
+    }
 }

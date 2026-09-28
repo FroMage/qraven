@@ -693,13 +693,14 @@ public abstract class ModuleBuild {
                             }
                         }
                         if (testDep.mainBuildSucceeded) {
+                            Set<String> optionalEntries = testDep.resolvedOptionalClasspathEntries();
                             for (String cp : testDep.resolvedClasspath()) {
-                                if (!testCp.contains(cp)) {
+                                if (!testCp.contains(cp) && !optionalEntries.contains(cp)) {
                                     testCp.add(cp);
                                 }
                             }
                         }
-                        addReactorJars(testDep, testCp, testVisited);
+                        addReactorJarsImpl(testDep, testCp, testVisited, false);
                     }
                 }
                 for (ModuleBuild testJarDep : testJarDependencies) {
@@ -817,8 +818,18 @@ public abstract class ModuleBuild {
     }
 
     private void addReactorJars(ModuleBuild module, List<String> classpath, Set<String> visited) {
+        addReactorJarsImpl(module, classpath, visited, true);
+    }
+
+    private void addReactorJarsImpl(ModuleBuild module, List<String> classpath, Set<String> visited,
+                                     boolean includeOwnOptional) {
+        Set<String> optionalDeps = includeOwnOptional
+                ? Set.of() : new HashSet<>(module.optionalModuleDependencyIds());
         for (ModuleBuild dep : module.getDependencies()) {
             if (!visited.add(dep.artifactId())) {
+                continue;
+            }
+            if (optionalDeps.contains(dep.artifactId())) {
                 continue;
             }
             if (dep.mainBuildSucceeded && !"pom".equals(dep.packaging())) {
@@ -833,13 +844,14 @@ public abstract class ModuleBuild {
                 }
             }
             if (dep.mainBuildSucceeded) {
+                Set<String> optionalEntries = dep.resolvedOptionalClasspathEntries();
                 for (String cp : dep.resolvedClasspath()) {
-                    if (!classpath.contains(cp)) {
+                    if (!classpath.contains(cp) && !optionalEntries.contains(cp)) {
                         classpath.add(cp);
                     }
                 }
             }
-            addReactorJars(dep, classpath, visited);
+            addReactorJarsImpl(dep, classpath, visited, false);
         }
     }
 
