@@ -358,14 +358,14 @@ public class BuildOrchestrator {
                                     + String.join(", ", cascadeFailures));
                         }
                     }
-                    System.err.println(directFailures.size() + " compilation error(s), see " + logFile
-                            + " for details");
                 } catch (IOException e) {
-                    for (ModuleBuild m : modules) {
-                        if (m.getFailureMessage() != null) {
-                            System.err.println(m.getFailureMessage());
-                        }
-                    }
+                    // ignore append failure
+                }
+            }
+            System.err.println();
+            for (ModuleBuild m : modules) {
+                if (m.getFailureMessage() != null) {
+                    System.err.println(m.getFailureMessage());
                 }
             }
         }
