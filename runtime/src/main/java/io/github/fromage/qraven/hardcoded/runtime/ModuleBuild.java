@@ -26,7 +26,7 @@ public abstract class ModuleBuild {
     protected final BuildRuntime runtime;
     private volatile CompletableFuture<Void> buildFuture;
     private final CompletableFuture<Void> mainBuildDone = new CompletableFuture<>();
-    volatile boolean mainBuildSucceeded;
+    protected volatile boolean mainBuildSucceeded;
     private List<ModuleBuild> dependencies = List.of();
     private List<ModuleBuild> testDependencies = List.of();
     private List<ModuleBuild> testJarDependencies = List.of();
@@ -821,7 +821,7 @@ public abstract class ModuleBuild {
         addReactorJarsImpl(module, classpath, visited, true);
     }
 
-    private void addReactorJarsImpl(ModuleBuild module, List<String> classpath, Set<String> visited,
+    protected void addReactorJarsImpl(ModuleBuild module, List<String> classpath, Set<String> visited,
                                      boolean includeOwnOptional) {
         // Only walk deps declared in moduleDependencyIds/optionalModuleDependencyIds.
         // getDependencies() may include extra deps (deployment modules) for build ordering

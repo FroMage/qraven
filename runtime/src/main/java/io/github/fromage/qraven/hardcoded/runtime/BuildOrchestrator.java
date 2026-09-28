@@ -58,6 +58,8 @@ public class BuildOrchestrator {
             byId.put(m.artifactId(), m);
         }
 
+        wireDependencies(modules, byId);
+
         Map<String, String> installPathToArtifactId = new HashMap<>();
         for (ModuleBuild m : modules) {
             if (!"pom".equals(m.packaging())) {
@@ -68,54 +70,6 @@ public class BuildOrchestrator {
                         + m.artifactId() + "-" + m.version() + ".jar";
                 installPathToArtifactId.put(installPath, m.artifactId());
             }
-        }
-
-        for (ModuleBuild m : modules) {
-            List<String> allDepIds = new ArrayList<>(m.moduleDependencyIds());
-            for (String optId : m.optionalModuleDependencyIds()) {
-                if (byId.containsKey(optId) && !allDepIds.contains(optId)) {
-                    allDepIds.add(optId);
-                }
-            }
-            if (m.hasExtensionPlugin() || m.hasGenerateCodeGoal() || m.hasGenerateCodeTestsGoal()
-                    || m.hasQuarkusBuildPlugin()) {
-                for (String path : m.deploymentClasspath()) {
-                    String reactorId = installPathToArtifactId.get(path);
-                    if (reactorId != null && !allDepIds.contains(reactorId)) {
-                        allDepIds.add(reactorId);
-                    }
-                }
-            }
-            List<String> unresolved = allDepIds.stream()
-                    .filter(id -> !byId.containsKey(id))
-                    .toList();
-            if (!unresolved.isEmpty()) {
-                System.err.println("WARNING: " + m.artifactId()
-                        + " has unresolved reactor dependencies: " + unresolved);
-            }
-            List<ModuleBuild> deps = allDepIds.stream()
-                    .map(byId::get)
-                    .filter(Objects::nonNull)
-                    .toList();
-            m.setDependencies(deps);
-
-            // Only exclude test deps that addReactorJars actually walks (compile deps).
-            // Deployment modules added to allDepIds for build ordering must NOT be excluded
-            // here — addReactorJars skips them, so they must be on the test classpath.
-            Set<String> compileDepIds = new HashSet<>(m.moduleDependencyIds());
-            compileDepIds.addAll(m.optionalModuleDependencyIds());
-            List<ModuleBuild> testDeps = m.testModuleDependencyIds().stream()
-                    .map(byId::get)
-                    .filter(Objects::nonNull)
-                    .filter(d -> !compileDepIds.contains(d.artifactId()))
-                    .toList();
-            m.setTestDependencies(testDeps);
-
-            List<ModuleBuild> testJarDeps = m.testJarModuleDependencyIds().stream()
-                    .map(byId::get)
-                    .filter(Objects::nonNull)
-                    .toList();
-            m.setTestJarDependencies(testJarDeps);
         }
 
         if (projectsFilter != null) {
@@ -576,5 +530,67 @@ public class BuildOrchestrator {
             }
         }
         return willRebuild;
+    }
+
+    public static void wireDependencies(List<ModuleBuild> modules, Map<String, ModuleBuild> byId) {
+        Map<String, String> installPathToArtifactId = new HashMap<>();
+        for (ModuleBuild m : modules) {
+            if (!"pom".equals(m.packaging())) {
+                String installPath = "$HOME/.m2/repository/"
+                        + m.groupId().replace('.', '/') + "/"
+                        + m.artifactId() + "/"
+                        + m.version() + "/"
+                        + m.artifactId() + "-" + m.version() + ".jar";
+                installPathToArtifactId.put(installPath, m.artifactId());
+            }
+        }
+
+        for (ModuleBuild m : modules) {
+            List<String> allDepIds = new ArrayList<>(m.moduleDependencyIds());
+            for (String optId : m.optionalModuleDependencyIds()) {
+                if (byId.containsKey(optId) && !allDepIds.contains(optId)) {
+                    allDepIds.add(optId);
+                }
+            }
+            if (m.hasExtensionPlugin() || m.hasGenerateCodeGoal() || m.hasGenerateCodeTestsGoal()
+                    || m.hasQuarkusBuildPlugin()) {
+                for (String path : m.deploymentClasspath()) {
+                    String reactorId = installPathToArtifactId.get(path);
+                    if (reactorId != null && !allDepIds.contains(reactorId)) {
+                        allDepIds.add(reactorId);
+                    }
+                }
+            }
+            List<String> unresolved = allDepIds.stream()
+                    .filter(id -> !byId.containsKey(id))
+                    .toList();
+            if (!unresolved.isEmpty()) {
+                System.err.println("WARNING: " + m.artifactId()
+                        + " has unresolved reactor dependencies: " + unresolved);
+            }
+            List<ModuleBuild> deps = allDepIds.stream()
+                    .map(byId::get)
+                    .filter(Objects::nonNull)
+                    .toList();
+            m.setDependencies(deps);
+
+            // Only exclude test deps that addReactorJars actually walks (compile deps).
+            // Deployment modules added to allDepIds for build ordering must NOT be excluded
+            // here — addReactorJars skips them, so they must be on the test classpath.
+            Set<String> compileDepIds = new HashSet<>(m.moduleDependencyIds());
+            compileDepIds.addAll(m.optionalModuleDependencyIds());
+            List<ModuleBuild> testDeps = m.testModuleDependencyIds().stream()
+                    .map(byId::get)
+                    .filter(Objects::nonNull)
+                    .filter(d -> !compileDepIds.contains(d.artifactId()))
+                    .toList();
+            m.setTestDependencies(testDeps);
+
+            List<ModuleBuild> testJarDeps = m.testJarModuleDependencyIds().stream()
+                    .map(byId::get)
+                    .filter(Objects::nonNull)
+                    .toList();
+            m.setTestJarDependencies(testJarDeps);
+        }
     }
 }
