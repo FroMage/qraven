@@ -30,12 +30,25 @@ public class BuildOrchestrator {
     private static final String ESC = "\u001b[";
     private static final String BOLD = ESC + "1m";
     private static final String RED = ESC + "31m";
+    private static final String GREEN = ESC + "32m";
     private static final String YELLOW = ESC + "33m";
+    private static final String BLUE = ESC + "34m";
+    private static final String MAGENTA = ESC + "35m";
     private static final String CYAN = ESC + "36m";
     private static final String DIM = ESC + "2m";
     private static final String BOLD_RED = ESC + "1;31m";
     private static final String BOLD_WHITE = ESC + "1;37m";
     private static final String RESET = ESC + "0m";
+
+    private static final Set<String> JAVA_KEYWORDS = Set.of(
+            "abstract", "assert", "boolean", "break", "byte", "case", "catch", "char",
+            "class", "const", "continue", "default", "do", "double", "else", "enum",
+            "extends", "final", "finally", "float", "for", "goto", "if", "implements",
+            "import", "instanceof", "int", "interface", "long", "native", "new",
+            "package", "private", "protected", "public", "return", "short", "static",
+            "strictfp", "super", "switch", "synchronized", "this", "throw", "throws",
+            "transient", "try", "void", "volatile", "while", "var", "record", "sealed",
+            "permits", "yield", "null", "true", "false");
 
     private final int threadCount;
 
@@ -366,6 +379,7 @@ public class BuildOrchestrator {
         String[] lines = message.split("\n");
         boolean firstLine = true;
         boolean prevWasError = false;
+        boolean nextIsSource = false;
         for (String line : lines) {
             String trimmed = line.trim();
             if (firstLine) {
@@ -388,6 +402,7 @@ public class BuildOrchestrator {
                     System.err.println();
                 }
                 prevWasError = true;
+                nextIsSource = true;
                 String relative = trimmed.startsWith(projectRoot)
                         ? trimmed.substring(projectRoot.length()) : trimmed;
                 int firstColon = relative.indexOf(':');
@@ -406,23 +421,96 @@ public class BuildOrchestrator {
                     System.err.println("  " + CYAN + relative + RESET);
                 }
             } else if (trimmed.startsWith("symbol:") || trimmed.startsWith("location:")) {
+                nextIsSource = false;
                 int colon = trimmed.indexOf(':');
                 String key = trimmed.substring(0, colon + 1);
                 String value = trimmed.substring(colon + 1);
                 System.err.println("    " + DIM + key + RESET + value);
             } else if (trimmed.equals("^")) {
+                nextIsSource = false;
                 System.err.println(RED + line + RESET);
             } else if (trimmed.contains("^") && trimmed.replaceAll("[\\s^]", "").isEmpty()) {
+                nextIsSource = false;
                 System.err.println(RED + line + RESET);
             } else if (trimmed.startsWith("Caused by:")) {
+                nextIsSource = false;
                 System.err.println("  " + DIM + trimmed + RESET);
             } else if (trimmed.startsWith("method ") || trimmed.startsWith("(")) {
+                nextIsSource = false;
                 System.err.println("    " + DIM + trimmed + RESET);
+            } else if (nextIsSource && !trimmed.isEmpty()) {
+                nextIsSource = false;
+                int indent = line.indexOf(trimmed);
+                System.err.println(line.substring(0, indent) + highlightJava(trimmed));
             } else {
+                nextIsSource = false;
                 System.err.println(line);
             }
         }
         System.err.println();
+    }
+
+    private static String highlightJava(String line) {
+        StringBuilder result = new StringBuilder();
+        int i = 0;
+        int len = line.length();
+        while (i < len) {
+            char c = line.charAt(i);
+
+            if (c == '"' || c == '\'') {
+                int start = i;
+                char quote = c;
+                i++;
+                while (i < len && line.charAt(i) != quote) {
+                    if (line.charAt(i) == '\\') i++;
+                    i++;
+                }
+                if (i < len) i++;
+                result.append(GREEN).append(line, start, i).append(RESET);
+                continue;
+            }
+
+            if (c == '@' && i + 1 < len && Character.isJavaIdentifierStart(line.charAt(i + 1))) {
+                int start = i;
+                i++;
+                while (i < len && Character.isJavaIdentifierPart(line.charAt(i))) i++;
+                result.append(YELLOW).append(line, start, i).append(RESET);
+                continue;
+            }
+
+            if (c == '/' && i + 1 < len && line.charAt(i + 1) == '/') {
+                result.append(DIM).append(line, i, len).append(RESET);
+                i = len;
+                continue;
+            }
+
+            if (Character.isJavaIdentifierStart(c)) {
+                int start = i;
+                while (i < len && Character.isJavaIdentifierPart(line.charAt(i))) i++;
+                String word = line.substring(start, i);
+                if (JAVA_KEYWORDS.contains(word)) {
+                    result.append(MAGENTA).append(word).append(RESET);
+                } else {
+                    result.append(word);
+                }
+                continue;
+            }
+
+            if (Character.isDigit(c)) {
+                int start = i;
+                while (i < len && (Character.isDigit(line.charAt(i)) || line.charAt(i) == '.'
+                        || line.charAt(i) == 'L' || line.charAt(i) == 'f'
+                        || line.charAt(i) == 'x' || line.charAt(i) == 'X'
+                        || (line.charAt(i) >= 'a' && line.charAt(i) <= 'f')
+                        || (line.charAt(i) >= 'A' && line.charAt(i) <= 'F'))) i++;
+                result.append(CYAN).append(line, start, i).append(RESET);
+                continue;
+            }
+
+            result.append(c);
+            i++;
+        }
+        return result.toString();
     }
 
     private Map<String, Integer> computeForwardReach(List<ModuleBuild> modules) {
