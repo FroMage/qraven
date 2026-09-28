@@ -19,7 +19,7 @@ class CodeStyleHelperTest {
 
     @BeforeAll
     static void init() {
-        helper = new CodeStyleHelper(Path.of("."));
+        helper = new CodeStyleHelper(Path.of("."), null, null);
     }
 
     @AfterAll

@@ -40,6 +40,8 @@ public class BuildFileGenerator {
     private String protocPath;
     private String grpcJavaPluginPath;
     private String antlrToolClasspath;
+    private String jdtFormatterClasspath;
+    private String ktfmtClasspath;
 
     public BuildFileGenerator(Path projectRoot, Path outputDir, int threads, DependencyResolver resolver) {
         this.projectRoot = projectRoot;
@@ -84,6 +86,8 @@ public class BuildFileGenerator {
         if (hasAntlrModules) {
             resolveAntlrToolClasspath(modules);
         }
+        resolveJdtFormatterClasspath(modules);
+        resolveKtfmtClasspath(modules);
 
         int total = modules.size() + 1;
         AtomicInteger progress = new AtomicInteger();
@@ -610,6 +614,12 @@ public class BuildFileGenerator {
         if (antlrToolClasspath != null) {
             sb.append("        runtime.setAntlrToolClasspath(").append(quote(antlrToolClasspath)).append(");\n");
         }
+        if (jdtFormatterClasspath != null) {
+            sb.append("        runtime.setJdtFormatterClasspath(").append(quote(jdtFormatterClasspath)).append(");\n");
+        }
+        if (ktfmtClasspath != null) {
+            sb.append("        runtime.setKtfmtClasspath(").append(quote(ktfmtClasspath)).append(");\n");
+        }
         sb.append("        List<ModuleBuild> modules = new ArrayList<>();\n");
 
         for (ModuleInfo module : modules) {
@@ -837,6 +847,85 @@ public class BuildFileGenerator {
             System.out.println("Resolved ANTLR4 tool classpath (" + antlrVersion + ")");
         } else {
             System.err.println("WARNING: could not resolve ANTLR4 tool artifact org.antlr:antlr4:" + antlrVersion);
+        }
+    }
+
+    private void resolveJdtFormatterClasspath(List<ModuleInfo> modules) {
+        Path formatConfigFile = projectRoot.resolve(
+                "independent-projects/ide-config/src/main/resources/eclipse-format.xml");
+        if (!Files.exists(formatConfigFile)) return;
+
+        String version = null;
+        for (ModuleInfo m : modules) {
+            if (m.getFormatterPluginVersion() != null) {
+                version = m.getFormatterPluginVersion();
+                break;
+            }
+        }
+        if (version == null) return;
+
+        List<String> jars = resolver.resolveAnnotationProcessorPath(
+                "net.revelc.code.formatter", "formatter-maven-plugin", version, null);
+        List<String> jdtJars = jars.stream()
+                .filter(p -> {
+                    String name = java.nio.file.Path.of(p).getFileName().toString();
+                    return name.startsWith("org.eclipse.jdt.core-")
+                            || name.startsWith("ecj-")
+                            || name.startsWith("org.eclipse.text-")
+                            || name.startsWith("org.eclipse.equinox.common-");
+                })
+                .toList();
+        if (jdtJars.size() >= 4) {
+            jdtFormatterClasspath = String.join(java.io.File.pathSeparator, jdtJars);
+            System.out.println("Resolved Eclipse JDT formatter classpath (" + version + ")");
+        } else if (!jdtJars.isEmpty()) {
+            jdtFormatterClasspath = String.join(java.io.File.pathSeparator, jdtJars);
+            System.out.println("Resolved Eclipse JDT formatter classpath (" + version + ", " + jdtJars.size() + " jars)");
+        }
+    }
+
+    private void resolveKtfmtClasspath(List<ModuleInfo> modules) {
+        boolean hasKotlin = modules.stream().anyMatch(ModuleInfo::isHasKotlinSources);
+        if (!hasKotlin) return;
+
+        String spotlessVersion = null;
+        for (ModuleInfo m : modules) {
+            if (m.getSpotlessPluginVersion() != null) {
+                spotlessVersion = m.getSpotlessPluginVersion();
+                break;
+            }
+        }
+        if (spotlessVersion == null) return;
+
+        try {
+            List<String> pluginJars = resolver.resolveAnnotationProcessorPath(
+                    "com.diffplug.spotless", "spotless-maven-plugin", spotlessVersion, null);
+            String spotlessLibJar = pluginJars.stream()
+                    .filter(p -> {
+                        String name = Path.of(p).getFileName().toString();
+                        return name.startsWith("spotless-lib-") && !name.contains("-extra");
+                    })
+                    .findFirst().orElse(null);
+            if (spotlessLibJar == null) return;
+
+            String ktfmtVersion = null;
+            try (var cl = new java.net.URLClassLoader(
+                    new java.net.URL[]{Path.of(spotlessLibJar).toUri().toURL()},
+                    ClassLoader.getPlatformClassLoader())) {
+                Class<?> ktfmtStep = cl.loadClass("com.diffplug.spotless.kotlin.KtfmtStep");
+                java.lang.reflect.Method defaultVersion = ktfmtStep.getMethod("defaultVersion");
+                ktfmtVersion = (String) defaultVersion.invoke(null);
+            }
+            if (ktfmtVersion == null) return;
+
+            List<String> jars = resolver.resolveAnnotationProcessorPath(
+                    "com.facebook", "ktfmt", ktfmtVersion, null);
+            if (!jars.isEmpty()) {
+                ktfmtClasspath = String.join(java.io.File.pathSeparator, jars);
+                System.out.println("Resolved ktfmt classpath (" + ktfmtVersion + ")");
+            }
+        } catch (Exception e) {
+            System.err.println("WARNING: could not resolve ktfmt classpath: " + e.getMessage());
         }
     }
 

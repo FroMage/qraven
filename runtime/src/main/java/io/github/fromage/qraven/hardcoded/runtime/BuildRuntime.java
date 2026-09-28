@@ -60,6 +60,8 @@ public class BuildRuntime {
     private final ConcurrentHashMap<Long, StandardJavaFileManager> fileManagers = new ConcurrentHashMap<>();
     private volatile CodeStyleHelper codeStyleHelper;
     private volatile BannedDependencyChecker bannedDepChecker;
+    private String jdtFormatterClasspath;
+    private String ktfmtClasspath;
 
     public BuildRuntime(Path projectRoot) {
         this.projectRoot = projectRoot;
@@ -177,11 +179,19 @@ public class BuildRuntime {
         System.out.println("Classpath warmup: " + classpathTime + "ms (" + allJars.size() + " jars), ct.sym: " + ctSymTime + "ms");
     }
 
+    public void setJdtFormatterClasspath(String classpath) {
+        this.jdtFormatterClasspath = classpath;
+    }
+
+    public void setKtfmtClasspath(String classpath) {
+        this.ktfmtClasspath = classpath;
+    }
+
     public CodeStyleHelper getCodeStyleHelper() {
         if (codeStyleHelper == null) {
             synchronized (this) {
                 if (codeStyleHelper == null) {
-                    codeStyleHelper = new CodeStyleHelper(projectRoot);
+                    codeStyleHelper = new CodeStyleHelper(projectRoot, jdtFormatterClasspath, ktfmtClasspath);
                 }
             }
         }

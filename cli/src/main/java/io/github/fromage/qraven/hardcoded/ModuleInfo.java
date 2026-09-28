@@ -69,6 +69,8 @@ public class ModuleInfo {
     private String protocVersion;
     private String grpcVersion;
     private String quarkusGrpcVersion;
+    private String formatterPluginVersion;
+    private String spotlessPluginVersion;
     private Map<String, String> allReactorExtensionDeployments = new LinkedHashMap<>();
     private Map<String, Set<String>> reactorDependencyExclusions = new LinkedHashMap<>();
     private List<String> kotlinCompilerPlugins = new ArrayList<>();
@@ -265,6 +267,12 @@ public class ModuleInfo {
 
     public String getQuarkusGrpcVersion() { return quarkusGrpcVersion; }
     public void setQuarkusGrpcVersion(String quarkusGrpcVersion) { this.quarkusGrpcVersion = quarkusGrpcVersion; }
+
+    public String getFormatterPluginVersion() { return formatterPluginVersion; }
+    public void setFormatterPluginVersion(String formatterPluginVersion) { this.formatterPluginVersion = formatterPluginVersion; }
+
+    public String getSpotlessPluginVersion() { return spotlessPluginVersion; }
+    public void setSpotlessPluginVersion(String spotlessPluginVersion) { this.spotlessPluginVersion = spotlessPluginVersion; }
 
     public Map<String, String> getAllReactorExtensionDeployments() { return allReactorExtensionDeployments; }
     public void setAllReactorExtensionDeployments(Map<String, String> m) { this.allReactorExtensionDeployments = m; }

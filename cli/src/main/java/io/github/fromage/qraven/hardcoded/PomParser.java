@@ -551,6 +551,7 @@ public class PomParser {
         detectExtensionPlugin(model, info);
         detectQuarkusBuildPlugin(model, info);
         detectShadePlugin(model, info);
+        detectFormatterPlugin(model, info);
         extractManifestEntries(model, info);
 
         return info;
@@ -933,6 +934,24 @@ public class PomParser {
                 }
             }
             return;
+        }
+    }
+
+    private void detectFormatterPlugin(Model model, ModuleInfo info) {
+        if (model.getBuild() == null) return;
+        for (Plugin plugin : model.getBuild().getPlugins()) {
+            if ("formatter-maven-plugin".equals(plugin.getArtifactId())
+                    && "net.revelc.code.formatter".equals(plugin.getGroupId())) {
+                if (plugin.getVersion() != null && !plugin.getVersion().isBlank()) {
+                    info.setFormatterPluginVersion(plugin.getVersion());
+                }
+            }
+            if ("spotless-maven-plugin".equals(plugin.getArtifactId())
+                    && "com.diffplug.spotless".equals(plugin.getGroupId())) {
+                if (plugin.getVersion() != null && !plugin.getVersion().isBlank()) {
+                    info.setSpotlessPluginVersion(plugin.getVersion());
+                }
+            }
         }
     }
 
@@ -1604,6 +1623,7 @@ public class PomParser {
     private void extractCompilerConfig(Model model, ModuleInfo info, Set<String> reactorGAs) {
         List<String> compilerArgs = new ArrayList<>();
         List<String> annotationProcessorPaths = new ArrayList<>();
+        List<String> reactorApArtifactIds = new ArrayList<>();
 
         List<Dependency> managedDeps = model.getDependencyManagement() != null
                 ? model.getDependencyManagement().getDependencies() : List.of();
@@ -1613,13 +1633,13 @@ public class PomParser {
             extractCompilerConfigFromPlugins(
                     model.getBuild().getPluginManagement().getPlugins(),
                     compilerArgs, annotationProcessorPaths, managedDeps,
-                    reactorGAs, projectVersion);
+                    reactorGAs, projectVersion, reactorApArtifactIds);
         }
 
         if (model.getBuild() != null) {
             extractCompilerConfigFromPlugins(model.getBuild().getPlugins(),
                     compilerArgs, annotationProcessorPaths, managedDeps,
-                    reactorGAs, projectVersion);
+                    reactorGAs, projectVersion, reactorApArtifactIds);
         }
 
         Properties props = model.getProperties();
@@ -1661,6 +1681,11 @@ public class PomParser {
         info.setCompilerArgs(compilerArgs);
         info.setAnnotationProcessorPaths(annotationProcessorPaths);
         info.setApCacheable(checkApCacheable(annotationProcessorPaths));
+        for (String apArtifactId : reactorApArtifactIds) {
+            if (!info.getReactorDependencies().contains(apArtifactId)) {
+                info.getReactorDependencies().add(apArtifactId);
+            }
+        }
     }
 
     private static boolean checkApCacheable(List<String> apPaths) {
@@ -1688,7 +1713,8 @@ public class PomParser {
                                                    List<String> annotationProcessorPaths,
                                                    List<Dependency> managedDeps,
                                                    Set<String> reactorGAs,
-                                                   String projectVersion) {
+                                                   String projectVersion,
+                                                   List<String> reactorApArtifactIds) {
         for (Plugin plugin : plugins) {
             if (!"maven-compiler-plugin".equals(plugin.getArtifactId())) {
                 continue;
@@ -1696,7 +1722,7 @@ public class PomParser {
             Xpp3Dom config = (Xpp3Dom) plugin.getConfiguration();
             if (config != null) {
                 extractCompilerConfig(config, compilerArgs, annotationProcessorPaths, managedDeps,
-                        reactorGAs, projectVersion);
+                        reactorGAs, projectVersion, reactorApArtifactIds);
             }
 
             if (plugin.getExecutions() != null) {
@@ -1704,7 +1730,7 @@ public class PomParser {
                     Xpp3Dom execConfig = (Xpp3Dom) exec.getConfiguration();
                     if (execConfig != null) {
                         extractCompilerConfig(execConfig, compilerArgs, annotationProcessorPaths, managedDeps,
-                                reactorGAs, projectVersion);
+                                reactorGAs, projectVersion, reactorApArtifactIds);
                     }
                 }
             }
@@ -1716,7 +1742,8 @@ public class PomParser {
                                        List<String> annotationProcessorPaths,
                                        List<Dependency> managedDeps,
                                        Set<String> reactorGAs,
-                                       String projectVersion) {
+                                       String projectVersion,
+                                       List<String> reactorApArtifactIds) {
         Xpp3Dom releaseNode = config.getChild("release");
         if (releaseNode != null && releaseNode.getValue() != null && !releaseNode.getValue().isBlank()) {
             if (!compilerArgs.contains("--release")) {
@@ -1783,6 +1810,7 @@ public class PomParser {
                         if (reactorGAs.contains(gidNode.getValue() + ":" + aidNode.getValue())) {
                             annotationProcessorPaths.add(
                                     resolver.expectedArtifactPath(gidNode.getValue(), aidNode.getValue(), ver));
+                            reactorApArtifactIds.add(aidNode.getValue());
                         } else {
                             List<String> resolved = resolver.resolveAnnotationProcessorPath(
                                     gidNode.getValue(), aidNode.getValue(), ver,

@@ -21,11 +21,15 @@ import java.util.regex.Pattern;
 public class CodeStyleHelper {
 
     private final Path projectRoot;
+    private final String jdtFormatterClasspath;
+    private final String ktfmtClasspath;
     private volatile FormatterState jdtFormatter;
     private volatile KtfmtState ktfmtFormatter;
 
-    public CodeStyleHelper(Path projectRoot) {
+    public CodeStyleHelper(Path projectRoot, String jdtFormatterClasspath, String ktfmtClasspath) {
         this.projectRoot = projectRoot;
+        this.jdtFormatterClasspath = jdtFormatterClasspath;
+        this.ktfmtClasspath = ktfmtClasspath;
     }
 
     // ============== Java Formatting (Eclipse JDT) ==============
@@ -77,14 +81,23 @@ public class CodeStyleHelper {
                 "independent-projects/ide-config/src/main/resources/eclipse-format.xml");
         if (!Files.exists(formatConfigFile)) return null;
 
-        Path m2 = Path.of(System.getProperty("user.home"), ".m2", "repository");
         List<URL> urls = new ArrayList<>();
-        addJarUrl(urls, m2, "org.eclipse.jdt", "org.eclipse.jdt.core");
-        addJarUrl(urls, m2, "org.eclipse.jdt", "ecj");
-        addJarUrl(urls, m2, "org.eclipse.platform", "org.eclipse.text");
-        addJarUrl(urls, m2, "org.eclipse.platform", "org.eclipse.equinox.common");
+        if (jdtFormatterClasspath != null && !jdtFormatterClasspath.isBlank()) {
+            for (String path : jdtFormatterClasspath.split(java.io.File.pathSeparator)) {
+                Path jar = Path.of(path);
+                if (Files.exists(jar)) {
+                    urls.add(jar.toUri().toURL());
+                }
+            }
+        } else {
+            Path m2 = Path.of(System.getProperty("user.home"), ".m2", "repository");
+            addJarUrl(urls, m2, "org.eclipse.jdt", "org.eclipse.jdt.core");
+            addJarUrl(urls, m2, "org.eclipse.jdt", "ecj");
+            addJarUrl(urls, m2, "org.eclipse.platform", "org.eclipse.text");
+            addJarUrl(urls, m2, "org.eclipse.platform", "org.eclipse.equinox.common");
+        }
         if (urls.size() < 4) {
-            System.err.println("WARN: Eclipse JDT formatter jars not found in local Maven repository");
+            System.err.println("WARN: Eclipse JDT formatter jars not found");
             return null;
         }
 
@@ -346,16 +359,25 @@ public class CodeStyleHelper {
     }
 
     private KtfmtState initKtfmt() throws Exception {
-        Path m2 = Path.of(System.getProperty("user.home"), ".m2", "repository");
         List<URL> urls = new ArrayList<>();
-        addJarUrl(urls, m2, "com.facebook", "ktfmt");
-        addJarUrl(urls, m2, "com.google.googlejavaformat", "google-java-format");
-        addJarUrl(urls, m2, "com.google.guava", "guava");
-        addJarUrl(urls, m2, "com.google.guava", "failureaccess");
-        addJarUrl(urls, m2, "com.google.errorprone", "error_prone_annotations");
+        if (ktfmtClasspath != null && !ktfmtClasspath.isBlank()) {
+            for (String path : ktfmtClasspath.split(java.io.File.pathSeparator)) {
+                Path jar = Path.of(path);
+                if (Files.exists(jar)) {
+                    urls.add(jar.toUri().toURL());
+                }
+            }
+        } else {
+            Path m2 = Path.of(System.getProperty("user.home"), ".m2", "repository");
+            addJarUrl(urls, m2, "com.facebook", "ktfmt");
+            addJarUrl(urls, m2, "com.google.googlejavaformat", "google-java-format");
+            addJarUrl(urls, m2, "com.google.guava", "guava");
+            addJarUrl(urls, m2, "com.google.guava", "failureaccess");
+            addJarUrl(urls, m2, "com.google.errorprone", "error_prone_annotations");
+        }
 
         if (urls.isEmpty()) {
-            System.err.println("WARN: ktfmt jars not found in local Maven repository");
+            System.err.println("WARN: ktfmt jars not found");
             return null;
         }
 
