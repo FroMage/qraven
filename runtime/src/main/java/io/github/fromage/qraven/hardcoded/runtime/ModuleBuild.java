@@ -207,6 +207,14 @@ public abstract class ModuleBuild {
         buildFuture = CompletableFuture.completedFuture(null);
     }
 
+    public void buildDirect() {
+        buildScheduledAt = System.currentTimeMillis();
+        doBuild();
+        if (!testDependencies.isEmpty() || !testJarDependencies.isEmpty()) {
+            doTestCompilation();
+        }
+    }
+
     public synchronized CompletableFuture<Void> buildAsync(ExecutorService executor) {
         if (buildFuture != null) {
             return buildFuture;

@@ -270,6 +270,56 @@ class ClasspathWiringTest {
                     .as("optional dep of lib should not appear on app's classpath")
                     .doesNotContain(optJar.toString());
         }
+
+        @Test
+        void optionalDepTransitiveReactorDepsDoNotLeak() throws Exception {
+            StubModuleBuild deepLib = module("deep-lib");
+            deepLib.markBuilt();
+            Path deepJar = createFakeJar(deepLib);
+
+            StubModuleBuild optLib = module("optional-lib")
+                    .withModuleDeps("deep-lib");
+            optLib.markBuilt();
+            createFakeJar(optLib);
+
+            StubModuleBuild lib = module("lib")
+                    .withOptionalModuleDeps("optional-lib");
+            lib.markBuilt();
+            createFakeJar(lib);
+
+            StubModuleBuild app = module("app")
+                    .withModuleDeps("lib");
+
+            wireDependencies(deepLib, optLib, lib, app);
+
+            List<String> classpath = app.computeCompileClasspath();
+            assertThat(classpath)
+                    .as("reactor deps of an optional dep should not leak downstream")
+                    .doesNotContain(deepJar.toString());
+        }
+
+        @Test
+        void optionalDepExternalClasspathDoesNotLeak() throws Exception {
+            StubModuleBuild optLib = module("optional-lib")
+                    .withCompileClasspath("/some/reactive-core.jar");
+            optLib.markBuilt();
+            createFakeJar(optLib);
+
+            StubModuleBuild lib = module("lib")
+                    .withOptionalModuleDeps("optional-lib");
+            lib.markBuilt();
+            createFakeJar(lib);
+
+            StubModuleBuild app = module("app")
+                    .withModuleDeps("lib");
+
+            wireDependencies(optLib, lib, app);
+
+            List<String> classpath = app.computeCompileClasspath();
+            assertThat(classpath)
+                    .as("external classpath of an optional dep should not leak downstream")
+                    .doesNotContain("/some/reactive-core.jar");
+        }
     }
 
     private Path createFakeJar(StubModuleBuild module) throws Exception {

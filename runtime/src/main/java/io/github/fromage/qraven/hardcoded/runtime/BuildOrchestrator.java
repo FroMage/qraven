@@ -136,8 +136,10 @@ public class BuildOrchestrator {
 
         Set<String> willRebuild = incremental ? computeRebuildSet(modules) : null;
         int rebuildCount = willRebuild != null ? willRebuild.size() : modules.size();
+        int effectiveThreads = Math.min(threadCount, Math.max(1, rebuildCount));
+        boolean simpleMode = rebuildCount == 1;
 
-        if (!modules.isEmpty() && rebuildCount > 0) {
+        if (!modules.isEmpty() && rebuildCount > 0 && !simpleMode) {
             boolean needsJavaWarmup = modules.stream()
                     .filter(m -> m.hasJavaSources() || m.hasTestJavaSources())
                     .anyMatch(m -> willRebuild == null || willRebuild.contains(m.artifactId()));
@@ -155,17 +157,20 @@ public class BuildOrchestrator {
             }
         }
 
-        boolean noProgress = "true".equals(System.getProperty("no-progress"))
+        boolean noProgress = simpleMode || "true".equals(System.getProperty("no-progress"))
                 || System.getProperties().containsKey("no-progress");
-        ProgressDisplay progress = noProgress ? null : new ProgressDisplay(modules.size(), rebuildCount, threadCount);
+        ProgressDisplay progress = noProgress ? null : new ProgressDisplay(modules.size(), rebuildCount, effectiveThreads);
 
         AtomicInteger threadIndexCounter = new AtomicInteger();
         ConcurrentHashMap<Long, Integer> threadIndices = new ConcurrentHashMap<>();
 
         long orchestratorStart = System.currentTimeMillis();
         StringBuilder buildMsg = new StringBuilder();
-        buildMsg.append("Building ").append(modules.size()).append(" modules with ")
-                .append(threadCount).append(" threads");
+        buildMsg.append("Building ").append(modules.size()).append(" module");
+        if (modules.size() != 1) buildMsg.append("s");
+        if (!simpleMode) {
+            buildMsg.append(" with ").append(effectiveThreads).append(" threads");
+        }
         if (incremental) {
             buildMsg.append(" (incremental, ").append(rebuildCount).append(" to rebuild)");
         }
@@ -220,24 +225,32 @@ public class BuildOrchestrator {
         BuildStats stats = new BuildStats();
         long start = System.currentTimeMillis();
 
-        ExecutorService executor = Executors.newFixedThreadPool(threadCount);
         try {
-            for (ModuleBuild m : modules) {
-                m.setProgress(progress, stats, threadIndices, threadIndexCounter, threadCount, incremental);
-            }
-            CompletableFuture<?>[] allFutures = modules.stream()
-                    .map(m -> m.buildAsync(executor))
-                    .toArray(CompletableFuture[]::new);
-            for (int i = 0; i < allFutures.length; i++) {
+            if (simpleMode) {
+                ModuleBuild m = modules.get(0);
+                m.setProgress(null, stats, null, null, 1, incremental);
+                m.buildDirect();
+            } else {
+                ExecutorService executor = Executors.newFixedThreadPool(effectiveThreads);
                 try {
-                    allFutures[i].join();
-                } catch (Exception e) {
-                    // handled below
+                    for (ModuleBuild m : modules) {
+                        m.setProgress(progress, stats, threadIndices, threadIndexCounter, effectiveThreads, incremental);
+                    }
+                    CompletableFuture<?>[] allFutures = modules.stream()
+                            .map(m -> m.buildAsync(executor))
+                            .toArray(CompletableFuture[]::new);
+                    for (int i = 0; i < allFutures.length; i++) {
+                        try {
+                            allFutures[i].join();
+                        } catch (Exception e) {
+                            // handled below
+                        }
+                    }
+                } finally {
+                    executor.shutdown();
                 }
             }
         } finally {
-            executor.shutdown();
-
             // Restore System.out, System.err and JUL before stopping progress
             System.setOut(originalOut);
             System.setErr(originalErr);
