@@ -399,6 +399,96 @@ Maven with `-DskipTests` still compiles test sources (only `-Dmaven.test.skip` s
 | Source JARs | All | `-sources.jar` not produced (blocks releases, not needed for dev) |
 | `forbiddenapis` | All | Banned API usage checks not run |
 
+## Using with incus-spawn
+
+[incus-spawn](https://github.com/Sanne/incus-spawn) can provision containers with qraven pre-installed.
+
+### Tool definition
+
+Create `~/.config/incus-spawn/tools/qraven.yaml`:
+
+#### Released version
+
+```yaml
+name: qraven
+description: Qraven build tool
+run_as_user:
+  - curl -Ls https://sh.jbang.dev | bash -s - app setup
+  - ~/.jbang/bin/jbang app install --name qraven io.github.fromage.qraven:qraven-cli:1.8
+env:
+  - name: PATH
+    value: "$HOME/.jbang/bin"
+    strategy: prepend
+    separator: ":"
+files:
+  - path: /home/agentuser/.claude/CLAUDE.md
+    content: |
+      The quarkus project uses qraven, not maven. To build, run `qraven --incremental`
+      instead of `mvn package`. You can also use `qraven -pl` with a project list
+      and `-am` for building dependencies just like Maven, but incremental mode is
+      usually better because it builds dependents too. Qraven does not support running
+      tests, so once you have built the project/modules, use `mvn` to run the tests
+      as normal, just do not use it for compiling/installing because it is much slower
+      than qraven.
+    owner: agentuser:agentuser
+```
+
+#### Locally-built snapshot
+
+When using a snapshot built on the host, the `run` clause is needed to fix
+ownership of the shared `.m2` directory, and `host-resources` must share the
+snapshot artifacts:
+
+```yaml
+name: qraven
+description: Qraven build tool
+run:
+  - chown -R agentuser:agentuser /home/agentuser/.m2
+run_as_user:
+  - curl -Ls https://sh.jbang.dev | bash -s - app setup
+  - ~/.jbang/bin/jbang app install --name qraven io.github.fromage.qraven:qraven-cli:1.8-SNAPSHOT
+env:
+  - name: PATH
+    value: "$HOME/.jbang/bin"
+    strategy: prepend
+    separator: ":"
+files:
+  - path: /home/agentuser/.claude/CLAUDE.md
+    content: |
+      The quarkus project uses qraven, not maven. To build, run `qraven --incremental`
+      instead of `mvn package`. You can also use `qraven -pl` with a project list
+      and `-am` for building dependencies just like Maven, but incremental mode is
+      usually better because it builds dependents too. Qraven does not support running
+      tests, so once you have built the project/modules, use `mvn` to run the tests
+      as normal, just do not use it for compiling/installing because it is much slower
+      than qraven.
+    owner: agentuser:agentuser
+```
+
+Then in your host-specific template (e.g. `tpl-mydev`), share the snapshot
+artifacts and reference the tool:
+
+```yaml
+tools:
+  - qraven
+host-resources:
+  - source: ~/.m2/repository/io/github/fromage/qraven
+    target: /home/agentuser/.m2/repository/io/github/fromage/qraven
+    mode: copy
+```
+
+### Quarkus template
+
+In your Quarkus template, use `qraven --quickly` as the repo prime command to
+generate `build.jar` when the container is first created:
+
+```yaml
+repos:
+  - url: https://github.com/quarkusio/quarkus.git
+    path: ~/quarkus
+    prime: qraven --quickly
+```
+
 ## How the Quarkus build works
 
 When a module declares `quarkus-maven-plugin` with the `build` goal, qraven:
