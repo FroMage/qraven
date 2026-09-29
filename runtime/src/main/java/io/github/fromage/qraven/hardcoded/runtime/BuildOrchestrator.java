@@ -148,6 +148,13 @@ public class BuildOrchestrator {
         }
 
         Set<String> willRebuild = incremental ? computeRebuildSet(modules) : null;
+        if (willRebuild != null) {
+            for (ModuleBuild m : modules) {
+                if (!willRebuild.contains(m.artifactId())) {
+                    m.markPreBuilt();
+                }
+            }
+        }
         int rebuildCount = willRebuild != null ? willRebuild.size() : modules.size();
         int effectiveThreads = Math.min(threadCount, Math.max(1, rebuildCount));
         boolean simpleMode = rebuildCount == 1;
@@ -240,9 +247,17 @@ public class BuildOrchestrator {
 
         try {
             if (simpleMode) {
-                ModuleBuild m = modules.get(0);
-                m.setProgress(null, stats, null, null, 1, incremental);
-                m.buildDirect();
+                ModuleBuild toBuild = modules.get(0);
+                if (willRebuild != null) {
+                    for (ModuleBuild m : modules) {
+                        if (willRebuild.contains(m.artifactId())) {
+                            toBuild = m;
+                            break;
+                        }
+                    }
+                }
+                toBuild.setProgress(null, stats, null, null, 1, incremental);
+                toBuild.buildDirect();
             } else {
                 ExecutorService executor = Executors.newFixedThreadPool(effectiveThreads);
                 try {

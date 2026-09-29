@@ -262,6 +262,9 @@ public class QravenCli {
             }
 
             List<String> allBuildArgs = new ArrayList<>(commonBuildArgs);
+            if (shouldGenerate) {
+                allBuildArgs.remove("-i");
+            }
             allBuildArgs.addAll(mainBuildArgs);
 
             System.out.println("Running build...");
