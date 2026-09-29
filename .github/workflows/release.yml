@@ -4,8 +4,8 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version (e.g. 1.0.0)'
-        required: true
+        description: 'Release version (leave empty to use POM version without -SNAPSHOT)'
+        required: false
 
 permissions:
   contents: write
@@ -24,8 +24,19 @@ jobs:
           java-version: 17
           cache: maven
 
+      - name: Determine release version
+        id: version
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            echo "release=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            v=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+            echo "release=${v%-SNAPSHOT}" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Releasing version: $(grep release "$GITHUB_OUTPUT" | cut -d= -f2)"
+
       - name: Set release version
-        run: mvn versions:set -DnewVersion=${{ github.event.inputs.version }} -DgenerateBackupPoms=false
+        run: mvn versions:set -DnewVersion=${{ steps.version.outputs.release }} -DgenerateBackupPoms=false
 
       - name: Build
         run: mvn -B install -DskipTests
@@ -45,7 +56,7 @@ jobs:
 
       - name: Bump to next SNAPSHOT version
         run: |
-          IFS='.' read -r major minor patch <<< "${{ github.event.inputs.version }}"
+          IFS='.' read -r major minor patch <<< "${{ steps.version.outputs.release }}"
           if [ -n "$patch" ]; then
             next="${major}.${minor}.$((patch + 1))-SNAPSHOT"
           else
