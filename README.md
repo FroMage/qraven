@@ -420,53 +420,17 @@ env:
     value: "$HOME/.jbang/bin"
     strategy: prepend
     separator: ":"
-files:
-  - path: /home/agentuser/.claude/CLAUDE.md
-    content: |
-      The quarkus project uses qraven, not maven. To build, run `qraven --incremental`
-      instead of `mvn package`. You can also use `qraven -pl` with a project list
-      and `-am` for building dependencies just like Maven, but incremental mode is
-      usually better because it builds dependents too. Qraven does not support running
-      tests, so once you have built the project/modules, use `mvn` to run the tests
-      as normal, just do not use it for compiling/installing because it is much slower
-      than qraven.
-    owner: agentuser:agentuser
 ```
 
 #### Locally-built snapshot
 
-When using a snapshot built on the host, the `run` clause is needed to fix
-ownership of the shared `.m2` directory, and `host-resources` must share the
-snapshot artifacts:
+To use a snapshot built on the host, start from the released definition above
+and change the version in the `jbang app install` line to the snapshot version
+(e.g. `qraven-cli:1.8-SNAPSHOT`).
 
-```yaml
-name: qraven
-description: Qraven build tool
-run:
-  - chown -R agentuser:agentuser /home/agentuser/.m2
-run_as_user:
-  - curl -Ls https://sh.jbang.dev | bash -s - app setup
-  - ~/.jbang/bin/jbang app install --name qraven io.github.fromage.qraven:qraven-cli:1.8-SNAPSHOT
-env:
-  - name: PATH
-    value: "$HOME/.jbang/bin"
-    strategy: prepend
-    separator: ":"
-files:
-  - path: /home/agentuser/.claude/CLAUDE.md
-    content: |
-      The quarkus project uses qraven, not maven. To build, run `qraven --incremental`
-      instead of `mvn package`. You can also use `qraven -pl` with a project list
-      and `-am` for building dependencies just like Maven, but incremental mode is
-      usually better because it builds dependents too. Qraven does not support running
-      tests, so once you have built the project/modules, use `mvn` to run the tests
-      as normal, just do not use it for compiling/installing because it is much slower
-      than qraven.
-    owner: agentuser:agentuser
-```
-
-Then in your host-specific template (e.g. `tpl-mydev`), share the snapshot
-artifacts and reference the tool:
+The snapshot artifacts are not published anywhere, so your host-specific
+template (e.g. `tpl-mydev`) must copy them from the host's `~/.m2` into the
+container, and reference the tool:
 
 ```yaml
 tools:
@@ -477,16 +441,41 @@ host-resources:
     mode: copy
 ```
 
+Copied resources end up owned by root, and `host-resources` has no option to
+set the owner, so the tool definition must also fix the ownership of the `.m2`
+directory. Add this to the tool definition:
+
+```yaml
+run:
+  - chown -R agentuser:agentuser /home/agentuser/.m2
+```
+
 ### Quarkus template
 
-In your Quarkus template, use `qraven --quickly` as the repo prime command to
-generate `build.jar` when the container is first created:
+In your Quarkus template, use `qraven` as the repo prime command to generate
+`build.jar` when the container is first created:
 
 ```yaml
 repos:
   - url: https://github.com/quarkusio/quarkus.git
     path: ~/quarkus
-    prime: qraven --quickly
+    prime: qraven
+agent_note: |
+  The quarkus project uses qraven, not maven. To build, run `qraven --incremental`
+  instead of `mvn package`: it only rebuilds modules with changed sources, and
+  their dependents. A plain `qraven` does a full build, which is only needed
+  the first time. You can also use `qraven -pl` with a project list and `-am`
+  for building dependencies just like Maven, but incremental mode is usually
+  better because it builds dependents too. Qraven does not support running
+  tests, so once you have built the project/modules, use `mvn` to run the tests
+  as normal, just do not use it for compiling/installing because it is much slower
+  than qraven.
+
+  Qraven shows a progress bar by default. When running non-interactively, pass
+  `-Dno-progress` to disable it. The full build output is always written to
+  `target/qraven/build.log` (in the project root), so on failure grep that file
+  for errors rather than re-running the build. The exit status can be trusted:
+  0 means the build succeeded, non-zero means it failed.
 ```
 
 ## How the Quarkus build works
