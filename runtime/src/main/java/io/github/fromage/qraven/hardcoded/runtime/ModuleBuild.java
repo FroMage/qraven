@@ -145,6 +145,10 @@ public abstract class ModuleBuild {
     public abstract String pluginName();
     public abstract String pluginDescription();
     public List<ShadeExecution> shadeExecutions() { return List.of(); }
+    /** quarkus-platform-bom-maven-plugin:platform-properties: file under target/classes to publish, or null. */
+    public String platformPropertiesFileName() { return null; }
+    /** quarkus-platform-bom-maven-plugin:flatten-platform-bom: flattened POM to install instead of pom.xml, or null. */
+    public String flattenedPomFile() { return null; }
 
     public void setDependencies(List<ModuleBuild> dependencies) {
         this.dependencies = dependencies;
@@ -322,7 +326,10 @@ public abstract class ModuleBuild {
                 }
                 if (progress != null) progress.moduleStarted(threadIdx, artifactId(), "pom", 0);
                 long t = System.currentTimeMillis();
-                runtime.install(null, pomFile(), groupId(), artifactId(), version(), packaging());
+                runtime.install(null, pomToInstall(), groupId(), artifactId(), version(), packaging());
+                if (platformPropertiesFileName() != null) {
+                    installPlatformProperties();
+                }
                 mainBuildSucceeded = true;
                 mainBuildDone.complete(null);
                 recordPhase("install", t);
@@ -383,19 +390,7 @@ public abstract class ModuleBuild {
                 }
 
                 t = System.currentTimeMillis();
-                for (String[] rd : resourceDirs()) {
-                    Path dir = runtime.getProjectRoot().resolve(baseDir()).resolve(rd[0]);
-                    boolean filtering = "true".equals(rd[1]);
-                    Path outputDir = classesDir();
-                    if (rd.length > 2 && rd[2] != null) {
-                        outputDir = classesDir().resolve(rd[2]);
-                    }
-                    if (filtering) {
-                        runtime.copyResourcesFiltered(dir, outputDir, filterProperties());
-                    } else {
-                        runtime.copyResources(dir, outputDir);
-                    }
-                }
+                copyResources();
                 recordPhase("resources", t);
 
                 if (hasExtensionPlugin()) {
@@ -966,6 +961,62 @@ public abstract class ModuleBuild {
         }
     }
 
+    private void copyResources() {
+        for (String[] rd : resourceDirs()) {
+            Path dir = runtime.getProjectRoot().resolve(baseDir()).resolve(rd[0]);
+            boolean filtering = "true".equals(rd[1]);
+            Path outputDir = classesDir();
+            if (rd.length > 2 && rd[2] != null) {
+                outputDir = classesDir().resolve(rd[2]);
+            }
+            if (filtering) {
+                runtime.copyResourcesFiltered(dir, outputDir, filterProperties());
+            } else {
+                runtime.copyResources(dir, outputDir);
+            }
+        }
+    }
+
+    /** The POM to install: the flattened BOM when flatten-platform-bom applies, the project's pom.xml otherwise. */
+    private Path pomToInstall() {
+        String flattened = flattenedPomFile();
+        if (flattened != null && !evaluateSkip("${skipPlatformBom}")) {
+            return Path.of(flattened);
+        }
+        return pomFile();
+    }
+
+    /** quarkus-platform-bom-maven-plugin:platform-properties */
+    private void installPlatformProperties() {
+        copyResources();
+        Path propsFile = classesDir().resolve(platformPropertiesFileName());
+        if (!Files.exists(propsFile)) {
+            throw new RuntimeException("[" + artifactId() + "] failed to locate " + propsFile);
+        }
+        if (!evaluateSkip("${skipPlatformPrefixCheck}")) {
+            java.util.Properties props = new java.util.Properties();
+            try (var in = Files.newInputStream(propsFile)) {
+                props.load(in);
+            } catch (IOException e) {
+                throw new RuntimeException("[" + artifactId() + "] failed to read " + propsFile, e);
+            }
+            List<String> invalid = props.stringPropertyNames().stream()
+                    .filter(k -> !k.startsWith("platform."))
+                    .sorted().toList();
+            if (!invalid.isEmpty()) {
+                throw new RuntimeException("[" + artifactId() + "] the following platform properties are missing the "
+                        + "'platform.' prefix: " + String.join(", ", invalid));
+            }
+        }
+        Path published = targetDir().resolve(artifactId() + "-" + version() + ".properties");
+        try {
+            Files.copy(propsFile, published, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        } catch (IOException e) {
+            throw new RuntimeException("[" + artifactId() + "] failed to copy " + propsFile + " to " + published, e);
+        }
+        runtime.installAttached(published, groupId(), artifactId(), version(), "properties");
+    }
+
     private boolean isUpToDate() {
         Path installedArtifact = installedArtifactPath();
         if (!Files.exists(installedArtifact)) {
@@ -992,6 +1043,20 @@ public abstract class ModuleBuild {
                 if (Files.getLastModifiedTime(pomFile()).toMillis() > artifactMtime) {
                     System.err.println("[incremental] [" + artifactId() + "] not up-to-date: pom.xml newer than artifact");
                     return false;
+                }
+                if (flattenedPomFile() != null
+                        && Files.getLastModifiedTime(Path.of(flattenedPomFile())).toMillis() > artifactMtime) {
+                    System.err.println("[incremental] [" + artifactId() + "] not up-to-date: flattened pom newer than artifact");
+                    return false;
+                }
+                if (platformPropertiesFileName() != null) {
+                    Path installedProps = installedArtifactPath().resolveSibling(
+                            artifactId() + "-" + version() + ".properties");
+                    if (!Files.exists(installedProps)
+                            || Files.getLastModifiedTime(installedProps).toMillis() < newestResourceMtime()) {
+                        System.err.println("[incremental] [" + artifactId() + "] not up-to-date: platform properties missing or older than resources");
+                        return false;
+                    }
                 }
                 return true;
             } catch (IOException e) {
@@ -1077,6 +1142,15 @@ public abstract class ModuleBuild {
         return true;
     }
 
+    private long newestResourceMtime() {
+        Path base = runtime.getProjectRoot().resolve(baseDir());
+        long newest = 0;
+        for (String[] rd : resourceDirs()) {
+            newest = Math.max(newest, newestMtime(base.resolve(rd[0])));
+        }
+        return newest;
+    }
+
     boolean hasChangedSources() {
         Path installedArtifact = installedArtifactPath();
         if (!Files.exists(installedArtifact)) return true;
@@ -1088,6 +1162,9 @@ public abstract class ModuleBuild {
             if (hasTestKotlinSources() && newestMtime(testKotlinSourceDir()) > artifactMtime) return true;
             if (hasTestProtobufSources() && newestMtime(testProtoSourceDir()) > artifactMtime) return true;
             if (Files.getLastModifiedTime(pomFile()).toMillis() > artifactMtime) return true;
+            if (flattenedPomFile() != null
+                    && Files.getLastModifiedTime(Path.of(flattenedPomFile())).toMillis() > artifactMtime) return true;
+            if (platformPropertiesFileName() != null && newestResourceMtime() > artifactMtime) return true;
         } catch (IOException e) {
             return true;
         }

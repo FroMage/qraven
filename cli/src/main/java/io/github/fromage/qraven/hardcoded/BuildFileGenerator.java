@@ -146,6 +146,22 @@ public class BuildFileGenerator {
         }
     }
 
+    /** Writes the module's flattened BOM, if any, under the output directory; returns its path. */
+    private String writeFlattenedPom(ModuleInfo module) {
+        if (module.getFlattenedBomModel() == null) return null;
+        Path file = outputDir.resolve("flattened-poms")
+                .resolve(module.getArtifactId() + "-" + module.getVersion() + ".pom");
+        try {
+            Files.createDirectories(file.getParent());
+            try (java.io.Writer w = Files.newBufferedWriter(file)) {
+                new org.apache.maven.model.io.xpp3.MavenXpp3Writer().write(w, module.getFlattenedBomModel());
+            }
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to write flattened pom " + file, e);
+        }
+        return file.toString();
+    }
+
     private String generateModuleClass(ModuleInfo module, String className) {
         StringBuilder sb = new StringBuilder();
         sb.append("import io.github.fromage.qraven.hardcoded.runtime.ModuleBuild;\n");
@@ -174,6 +190,10 @@ public class BuildFileGenerator {
         sb.append("    @Override public boolean hasAntlrSources() { return ").append(module.isHasAntlrSources()).append("; }\n");
         sb.append("    @Override public boolean antlrVisitor() { return ").append(module.isAntlrVisitor()).append("; }\n");
         sb.append("    @Override public boolean needsJandexIndex() { return ").append(module.isNeedsJandexIndex()).append("; }\n");
+        sb.append("    @Override public String platformPropertiesFileName() { return ")
+                .append(quoteOrNull(module.getPlatformPropertiesFileName())).append("; }\n");
+        sb.append("    @Override public String flattenedPomFile() { return ")
+                .append(quoteOrNull(writeFlattenedPom(module))).append("; }\n");
         sb.append("    @Override public boolean hasExtensionPlugin() { return ").append(module.isHasExtensionPlugin()).append("; }\n");
         sb.append("    @Override public String extensionValidationSkipWhen() { return ")
                 .append(quoteOrNull(module.getExtensionValidationSkipWhen())).append("; }\n\n");

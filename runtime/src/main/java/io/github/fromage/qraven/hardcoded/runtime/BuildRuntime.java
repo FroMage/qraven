@@ -943,6 +943,23 @@ public class BuildRuntime {
         }
     }
 
+    /** Installs a file next to the module's POM as {@code <artifactId>-<version>.<extension>}. */
+    public void installAttached(Path file, String groupId, String artifactId,
+                                String version, String extension) {
+        Path artifactDir = Path.of(System.getProperty("user.home"), ".m2", "repository")
+                .resolve(groupId.replace('.', '/'))
+                .resolve(artifactId)
+                .resolve(version);
+        try {
+            Files.createDirectories(artifactDir);
+            Files.copy(file, artifactDir.resolve(artifactId + "-" + version + "." + extension),
+                    StandardCopyOption.REPLACE_EXISTING);
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to install " + groupId + ":" + artifactId + ":"
+                    + version + "." + extension, e);
+        }
+    }
+
     public void installClassified(Path jarFile, String groupId, String artifactId,
                                    String version, String classifier) {
         Path localRepo = Path.of(System.getProperty("user.home"), ".m2", "repository");

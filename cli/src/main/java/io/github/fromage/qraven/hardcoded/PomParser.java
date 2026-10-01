@@ -218,7 +218,7 @@ public class PomParser {
             if (info.isHasQuarkusBuildPlugin() || info.isHasExtensionPlugin()) {
                 Model model = effectiveModels.get(info.getGroupId() + ":" + info.getArtifactId());
                 if (model != null) {
-                    extractQuarkusBuildProperties(model, info);
+                    extractQuarkusBuildProperties(model, info, modules);
                 }
             }
         }
@@ -551,6 +551,7 @@ public class PomParser {
         detectExtensionPlugin(model, info);
         detectQuarkusBuildPlugin(model, info);
         detectShadePlugin(model, info);
+        detectPlatformBomPlugin(model, info);
         detectFormatterPlugin(model, info);
         extractManifestEntries(model, info);
 
@@ -937,6 +938,55 @@ public class PomParser {
         }
     }
 
+    private void detectPlatformBomPlugin(Model model, ModuleInfo info) {
+        if (model.getBuild() == null) return;
+        for (Plugin plugin : model.getBuild().getPlugins()) {
+            if (!"quarkus-platform-bom-maven-plugin".equals(plugin.getArtifactId())) continue;
+
+            Xpp3Dom pluginConfig = (Xpp3Dom) plugin.getConfiguration();
+            for (PluginExecution exec : plugin.getExecutions()) {
+                Xpp3Dom execConfig = (Xpp3Dom) exec.getConfiguration();
+                if (exec.getGoals().contains("platform-properties")) {
+                    String fileName = extractConfigValue("propertiesFileName", execConfig, pluginConfig);
+                    info.setPlatformPropertiesFileName(fileName != null ? fileName : "platform-properties.properties");
+                }
+                if (exec.getGoals().contains("flatten-platform-bom")) {
+                    List<String> excludeKeys = new ArrayList<>(
+                            extractConfigList("excludeArtifactKeys", execConfig, pluginConfig));
+                    List<String> excludeScopes = new ArrayList<>(
+                            extractConfigList("excludeScopes", execConfig, pluginConfig));
+                    String alphabetically = extractConfigValue("alphabetically", execConfig, pluginConfig);
+                    info.setFlattenedBomModel(new PlatformBomFlattener(excludeKeys, excludeScopes,
+                            alphabetically == null || Boolean.parseBoolean(alphabetically)).flatten(model));
+                }
+            }
+            return;
+        }
+    }
+
+    private List<String> extractConfigList(String elementName, Xpp3Dom execConfig, Xpp3Dom pluginConfig) {
+        for (Xpp3Dom config : new Xpp3Dom[] {execConfig, pluginConfig}) {
+            if (config == null) continue;
+            Xpp3Dom node = config.getChild(elementName);
+            if (node == null) continue;
+            List<String> values = new ArrayList<>();
+            if (node.getChildCount() == 0 && node.getValue() != null) {
+                // a plain value is a comma-separated list
+                for (String v : node.getValue().split(",")) {
+                    if (!v.isBlank()) values.add(v.trim());
+                }
+                return values;
+            }
+            for (Xpp3Dom child : node.getChildren()) {
+                if (child.getValue() != null && !child.getValue().isBlank()) {
+                    values.add(child.getValue().trim());
+                }
+            }
+            return values;
+        }
+        return List.of();
+    }
+
     private void detectFormatterPlugin(Model model, ModuleInfo info) {
         if (model.getBuild() == null) return;
         for (Plugin plugin : model.getBuild().getPlugins()) {
@@ -1057,7 +1107,7 @@ public class PomParser {
         return null;
     }
 
-    private void extractQuarkusBuildProperties(Model model, ModuleInfo info) {
+    private void extractQuarkusBuildProperties(Model model, ModuleInfo info, List<ModuleInfo> modules) {
         Map<String, String> buildProps = new LinkedHashMap<>();
         Properties modelProps = model.getProperties();
         if (modelProps != null) {
@@ -1069,7 +1119,7 @@ public class PomParser {
         }
         buildProps.putIfAbsent("quarkus.application.name", info.getArtifactId());
         buildProps.putIfAbsent("quarkus.application.version", info.getVersion());
-        collectPlatformProperties(model, buildProps);
+        collectPlatformProperties(model, buildProps, modules);
         info.setQuarkusBuildProperties(buildProps);
     }
 
@@ -1398,7 +1448,7 @@ public class PomParser {
         extensionDevProps.put(extKey, packed.toString());
     }
 
-    private void collectPlatformProperties(Model model, Map<String, String> buildProps) {
+    private void collectPlatformProperties(Model model, Map<String, String> buildProps, List<ModuleInfo> modules) {
         if (model.getDependencyManagement() == null) return;
         for (Dependency dep : model.getDependencyManagement().getDependencies()) {
             if (!"properties".equals(dep.getType())) continue;
@@ -1408,17 +1458,48 @@ public class PomParser {
                     .resolve(dep.getArtifactId())
                     .resolve(dep.getVersion())
                     .resolve(dep.getArtifactId() + "-" + dep.getVersion() + ".properties");
-            if (!Files.exists(propsFile)) continue;
-            try (InputStream is = Files.newInputStream(propsFile)) {
-                Properties props = new Properties();
-                props.load(is);
-                for (String key : props.stringPropertyNames()) {
-                    if (key.startsWith("platform.")) {
-                        buildProps.putIfAbsent(key, props.getProperty(key));
+            Properties props = new Properties();
+            try {
+                if (Files.exists(propsFile)) {
+                    try (InputStream is = Files.newInputStream(propsFile)) {
+                        props.load(is);
                     }
+                } else {
+                    // Not installed yet (e.g. first build): it comes from a module of this reactor
+                    loadReactorPlatformProperties(dep, modules, props);
                 }
             } catch (IOException e) {
-                // skip unreadable platform properties
+                continue; // skip unreadable platform properties
+            }
+            for (String key : props.stringPropertyNames()) {
+                if (key.startsWith("platform.")) {
+                    buildProps.putIfAbsent(key, props.getProperty(key));
+                }
+            }
+        }
+    }
+
+    /** Loads (and filters) the platform properties file that a reactor module publishes. */
+    private void loadReactorPlatformProperties(Dependency dep, List<ModuleInfo> modules, Properties into)
+            throws IOException {
+        for (ModuleInfo m : modules) {
+            if (m.getPlatformPropertiesFileName() == null
+                    || !m.getGroupId().equals(dep.getGroupId())
+                    || !m.getArtifactId().equals(dep.getArtifactId())) {
+                continue;
+            }
+            for (ModuleInfo.ResourceDir rd : m.getResourceDirs()) {
+                Path file = projectRoot.resolve(m.getBaseDir()).resolve(rd.directory())
+                        .resolve(m.getPlatformPropertiesFileName());
+                if (!Files.exists(file)) continue;
+                String content = Files.readString(file);
+                if (rd.filtering()) {
+                    for (Map.Entry<String, String> e : m.getFilterProperties().entrySet()) {
+                        content = content.replace("${" + e.getKey() + "}", e.getValue());
+                    }
+                }
+                into.load(new java.io.StringReader(content));
+                return;
             }
         }
     }

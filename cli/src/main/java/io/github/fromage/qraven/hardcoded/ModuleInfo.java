@@ -36,6 +36,8 @@ public class ModuleInfo {
     private boolean hasAntlrSources;
     private boolean antlrVisitor;
     private boolean hasExtensionPlugin;
+    private String platformPropertiesFileName;
+    private org.apache.maven.model.Model flattenedBomModel;
     private String extensionValidationSkipWhen;
     private Map<String, String> extensionDescriptorProperties = new LinkedHashMap<>();
     private String extensionProjectName;
@@ -160,6 +162,14 @@ public class ModuleInfo {
 
     public boolean isAntlrVisitor() { return antlrVisitor; }
     public void setAntlrVisitor(boolean antlrVisitor) { this.antlrVisitor = antlrVisitor; }
+
+    /** Name of the file under target/classes to publish as a "properties" artifact, or null. */
+    public String getPlatformPropertiesFileName() { return platformPropertiesFileName; }
+    public void setPlatformPropertiesFileName(String v) { this.platformPropertiesFileName = v; }
+
+    /** Flattened BOM to install in place of this module's POM, or null. */
+    public org.apache.maven.model.Model getFlattenedBomModel() { return flattenedBomModel; }
+    public void setFlattenedBomModel(org.apache.maven.model.Model v) { this.flattenedBomModel = v; }
 
     public boolean isHasExtensionPlugin() { return hasExtensionPlugin; }
     public void setHasExtensionPlugin(boolean hasExtensionPlugin) { this.hasExtensionPlugin = hasExtensionPlugin; }

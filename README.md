@@ -309,6 +309,8 @@ Qraven replicates the behavior of the following Maven plugins during build:
 
 ### Quarkus extension development
 - **quarkus-extension-maven-plugin** -- Generates `META-INF/quarkus-extension.properties` and `META-INF/quarkus-extension.yaml` for Quarkus extension modules.
+- **quarkus-platform-bom-maven-plugin:platform-properties** -- Filters the module's `platform-properties.properties` resource, checks that every key starts with `platform.` (unless `-DskipPlatformPrefixCheck`), and installs it as the `<artifactId>-<version>.properties` artifact next to the POM. The `platform.*` properties it contains are fed to `quarkus-maven-plugin:build`, including on a first build when it isn't installed yet.
+- **quarkus-platform-bom-maven-plugin:flatten-platform-bom** -- Replaces the installed BOM POM with its flattened form: only the project metadata and the effective (import-expanded) `dependencyManagement`, minus `<excludeScopes>` and `<excludeArtifactKeys>` (globs), sorted alphabetically with the platform descriptor and properties first. Disabled with `-DskipPlatformBom`.
 
 ### Code style
 - **formatter-maven-plugin** (Eclipse JDT) -- Formats Java source files in-place using the project's `eclipse-format.xml` config. The Eclipse JDT formatter and its dependencies are loaded at runtime from `~/.m2/repository` via a separate classloader. Disabled with `-Dno-format`.
