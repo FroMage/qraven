@@ -30,6 +30,19 @@ This produces two modules:
 - **`qraven-cli`** -- CLI tool (no Quarkus dependencies, installable via JBang)
 - **`qraven-runtime`** -- Build execution classes (depends on Quarkus bootstrap, Jandex, Kotlin compiler)
 
+### Running the tests
+
+The end-to-end tests generate a `build.jar` that gets `qraven-runtime` from `~/.m2`, not from
+your working tree, so install the modules before running them (this is what CI does):
+
+```bash
+mvn install -DskipTests
+mvn test -f tests/
+```
+
+A plain `mvn test` from the root doesn't install anything: after changing `runtime/`, the
+end-to-end tests would run against the previously installed runtime.
+
 ### Install the CLI via JBang
 
 After the Maven build:
