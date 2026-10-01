@@ -145,6 +145,14 @@ public abstract class ModuleBuild {
     public abstract String pluginName();
     public abstract String pluginDescription();
     public List<ShadeExecution> shadeExecutions() { return List.of(); }
+    /** exec-maven-plugin:java executions bound to generate-sources. */
+    public List<SourceGenerator> sourceGenerators() { return List.of(); }
+    /** Classpath of the source generators' plugin dependencies. */
+    public List<String> generatorClasspath() { return List.of(); }
+    /** build-helper-maven-plugin:add-source roots, possibly with ${project.build.directory} or ${project.basedir}. */
+    public List<String> addedSourceDirs() { return List.of(); }
+
+    public record SourceGenerator(String mainClass, List<String> arguments, String skipWhen) {}
     /** quarkus-platform-bom-maven-plugin:platform-properties: file under target/classes to publish, or null. */
     public String platformPropertiesFileName() { return null; }
     /** quarkus-platform-bom-maven-plugin:flatten-platform-bom: flattened POM to install instead of pom.xml, or null. */
@@ -433,6 +441,18 @@ public abstract class ModuleBuild {
                     System.err.println("[timing] [" + artifactId() + "] generate-code: " + gcElapsed + "ms");
                 }
 
+                List<Path> addedSourceRoots = new ArrayList<>();
+                if (!sourceGenerators().isEmpty()) {
+                    if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "source-generators", 0);
+                    t = System.currentTimeMillis();
+                    runSourceGenerators(fullClasspath);
+                    recordPhase("source-generators", t);
+                }
+                for (String dir : addedSourceDirs()) {
+                    Path root = Path.of(expandProjectPaths(dir));
+                    if (Files.isDirectory(root)) addedSourceRoots.add(root);
+                }
+
                 Path generatedProtoDir = null;
                 if (hasProtobufSources() && !evaluateSkip(generateCodeSkipWhen())) {
                     if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "protobuf", 0);
@@ -463,6 +483,7 @@ public abstract class ModuleBuild {
                     if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "kotlin", 0);
                     t = System.currentTimeMillis();
                     List<Path> kotlinExtraRoots = new ArrayList<>();
+                    kotlinExtraRoots.addAll(addedSourceRoots);
                     if (generatedSourcesDir != null && Files.isDirectory(generatedSourcesDir)) {
                         addGeneratedSourceDirs(generatedSourcesDir, kotlinExtraRoots);
                     }
@@ -493,7 +514,7 @@ public abstract class ModuleBuild {
                 boolean hasKotlinJava = hasKotlinSources() && hasJavaInKotlinDir();
                 boolean hasGenSources = generatedSourcesDir != null && Files.isDirectory(generatedSourcesDir);
                 if (hasJavaSources() || hasKotlinJava || generatedProtoDir != null
-                        || generatedAntlrDir != null || hasGenSources) {
+                        || generatedAntlrDir != null || hasGenSources || !addedSourceRoots.isEmpty()) {
                     List<String> apPaths = resolvedAnnotationProcessorPaths();
                     String compilePhase = apPaths.isEmpty() ? "compile" : "compile+apt";
                     int sourceCount = countSources();
@@ -510,6 +531,9 @@ public abstract class ModuleBuild {
                     }
                     if (hasGenSources) {
                         addGeneratedSourceDirs(generatedSourcesDir, extraDirs);
+                    }
+                    for (Path root : addedSourceRoots) {
+                        if (!extraDirs.contains(root)) extraDirs.add(root);
                     }
                     if (hasKotlinJava) {
                         extraDirs.add(kotlinSourceDir());
@@ -1015,6 +1039,27 @@ public abstract class ModuleBuild {
             throw new RuntimeException("[" + artifactId() + "] failed to copy " + propsFile + " to " + published, e);
         }
         runtime.installAttached(published, groupId(), artifactId(), version(), "properties");
+    }
+
+    /** Expands ${project.build.directory} and ${project.basedir} for this module. */
+    private String expandProjectPaths(String value) {
+        return value
+                .replace("${project.build.directory}", targetDir().toString())
+                .replace("${project.basedir}", runtime.getProjectRoot().resolve(baseDir()).toString())
+                .replace("${basedir}", runtime.getProjectRoot().resolve(baseDir()).toString());
+    }
+
+    /** exec-maven-plugin:java in generate-sources: runs the main class in-process, in its own class loader. */
+    private void runSourceGenerators(List<String> projectClasspath) {
+        List<String> classpath = new ArrayList<>(projectClasspath);
+        for (String entry : resolvePaths(generatorClasspath())) {
+            if (!classpath.contains(entry)) classpath.add(entry);
+        }
+        for (SourceGenerator generator : sourceGenerators()) {
+            if (evaluateSkip(generator.skipWhen())) continue;
+            String[] args = generator.arguments().stream().map(this::expandProjectPaths).toArray(String[]::new);
+            SourceGeneratorRunner.run(artifactId(), generator.mainClass(), args, classpath);
+        }
     }
 
     private boolean isUpToDate() {

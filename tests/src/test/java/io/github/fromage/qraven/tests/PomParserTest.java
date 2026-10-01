@@ -872,4 +872,53 @@ class PomParserTest {
             }
         }
     }
+
+    @Nested
+    class ExecGeneratorProject {
+
+        static List<ModuleInfo> modules;
+
+        @BeforeAll
+        static void parse() {
+            modules = parseProject("exec-generator");
+        }
+
+        @Test
+        void detectsTheSourceGenerator() {
+            ModuleInfo app = findModule(modules, "exec-generator-app");
+            assertThat(app.getSourceGenerators()).hasSize(1);
+            ModuleInfo.SourceGenerator generator = app.getSourceGenerators().get(0);
+            assertThat(generator.mainClass()).isEqualTo("com.test.generator.MakeSources");
+            assertThat(generator.skipWhen()).isEqualTo("${exec.skip}");
+        }
+
+        @Test
+        void keepsPathsPortable() {
+            ModuleInfo app = findModule(modules, "exec-generator-app");
+            // the effective model has the absolute path: it must be turned back into a placeholder
+            assertThat(app.getSourceGenerators().get(0).arguments())
+                    .containsExactly("${project.build.directory}/generated-sources/gen", "from-generator");
+            assertThat(app.getAddedSourceDirs()).containsExactly("${project.build.directory}/generated-sources/gen");
+        }
+
+        @Test
+        void generatorClasspathPointsToTheReactorModule() {
+            ModuleInfo app = findModule(modules, "exec-generator-app");
+            ModuleInfo maker = findModule(modules, "exec-generator-maker");
+            assertThat(app.getGeneratorClasspath()).hasSize(1);
+            assertThat(app.getGeneratorClasspath().get(0))
+                    .endsWith("/com/test/exec-generator-maker/1.0.0/exec-generator-maker-1.0.0.jar");
+            // it is not a dependency of the app, so it must not leak on its compile classpath
+            assertThat(app.getReactorDependencies()).doesNotContain(maker.getArtifactId());
+            assertThat(app.getCompileClasspath()).noneMatch(p -> p.contains("exec-generator-maker"));
+        }
+
+        @Test
+        void otherModulesHaveNoGenerators() {
+            ModuleInfo maker = findModule(modules, "exec-generator-maker");
+            assertThat(maker.getSourceGenerators()).isEmpty();
+            assertThat(maker.getGeneratorClasspath()).isEmpty();
+            assertThat(maker.getAddedSourceDirs()).isEmpty();
+        }
+    }
 }

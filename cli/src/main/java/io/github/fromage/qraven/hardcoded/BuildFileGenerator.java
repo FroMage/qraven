@@ -556,6 +556,38 @@ public class BuildFileGenerator {
             sb.append("    }\n");
         }
 
+        if (!module.getSourceGenerators().isEmpty()) {
+            sb.append("\n    @Override\n");
+            sb.append("    public List<SourceGenerator> sourceGenerators() {\n");
+            sb.append("        return List.of(\n");
+            List<ModuleInfo.SourceGenerator> generators = module.getSourceGenerators();
+            for (int i = 0; i < generators.size(); i++) {
+                ModuleInfo.SourceGenerator g = generators.get(i);
+                sb.append("            new SourceGenerator(").append(quote(g.mainClass())).append(", List.of(")
+                        .append(g.arguments().stream().map(this::quote).collect(Collectors.joining(", ")))
+                        .append("), ").append(quoteOrNull(g.skipWhen())).append(")");
+                if (i < generators.size() - 1) sb.append(",");
+                sb.append("\n");
+            }
+            sb.append("        );\n");
+            sb.append("    }\n\n");
+            sb.append("    @Override\n");
+            sb.append("    public List<String> generatorClasspath() {\n");
+            sb.append("        return List.of(\n");
+            sb.append(formatStringList(makePortable(module.getGeneratorClasspath()), "            "));
+            sb.append("        );\n");
+            sb.append("    }\n");
+        }
+
+        if (!module.getAddedSourceDirs().isEmpty()) {
+            sb.append("\n    @Override\n");
+            sb.append("    public List<String> addedSourceDirs() {\n");
+            sb.append("        return List.of(\n");
+            sb.append(formatStringList(module.getAddedSourceDirs(), "            "));
+            sb.append("        );\n");
+            sb.append("    }\n");
+        }
+
         sb.append("}\n");
         return sb.toString();
     }

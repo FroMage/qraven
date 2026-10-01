@@ -304,6 +304,9 @@ Qraven replicates the behavior of the following Maven plugins during build:
 ### Code generation
 - **quarkus-maven-plugin:generate-code** -- Runs Quarkus code generators (e.g. gRPC, Avro) before compilation via `io.quarkus.deployment.CodeGenerator`. Generated sources are compiled alongside regular sources and passed to the Kotlin compiler when applicable.
 
+- **exec-maven-plugin:java** (bound to `generate-sources`) -- Runs a code generator's `mainClass` in-process, in its own class loader, with the configured `<arguments>`, before compilation. The classpath is the project's plus, with `<includePluginDependencies>`, the plugin's `<dependencies>`: reactor modules among them are built first (without ending up on the module's compile classpath). Disabled with `-Dexec.skip`. Other phases and goals (`exec:exec`, `prepare-package`, ...) are ignored.
+- **build-helper-maven-plugin:add-source** -- Adds the configured directories as source roots of the compilation (and of the Kotlin compilation, for Kotlin modules).
+
 ### Resource handling
 - **maven-resources-plugin** -- Copies `src/main/resources` to `target/classes` with optional Maven-style property filtering (`${property}` interpolation). Binary file extensions are detected and copied without filtering. Supports `<targetPath>` for placing resources under a specific prefix in the output.
 
@@ -371,7 +374,8 @@ Both build the same ~1438 reactor modules. `-Prelocations` currently adds an emp
 | process-classes | `bridger:transform` | — | **Missing** — affects 2–3 modules (arc/runtime, core/processor) |
 | generate-sources | `protobuf-maven-plugin` | `runtime.compileProtobuf()` | **Equivalent** |
 | generate-sources | `antlr4-maven-plugin` | `runtime.compileAntlr()` | **Equivalent** |
-| generate-sources | `build-helper-maven-plugin:add-source` | Implicit (generated dirs added to compiler) | **Equivalent** |
+| generate-sources | `build-helper-maven-plugin:add-source` | Configured directories added to the compiler | **Equivalent** |
+| generate-sources | `exec-maven-plugin:java` | In-process execution of the main class (`SourceGeneratorRunner`) | **Equivalent** — generate-sources only |
 | generate-sources | `module-services-plugin:generate` | — | **Missing** — affects ~9 modules with `module-info.java` |
 | process-classes | `jandex-maven-plugin:jandex` | `runtime.generateJandexIndex()` | **Equivalent** |
 | process-classes | `sisu-maven-plugin` | `generateSisuIndex()` | **Simplified** — see below |

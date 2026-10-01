@@ -677,6 +677,13 @@ public class BuildOrchestrator {
                     }
                 }
             }
+            // Modules that provide the source generators must be built first, but are not on the classpath
+            for (String path : m.generatorClasspath()) {
+                String reactorId = installPathToArtifactId.get(path);
+                if (reactorId != null && !allDepIds.contains(reactorId)) {
+                    allDepIds.add(reactorId);
+                }
+            }
             List<String> unresolved = allDepIds.stream()
                     .filter(id -> !byId.containsKey(id))
                     .toList();

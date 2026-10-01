@@ -224,6 +224,7 @@ public class PomParser {
         }
 
         resolveReactorAnnotationProcessorClasspaths(modules, reactorGAs);
+        resolveSourceGeneratorClasspaths(modules, reactorGAs);
 
         // Release models — no longer needed
         effectiveModels.clear();
@@ -552,6 +553,8 @@ public class PomParser {
         detectQuarkusBuildPlugin(model, info);
         detectShadePlugin(model, info);
         detectPlatformBomPlugin(model, info);
+        detectExecSourceGenerators(model, baseDir, info);
+        detectBuildHelperSources(model, baseDir, info);
         detectFormatterPlugin(model, info);
         extractManifestEntries(model, info);
 
@@ -985,6 +988,116 @@ public class PomParser {
             return values;
         }
         return List.of();
+    }
+
+    /**
+     * exec-maven-plugin:java executions bound to generate-sources, typically running a code generator
+     * that lives in another module of the reactor (declared as a plugin dependency).
+     */
+    private void detectExecSourceGenerators(Model model, Path baseDir, ModuleInfo info) {
+        if (model.getBuild() == null) return;
+        for (Plugin plugin : model.getBuild().getPlugins()) {
+            if (!"exec-maven-plugin".equals(plugin.getArtifactId())) continue;
+
+            Xpp3Dom pluginConfig = (Xpp3Dom) plugin.getConfiguration();
+            boolean includePluginDependencies = false;
+            for (PluginExecution exec : plugin.getExecutions()) {
+                if (!"generate-sources".equals(exec.getPhase()) || !exec.getGoals().contains("java")) continue;
+                Xpp3Dom execConfig = (Xpp3Dom) exec.getConfiguration();
+                String mainClass = extractConfigValue("mainClass", execConfig, pluginConfig);
+                if (mainClass == null) continue;
+
+                List<String> arguments = new ArrayList<>();
+                for (String arg : extractConfigList("arguments", execConfig, pluginConfig)) {
+                    arguments.add(portablePath(arg, baseDir));
+                }
+                String skip = extractConfigValue("skip", execConfig, pluginConfig);
+                info.getSourceGenerators().add(new ModuleInfo.SourceGenerator(
+                        mainClass, arguments, skip != null ? skip : "${exec.skip}"));
+                includePluginDependencies |= Boolean.parseBoolean(
+                        extractConfigValue("includePluginDependencies", execConfig, pluginConfig));
+            }
+            if (includePluginDependencies) {
+                for (Dependency dep : plugin.getDependencies()) {
+                    info.getGeneratorPluginDependencies().add(
+                            dep.getGroupId() + ":" + dep.getArtifactId() + ":" + dep.getVersion());
+                }
+            }
+            return;
+        }
+    }
+
+    /** build-helper-maven-plugin:add-source roots. */
+    private void detectBuildHelperSources(Model model, Path baseDir, ModuleInfo info) {
+        if (model.getBuild() == null) return;
+        for (Plugin plugin : model.getBuild().getPlugins()) {
+            if (!"build-helper-maven-plugin".equals(plugin.getArtifactId())) continue;
+            for (PluginExecution exec : plugin.getExecutions()) {
+                if (!exec.getGoals().contains("add-source")) continue;
+                for (String dir : extractConfigList("sources", (Xpp3Dom) exec.getConfiguration(),
+                        (Xpp3Dom) plugin.getConfiguration())) {
+                    String portable = portablePath(dir, baseDir);
+                    if (!info.getAddedSourceDirs().contains(portable)) {
+                        info.getAddedSourceDirs().add(portable);
+                    }
+                }
+            }
+            return;
+        }
+    }
+
+    /**
+     * The effective model has ${project.build.directory} and ${basedir} already interpolated to absolute
+     * paths: turn them back into placeholders so that the generated build doesn't depend on the location.
+     */
+    private static String portablePath(String value, Path baseDir) {
+        String base = baseDir.toAbsolutePath().normalize().toString();
+        String target = baseDir.resolve("target").toAbsolutePath().normalize().toString();
+        return value.replace(target, "${project.build.directory}").replace(base, "${project.basedir}");
+    }
+
+    /**
+     * Resolves the classpath of the plugin dependencies of each module's source generators: reactor modules
+     * (and their own classpath) are referenced by their installed jar, which also orders the build, and
+     * other artifacts are resolved from the local repository.
+     */
+    private void resolveSourceGeneratorClasspaths(List<ModuleInfo> modules, Set<String> reactorGAs) {
+        Map<String, ModuleInfo> byGA = new LinkedHashMap<>();
+        Map<String, ModuleInfo> byArtifactId = new LinkedHashMap<>();
+        for (ModuleInfo m : modules) {
+            byGA.put(m.getGroupId() + ":" + m.getArtifactId(), m);
+            byArtifactId.put(m.getArtifactId(), m);
+        }
+        for (ModuleInfo info : modules) {
+            if (info.getGeneratorPluginDependencies().isEmpty()) continue;
+            List<String> classpath = new ArrayList<>();
+            for (String gav : info.getGeneratorPluginDependencies()) {
+                String[] parts = gav.split(":");
+                ModuleInfo reactorModule = byGA.get(parts[0] + ":" + parts[1]);
+                if (reactorModule != null) {
+                    addReactorModuleClasspath(reactorModule, byArtifactId, classpath, new HashSet<>());
+                } else {
+                    for (String path : resolver.resolveAnnotationProcessorPath(parts[0], parts[1], parts[2], null)) {
+                        if (!classpath.contains(path)) classpath.add(path);
+                    }
+                }
+            }
+            info.setGeneratorClasspath(classpath);
+        }
+    }
+
+    private void addReactorModuleClasspath(ModuleInfo module, Map<String, ModuleInfo> byArtifactId,
+                                           List<String> classpath, Set<String> visited) {
+        if (!visited.add(module.getArtifactId())) return;
+        String jar = resolver.expectedArtifactPath(module.getGroupId(), module.getArtifactId(), module.getVersion());
+        if (!classpath.contains(jar)) classpath.add(jar);
+        for (String cp : module.getCompileClasspath()) {
+            if (!classpath.contains(cp)) classpath.add(cp);
+        }
+        for (String depId : module.getReactorDependencies()) {
+            ModuleInfo dep = byArtifactId.get(depId);
+            if (dep != null) addReactorModuleClasspath(dep, byArtifactId, classpath, visited);
+        }
     }
 
     private void detectFormatterPlugin(Model model, ModuleInfo info) {

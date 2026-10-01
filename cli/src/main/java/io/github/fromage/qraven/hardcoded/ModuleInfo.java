@@ -37,6 +37,10 @@ public class ModuleInfo {
     private boolean antlrVisitor;
     private boolean hasExtensionPlugin;
     private String platformPropertiesFileName;
+    private List<SourceGenerator> sourceGenerators = new ArrayList<>();
+    private List<String> generatorPluginDependencies = new ArrayList<>();
+    private List<String> generatorClasspath = new ArrayList<>();
+    private List<String> addedSourceDirs = new ArrayList<>();
     private org.apache.maven.model.Model flattenedBomModel;
     private String extensionValidationSkipWhen;
     private Map<String, String> extensionDescriptorProperties = new LinkedHashMap<>();
@@ -84,6 +88,9 @@ public class ModuleInfo {
     private List<ShadeExecution> shadeExecutions = new ArrayList<>();
 
     public record ResourceDir(String directory, boolean filtering, String targetPath) {}
+    /** An exec-maven-plugin:java execution bound to generate-sources. */
+    public record SourceGenerator(String mainClass, List<String> arguments, String skipWhen) {}
+
     public record ShadeExecution(String id, boolean attached, String classifier,
             List<String> includeArtifacts, List<ShadeFilter> filters, String mainClass) {}
     public record ShadeFilter(String artifact, List<String> excludes) {}
@@ -162,6 +169,19 @@ public class ModuleInfo {
 
     public boolean isAntlrVisitor() { return antlrVisitor; }
     public void setAntlrVisitor(boolean antlrVisitor) { this.antlrVisitor = antlrVisitor; }
+
+    public List<SourceGenerator> getSourceGenerators() { return sourceGenerators; }
+    public void setSourceGenerators(List<SourceGenerator> v) { this.sourceGenerators = v; }
+
+    /** Plugin dependencies, as groupId:artifactId:version, of the exec-maven-plugin source generators. */
+    public List<String> getGeneratorPluginDependencies() { return generatorPluginDependencies; }
+
+    /** Classpath of the source generators' plugin dependencies. */
+    public List<String> getGeneratorClasspath() { return generatorClasspath; }
+    public void setGeneratorClasspath(List<String> v) { this.generatorClasspath = v; }
+
+    /** Source roots added by build-helper-maven-plugin:add-source; may contain ${project.build.directory}. */
+    public List<String> getAddedSourceDirs() { return addedSourceDirs; }
 
     /** Name of the file under target/classes to publish as a "properties" artifact, or null. */
     public String getPlatformPropertiesFileName() { return platformPropertiesFileName; }
