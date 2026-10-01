@@ -219,8 +219,7 @@ class EndToEndBuildTest {
                             return "";
                         }
                     })
-                    .filter(content -> content.contains("\"" + moduleArtifactId + "\"")
-                            && content.contains("artifactId()"))
+                    .filter(content -> content.contains("String artifactId() { return \"" + moduleArtifactId + "\"; }"))
                     .findFirst()
                     .orElseThrow(() -> new AssertionError(
                             "No generated source found for module: " + moduleArtifactId));
