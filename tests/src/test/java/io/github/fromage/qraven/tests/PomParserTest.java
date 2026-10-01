@@ -4,10 +4,15 @@ import io.github.fromage.qraven.hardcoded.DependencyResolver;
 import io.github.fromage.qraven.hardcoded.ModuleInfo;
 import io.github.fromage.qraven.hardcoded.PomParser;
 
+import org.apache.maven.model.Dependency;
+import org.apache.maven.model.Model;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
@@ -775,6 +780,95 @@ class PomParserTest {
             for (String cp : app.getCompileClasspath()) {
                 assertThat(cp).as("app compile classpath should not contain commons-text")
                         .doesNotContain("commons-text");
+            }
+        }
+    }
+
+    @Nested
+    class PlatformBomProject {
+
+        static List<ModuleInfo> modules;
+
+        @BeforeAll
+        static void parse() {
+            modules = parseProject("platform-bom");
+        }
+
+        @Test
+        void detectsPlatformPropertiesGoal() {
+            assertThat(findModule(modules, "test-platform-properties").getPlatformPropertiesFileName())
+                    .isEqualTo("platform-properties.properties");
+            assertThat(findModule(modules, "test-bom").getPlatformPropertiesFileName()).isNull();
+        }
+
+        @Test
+        void flattensBomWithExcludesAndSorting() {
+            Model flat = findModule(modules, "test-bom").getFlattenedBomModel();
+            assertThat(flat).isNotNull();
+
+            List<Dependency> deps = flat.getDependencyManagement().getDependencies();
+            // properties artifact first, then alphabetical; junit (excludeArtifactKeys, child elements)
+            // and only-test (excludeScopes, plain comma-separated value) are gone
+            assertThat(deps).extracting(Dependency::getArtifactId)
+                    .containsExactly("test-platform-properties", "alpha", "zed");
+            assertThat(deps.get(0).getType()).isEqualTo("properties");
+            assertThat(deps.get(0).getVersion()).isEqualTo("1.0.0");
+            assertThat(deps.get(1).getExclusions()).extracting(e -> e.getArtifactId()).containsExactly("noise");
+            assertThat(deps.get(2).getVersion()).as("interpolated").isEqualTo("2.0");
+        }
+
+        @Test
+        void flattenedBomKeepsMetadataButNotParentOrProperties() {
+            Model flat = findModule(modules, "test-bom").getFlattenedBomModel();
+            assertThat(flat.getGroupId()).isEqualTo("com.test");
+            assertThat(flat.getArtifactId()).isEqualTo("test-bom");
+            assertThat(flat.getVersion()).isEqualTo("1.0.0");
+            assertThat(flat.getPackaging()).isEqualTo("pom");
+            assertThat(flat.getDescription()).isEqualTo("A BOM to flatten");
+            assertThat(flat.getParent()).isNull();
+            assertThat(flat.getProperties()).isEmpty();
+        }
+
+        @Test
+        void otherModulesAreNotFlattened() {
+            assertThat(findModule(modules, "test-platform-properties").getFlattenedBomModel()).isNull();
+            assertThat(findModule(modules, "platform-app").getFlattenedBomModel()).isNull();
+        }
+
+        @Test
+        void modulesWithoutThePluginHaveNoPlatformBomConfig() {
+            ModuleInfo simple = findModule(parseProject("simple-jar"), "simple-jar");
+            assertThat(simple.getPlatformPropertiesFileName()).isNull();
+            assertThat(simple.getFlattenedBomModel()).isNull();
+        }
+
+        @Test
+        void quarkusBuildGetsPlatformPropertiesFromReactorSourcesWhenNotInstalled(@TempDir Path home) {
+            // nothing is installed in this local repository, so the properties can only come from the
+            // sources of the reactor module that publishes them, filtered with that module's properties
+            String originalHome = System.getProperty("user.home");
+            try {
+                System.setProperty("user.home", home.toString());
+                ModuleInfo app = findModule(parseProject("platform-bom"), "platform-app");
+                assertThat(app.getQuarkusBuildProperties()).containsEntry("platform.test.value", "from-pom");
+            } finally {
+                System.setProperty("user.home", originalHome);
+            }
+        }
+
+        @Test
+        void quarkusBuildPrefersTheInstalledPlatformProperties(@TempDir Path home) throws IOException {
+            Path installed = home.resolve(".m2/repository/com/test/test-platform-properties/1.0.0");
+            Files.createDirectories(installed);
+            Files.writeString(installed.resolve("test-platform-properties-1.0.0.properties"),
+                    "platform.test.value=installed\n");
+            String originalHome = System.getProperty("user.home");
+            try {
+                System.setProperty("user.home", home.toString());
+                ModuleInfo app = findModule(parseProject("platform-bom"), "platform-app");
+                assertThat(app.getQuarkusBuildProperties()).containsEntry("platform.test.value", "installed");
+            } finally {
+                System.setProperty("user.home", originalHome);
             }
         }
     }

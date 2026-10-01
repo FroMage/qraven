@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>com.test</groupId>
+        <artifactId>platform-bom-parent</artifactId>
+        <version>1.0.0</version>
+    </parent>
+    <artifactId>test-bom</artifactId>
+    <packaging>pom</packaging>
+    <name>Test BOM</name>
+    <description>A BOM to flatten</description>
+
+    <properties>
+        <zed.version>2.0</zed.version>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.zed</groupId>
+                <artifactId>zed</artifactId>
+                <version>${zed.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.test</groupId>
+                <artifactId>test-platform-properties</artifactId>
+                <version>${project.version}</version>
+                <type>properties</type>
+            </dependency>
+            <dependency>
+                <groupId>org.alpha</groupId>
+                <artifactId>alpha</artifactId>
+                <version>1.0</version>
+                <exclusions>
+                    <exclusion>
+                        <groupId>org.noise</groupId>
+                        <artifactId>noise</artifactId>
+                    </exclusion>
+                </exclusions>
+            </dependency>
+            <dependency>
+                <groupId>junit</groupId>
+                <artifactId>junit</artifactId>
+                <version>4.13</version>
+            </dependency>
+            <dependency>
+                <groupId>org.only</groupId>
+                <artifactId>only-test</artifactId>
+                <version>1.0</version>
+                <scope>test</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>io.quarkus</groupId>
+                <artifactId>quarkus-platform-bom-maven-plugin</artifactId>
+                <version>0.0.134</version>
+                <executions>
+                    <execution>
+                        <phase>process-resources</phase>
+                        <goals>
+                            <goal>flatten-platform-bom</goal>
+                        </goals>
+                        <configuration>
+                            <excludeScopes>test</excludeScopes>
+                            <excludeArtifactKeys>
+                                <key>junit:junit</key>
+                            </excludeArtifactKeys>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>
