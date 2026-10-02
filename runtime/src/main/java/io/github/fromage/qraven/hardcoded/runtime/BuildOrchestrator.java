@@ -50,6 +50,8 @@ public class BuildOrchestrator {
             "transient", "try", "void", "volatile", "while", "var", "record", "sealed",
             "permits", "yield", "null", "true", "false");
 
+    private static final int MAX_CASCADE_FAILURES_SHOWN = 10;
+
     private final int threadCount;
     private String logName = "build";
 
@@ -396,8 +398,14 @@ public class BuildOrchestrator {
             }
         }
         if (!cascadeFailures.isEmpty()) {
-            System.err.println(YELLOW + "Cascade failures (" + cascadeFailures.size() + "): "
-                    + String.join(", ", cascadeFailures) + RESET);
+            // build.log has the full list; the terminal gets a short one
+            boolean truncate = logFile != null && cascadeFailures.size() > MAX_CASCADE_FAILURES_SHOWN;
+            String shown = truncate
+                    ? String.join(", ", cascadeFailures.subList(0, MAX_CASCADE_FAILURES_SHOWN))
+                            + ", ... and " + (cascadeFailures.size() - MAX_CASCADE_FAILURES_SHOWN)
+                            + " more (full list in " + logFile.getFileName() + ")"
+                    : String.join(", ", cascadeFailures);
+            System.err.println(YELLOW + "Cascade failures (" + cascadeFailures.size() + "): " + shown + RESET);
         }
         if (!directFailures.isEmpty()) {
             System.exit(1);

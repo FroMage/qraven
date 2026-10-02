@@ -176,6 +176,32 @@ class CliTest {
                 .doesNotContain("SKIPPED: dependency failed");
     }
 
+    @Test
+    void manyCascadeFailures_areTruncatedOnTheTerminalButFullInTheLog(@TempDir Path dir) throws Exception {
+        int dependents = 15;
+        StringBuilder modules = new StringBuilder("<modules><module>broken</module>");
+        for (int i = 0; i < dependents; i++) {
+            modules.append("<module>dep").append(i).append("</module>");
+        }
+        writePom(dir, "parent", modules.append("</modules>").toString());
+        writePom(dir.resolve("broken"), "broken", "");
+        Path src = Files.createDirectories(dir.resolve("broken/src/main/java/com/test"));
+        Files.writeString(src.resolve("Broken.java"), "package com.test; class Broken { this does not compile }");
+        for (int i = 0; i < dependents; i++) {
+            writePom(dir.resolve("dep" + i), "dep" + i, dependencyOn("broken"));
+        }
+
+        CliResult r = runCli(dir);
+
+        assertThat(r.exit()).as(r.output()).isNotZero();
+        assertThat(r.output()).contains("Cascade failures (15): ").contains("... and 5 more (full list in build.log)");
+        String log = Files.readString(dir.resolve("target/qraven/build.log"));
+        assertThat(log).contains("Cascade failures (15): ").doesNotContain("more (full list");
+        for (int i = 0; i < dependents; i++) {
+            assertThat(log).contains("dep" + i);
+        }
+    }
+
     private static String dependencyOn(String artifactId) {
         return "<dependencies><dependency><groupId>com.test</groupId><artifactId>" + artifactId
                 + "</artifactId><version>1.0.0</version></dependency></dependencies>";
