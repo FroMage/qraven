@@ -80,4 +80,24 @@ class CliTest {
                 "--force-generate", "--no-build");
         assertThat(output).contains("Regenerating: forced");
     }
+
+    @Test
+    void failure_suggestsReportingABug(@TempDir Path dir) throws Exception {
+        // a module that does not compile; System.exit means a subprocess is needed
+        Files.copy(QRAVEN_ROOT.resolve("test-projects/simple-jar/pom.xml"), dir.resolve("pom.xml"));
+        Path src = Files.createDirectories(dir.resolve("src/main/java/com/test"));
+        Files.writeString(src.resolve("Broken.java"), "package com.test; class Broken { this does not compile }");
+        Process p = new ProcessBuilder(Path.of(System.getProperty("java.home"), "bin", "java").toString(),
+                "-cp", System.getProperty("java.class.path"), QravenCli.class.getName(),
+                "-p", dir.toString(), "-Dno-progress")
+                .redirectErrorStream(true).start();
+        String output = new String(p.getInputStream().readAllBytes());
+        assertThat(p.waitFor()).as(output).isNotZero();
+        assertThat(output).contains("qraven --report-bug");
+    }
+
+    @Test
+    void success_doesNotSuggestReportingABug() throws Exception {
+        assertThat(captureOutput("--help")).doesNotContain("should not have failed");
+    }
 }

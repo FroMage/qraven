@@ -27,6 +27,24 @@ public class QravenCli {
     private static final String RUNTIME_VERSION = loadVersion();
 
     public static void main(String[] args) throws Exception {
+        try {
+            run(args);
+        } catch (Exception e) {
+            e.printStackTrace();
+            printReportBugHint();
+            System.exit(1);
+        }
+    }
+
+    /** Printed on stderr when qraven fails, so users who think it should not have failed know what to do. */
+    private static void printReportBugHint() {
+        System.err.println();
+        System.err.println("If this build should not have failed (for example, it works with Maven), it may be a");
+        System.err.println("qraven bug. Run `qraven --report-bug` from the same project to report it: it shows");
+        System.err.println("exactly what would be collected and asks for confirmation before anything is created.");
+    }
+
+    private static void run(String[] args) throws Exception {
         Path projectDir = Path.of(".").toAbsolutePath().normalize();
         int threads = Runtime.getRuntime().availableProcessors();
         Path outputDir = null;
@@ -247,6 +265,7 @@ public class QravenCli {
                 int exitCode = runBuild(bootstrapJar, projectDir, commonBuildArgs);
                 if (exitCode != 0) {
                     System.err.println("Bootstrap build failed with exit code " + exitCode);
+                    printReportBugHint();
                     System.exit(exitCode);
                 }
                 System.out.println();
@@ -278,6 +297,9 @@ public class QravenCli {
             System.out.println("Running build...");
             System.out.println();
             int exitCode = runBuild(buildJar, projectDir, allBuildArgs);
+            if (exitCode != 0) {
+                printReportBugHint();
+            }
             System.exit(exitCode);
         } else {
             System.out.println();
