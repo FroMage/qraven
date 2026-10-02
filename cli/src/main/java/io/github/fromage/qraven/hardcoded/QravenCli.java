@@ -39,6 +39,7 @@ public class QravenCli {
         boolean forceBootstrap = false;
         boolean quickly = false;
         boolean noQuickly = false;
+        boolean reportBug = false;
 
         List<String> commonBuildArgs = new ArrayList<>();
         List<String> mainBuildArgs = new ArrayList<>();
@@ -47,6 +48,7 @@ public class QravenCli {
             switch (args[i]) {
                 case "--help", "-h" -> { printHelp(); return; }
                 case "--version", "-V" -> { printVersion(); return; }
+                case "--report-bug", "--report-issue" -> reportBug = true;
                 case "--project", "-p" -> projectDir = Path.of(args[++i]).toAbsolutePath().normalize();
                 case "--threads", "-t" -> {
                     threads = Integer.parseInt(args[++i]);
@@ -84,6 +86,12 @@ public class QravenCli {
 
         if (outputDir == null) {
             outputDir = projectDir.resolve("target/qraven");
+        }
+
+        if (reportBug) {
+            System.exit(new BugReporter(projectDir, outputDir,
+                    new java.io.BufferedReader(new java.io.InputStreamReader(System.in)), System.out,
+                    BugReporter.defaultSubmitter(System.out), RUNTIME_VERSION, List.of(args)).run());
         }
 
         if (!noQuickly && !quickly && isQuarkusProject(projectDir)) {
@@ -506,6 +514,8 @@ public class QravenCli {
                   -D<key>=<value>           Set a system property
 
                 Other options:
+                  --report-bug              Interactively report a qraven issue (shows what will be
+                                            collected and asks for confirmation; alias: --report-issue)
                   -h, --help                Show this help message and exit
                   -V, --version             Show version and exit
                   -p, --project <path>      Project root directory (default: current directory)

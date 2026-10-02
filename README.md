@@ -106,6 +106,7 @@ Build options:
   -D<key>=<value>           Set a system property
 
 Other options:
+  --report-bug              Interactively report a qraven issue (alias: --report-issue)
   -h, --help                Show this help message and exit
   -V, --version             Show version and exit
   -p, --project <path>      Project root directory (default: current directory)
@@ -114,6 +115,28 @@ Other options:
       --native              Compile build.jar to a native binary after generation
       --graalvm-home <path> GraalVM path (also checks GRAALVM_HOME, JAVA_HOME, PATH)
 ```
+
+### Reporting a bug
+
+`qraven --report-bug` walks you through reporting a broken build on the qraven issue tracker.
+It asks for confirmation (the tracker is public), asks you to describe the problem, then shows
+**exactly which files will go in a diagnostic zip** and lets you cancel before anything is created.
+Your project's source code is never included, except for an optional patch of your own changes.
+
+- **In a git repository with an upstream branch**, the zip records the remote URL and the commit
+  your tree is based on (the merge-base with the upstream branch), so a maintainer can check out
+  the same tree. If your tree differs from it (unpushed commits, uncommitted changes, untracked
+  files), you are asked whether to include a patch of those changes.
+- **Otherwise**, it includes all `pom.xml` files and a listing of the project's file names.
+- **In both cases** it includes the logs (`build.log`, `generate.log`, `bootstrap.log` and the
+  previous runs), the generated build sources, and the qraven/JDK/OS versions.
+
+Files that look sensitive (`.env*`, `*.pem`, `*.key`, `*.jks`, `settings.xml`, ...) are always
+left out, but logs contain absolute paths from your machine, so read the list before confirming.
+
+The issue is created with `gh` if it is installed and logged in, otherwise a pre-filled issue
+form is opened in your browser. GitHub offers no API to attach files to an issue, so the zip is
+written to `target/qraven/` and you are asked to drag it into the issue yourself.
 
 ### Auto-generation
 
