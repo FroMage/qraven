@@ -29,6 +29,12 @@ public class QravenCli {
     public static void main(String[] args) throws Exception {
         try {
             run(args);
+        } catch (DependencyResolver.UnresolvedDependenciesException e) {
+            System.err.print(ERASE_LINE);
+            System.err.println("ERROR: " + e.getMessage());
+            System.err.println("Nothing was built. Details are in target/qraven/generate.log.");
+            printReportBugHint();
+            System.exit(1);
         } catch (Exception e) {
             e.printStackTrace();
             printReportBugHint();

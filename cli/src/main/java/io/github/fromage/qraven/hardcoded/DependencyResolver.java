@@ -35,8 +35,11 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
+import java.util.Arrays;
+import java.util.Comparator;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
@@ -62,6 +65,106 @@ public class DependencyResolver {
     private final AtomicInteger transferSucceeded = new AtomicInteger();
     private final AtomicInteger transferFailed = new AtomicInteger();
     private final ConcurrentHashMap<String, String> transferDetails = new ConcurrentHashMap<>();
+
+    /** An artifact that could not be resolved, and why. */
+    public static final class Unresolved {
+        public final String coordinates;
+        public final String reason;
+        public final Set<String> requiredBy = ConcurrentHashMap.newKeySet();
+
+        Unresolved(String coordinates, String reason) {
+            this.coordinates = coordinates;
+            this.reason = reason;
+        }
+    }
+
+    /** Thrown when generation cannot continue because dependencies are missing. */
+    public static final class UnresolvedDependenciesException extends RuntimeException {
+        public UnresolvedDependenciesException(String message) {
+            super(message);
+        }
+    }
+
+    private final ConcurrentHashMap<String, Unresolved> unresolved = new ConcurrentHashMap<>();
+    private final ThreadLocal<String> currentModule = new ThreadLocal<>();
+
+    /** Attributes failures recorded on this thread to the given module (null to stop). */
+    public void setCurrentModule(String artifactId) {
+        if (artifactId == null) {
+            currentModule.remove();
+        } else {
+            currentModule.set(artifactId);
+        }
+    }
+
+    public boolean hasUnresolved() {
+        return !unresolved.isEmpty();
+    }
+
+    public List<Unresolved> unresolvedDependencies() {
+        return unresolved.values().stream().sorted(Comparator.comparing(u -> u.coordinates)).toList();
+    }
+
+    public List<String> remoteRepositoryNames() {
+        return remoteRepos.stream().map(r -> r.getId() + " (" + r.getUrl() + ")").toList();
+    }
+
+    /** Human-readable description of every unresolved artifact, used for the terminal and generate.log. */
+    public String unresolvedReport() {
+        List<Unresolved> all = unresolvedDependencies();
+        StringBuilder sb = new StringBuilder();
+        sb.append(all.size()).append(all.size() == 1 ? " dependency" : " dependencies")
+                .append(" could not be resolved:\n");
+        for (Unresolved u : all) {
+            sb.append("\n  ").append(u.coordinates);
+            if (!u.requiredBy.isEmpty()) {
+                List<String> by = u.requiredBy.stream().sorted().toList();
+                sb.append("\n    needed by ").append(by.size()).append(by.size() == 1 ? " module: " : " modules: ")
+                        .append(by.stream().limit(5).collect(Collectors.joining(", ")))
+                        .append(by.size() > 5 ? ", ..." : "");
+            }
+            String[] reasons = u.reason.split("\n");
+            if (Arrays.stream(reasons).allMatch(r -> r.startsWith("Could not find artifact "))) {
+                sb.append("\n    not found in any of the repositories searched");
+            } else {
+                for (String line : reasons) {
+                    sb.append("\n    ").append(line);
+                }
+            }
+        }
+        sb.append("\n\nRepositories searched: ").append(String.join(", ", remoteRepositoryNames()))
+                .append(", and the local repository ").append(localRepoPath).append('\n');
+        sb.append("Qraven does not read settings.xml or the <repositories> declared in poms, so an artifact\n")
+                .append("that Maven finds in a repository defined there will not be found by qraven.\n");
+        return sb.toString();
+    }
+
+    private void recordFailure(String what, DependencyResolutionException e) {
+        boolean recorded = false;
+        DependencyResult result = e.getResult();
+        if (result != null) {
+            for (ArtifactResult ar : result.getArtifactResults()) {
+                if (!ar.isResolved()) {
+                    String reason = ar.getExceptions().stream().map(Exception::getMessage).distinct()
+                            .collect(Collectors.joining("\n"));
+                    record(ar.getRequest().getArtifact().toString(), reason.isEmpty() ? "not resolved" : reason);
+                    recorded = true;
+                }
+            }
+        }
+        if (!recorded) {
+            // e.g. a dependency's pom is missing, so the graph could not even be collected
+            record(what, e.getMessage());
+        }
+    }
+
+    private void record(String coordinates, String reason) {
+        Unresolved u = unresolved.computeIfAbsent(coordinates, k -> new Unresolved(k, reason));
+        String module = currentModule.get();
+        if (module != null) {
+            u.requiredBy.add(module);
+        }
+    }
 
     public DependencyResolver() {
         this.localRepoPath = Path.of(System.getProperty("user.home"), ".m2", "repository");
@@ -259,7 +362,7 @@ public class DependencyResolver {
             cacheMisses.incrementAndGet();
             return resolved;
         } catch (DependencyResolutionException e) {
-            warn("WARNING: Dependency resolution incomplete: " + e.getMessage());
+            recordFailure("compile dependencies", e);
             DependencyResult result = e.getResult();
             if (result != null) {
                 return toResolvedArtifacts(result);
@@ -301,11 +404,9 @@ public class DependencyResolver {
             testDepCache.put(cacheKey, resolved);
             return resolved;
         } catch (DependencyResolutionException e) {
-            warn("WARNING: Test dependency resolution incomplete: " + e.getMessage());
+            recordFailure("test dependencies", e);
             DependencyResult result = e.getResult();
-            List<ResolvedArtifact> resolved = result != null ? toResolvedArtifacts(result) : List.of();
-            testDepCache.put(cacheKey, resolved);
-            return resolved;
+            return result != null ? toResolvedArtifacts(result) : List.of();
         }
     }
 
@@ -346,8 +447,7 @@ public class DependencyResolver {
                     .map(ar -> ar.getArtifact().getFile().getAbsolutePath())
                     .toList();
         } catch (DependencyResolutionException e) {
-            warn("WARNING: Could not resolve annotation processor " +
-                    groupId + ":" + artifactId + ":" + version + ": " + e.getMessage());
+            recordFailure("annotation processor " + groupId + ":" + artifactId + ":" + version, e);
             DependencyResult result = e.getResult();
             if (result != null) {
                 return result.getArtifactResults().stream()

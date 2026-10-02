@@ -172,7 +172,12 @@ public class PomParser {
                     extractCompilerConfig(model, info, reactorGAs);
 
                     if (!"pom".equals(info.getPackaging())) {
-                        resolveDependencies(model, info, reactorGAs, resolveTimings);
+                        resolver.setCurrentModule(info.getArtifactId());
+                        try {
+                            resolveDependencies(model, info, reactorGAs, resolveTimings);
+                        } finally {
+                            resolver.setCurrentModule(null);
+                        }
                     }
 
                     int done = resolveCounter.incrementAndGet();
@@ -198,12 +203,23 @@ public class PomParser {
                 logContent.append(line).append("\n");
             }
             logContent.append("\n").append(resolver.transferStats());
+            if (!warnings.isEmpty()) {
+                logContent.append("\nWarnings:\n");
+                for (String w : warnings) {
+                    logContent.append("  ").append(w).append("\n");
+                }
+            }
+            if (resolver.hasUnresolved()) {
+                logContent.append("\nERROR: ").append(resolver.unresolvedReport());
+            }
             Files.writeString(logDir.resolve("generate.log"),
                     logContent.toString(),
                     java.nio.charset.StandardCharsets.UTF_8);
         } catch (Exception e) {
             // ignore
         }
+
+        failOnUnresolvedDependencies();
 
         List<String> allReactorGAsList = new ArrayList<>(reactorGAs);
         for (ModuleInfo info : modules) {
@@ -250,7 +266,31 @@ public class PomParser {
             }
         }
 
+        failOnUnresolvedDependencies();
+
         return modules;
+    }
+
+    /**
+     * A missing dependency means the generated build cannot work: modules would fail to compile with
+     * misleading "package does not exist" errors. Stop here instead, and record why in generate.log.
+     */
+    private void failOnUnresolvedDependencies() {
+        if (!resolver.hasUnresolved()) {
+            return;
+        }
+        String report = resolver.unresolvedReport();
+        try {
+            Path logFile = projectRoot.resolve("target/qraven/generate.log");
+            Files.createDirectories(logFile.getParent());
+            String existing = Files.exists(logFile) ? Files.readString(logFile) : "";
+            if (!existing.contains("ERROR: ")) {
+                Files.writeString(logFile, existing + "\nERROR: " + report, java.nio.charset.StandardCharsets.UTF_8);
+            }
+        } catch (IOException e) {
+            // best effort, the report is also printed
+        }
+        throw new DependencyResolver.UnresolvedDependenciesException(report);
     }
 
     private void quickDiscoverPoms(Path pomFile, Path baseDir, List<PomEntry> result,

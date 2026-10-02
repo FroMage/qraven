@@ -370,8 +370,10 @@ public class BuildOrchestrator {
                         pw.println();
                         pw.println("Direct failures: " + String.join(", ", directFailures));
                         pw.println();
+                        // Only direct failures are detailed: a module skipped because a dependency failed
+                        // adds nothing, and is named in the cascade list below.
                         for (ModuleBuild m : modules) {
-                            if (m.getFailureMessage() != null) {
+                            if (m.getFailureMessage() != null && directFailures.contains(m.artifactId())) {
                                 pw.println(m.getFailureMessage());
                             }
                         }
@@ -388,7 +390,7 @@ public class BuildOrchestrator {
             String projectRoot = modules.get(0).runtime.getProjectRoot().toString() + "/";
             System.err.println();
             for (ModuleBuild m : modules) {
-                if (m.getFailureMessage() != null) {
+                if (m.getFailureMessage() != null && directFailures.contains(m.artifactId())) {
                     printFormattedError(m.getFailureMessage(), projectRoot);
                 }
             }
