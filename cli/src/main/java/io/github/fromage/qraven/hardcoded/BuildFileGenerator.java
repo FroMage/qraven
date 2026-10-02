@@ -140,7 +140,7 @@ public class BuildFileGenerator {
         this.reactorVersions = rv;
 
         Path mainFile = srcDir.resolve("Build.java");
-        Files.writeString(mainFile, generateMainClass(modules));
+        Files.writeString(mainFile, generateMainClass(modules, buildName));
         if (progressListener != null) {
             progressListener.update("Build.java", total, total);
         }
@@ -596,7 +596,7 @@ public class BuildFileGenerator {
         return s != null ? quote(s) : "null";
     }
 
-    private String generateMainClass(List<ModuleInfo> modules) {
+    private String generateMainClass(List<ModuleInfo> modules, String buildName) {
         StringBuilder sb = new StringBuilder();
         sb.append("import io.github.fromage.qraven.hardcoded.runtime.*;\n");
         sb.append("import java.util.*;\n\n");
@@ -687,7 +687,7 @@ public class BuildFileGenerator {
             }
         }
 
-        sb.append("\n        new BuildOrchestrator(threads).buildAll(modules, projects, alsoMake, incremental, noKotlin);\n");
+        sb.append("\n        new BuildOrchestrator(threads).setLogName(").append(quote(buildName)).append(").buildAll(modules, projects, alsoMake, incremental, noKotlin);\n");
         sb.append("    }\n");
         sb.append("}\n");
         return sb.toString();

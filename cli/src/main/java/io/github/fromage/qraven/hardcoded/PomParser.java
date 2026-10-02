@@ -191,13 +191,14 @@ public class PomParser {
         try {
             Path logDir = projectRoot.resolve("target/qraven");
             Files.createDirectories(logDir);
+            LogRotator.rotate(logDir, "generate");
             StringBuilder logContent = new StringBuilder();
             logContent.append(resolver.resolutionCacheStats()).append("\n\n");
             for (String line : resolveTimings) {
                 logContent.append(line).append("\n");
             }
             logContent.append("\n").append(resolver.transferStats());
-            Files.writeString(logDir.resolve("resolve.log"),
+            Files.writeString(logDir.resolve("generate.log"),
                     logContent.toString(),
                     java.nio.charset.StandardCharsets.UTF_8);
         } catch (Exception e) {

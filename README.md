@@ -493,7 +493,9 @@ agent_note: |
   Qraven shows a progress bar by default. When running non-interactively, pass
   `-Dno-progress` to disable it. The full build output is always written to
   `target/qraven/build.log` (in the project root), so on failure grep that file
-  for errors rather than re-running the build. The exit status can be trusted:
+  for errors rather than re-running the build. `generate.log` and `bootstrap.log` hold
+  the other phases, and the previous 20 runs of each log are kept in `target/qraven/logs/`
+  (`build.1.log` is the most recent). The exit status can be trusted:
   0 means the build succeeded, non-zero means it failed.
 ```
 

@@ -51,9 +51,16 @@ public class BuildOrchestrator {
             "permits", "yield", "null", "true", "false");
 
     private final int threadCount;
+    private String logName = "build";
 
     public BuildOrchestrator(int threadCount) {
         this.threadCount = threadCount;
+    }
+
+    /** Name of the log file (without extension) in target/qraven; "build" by default, "bootstrap" for the bootstrap phase. */
+    public BuildOrchestrator setLogName(String logName) {
+        this.logName = logName;
+        return this;
     }
 
     public void buildAll(List<ModuleBuild> modules, String projectsFilter, boolean alsoMake) {
@@ -199,7 +206,7 @@ public class BuildOrchestrator {
         // Redirect System.out, System.err and JUL to build log so they don't break the progress bar.
         // ProgressDisplay already captured the original System.err at construction.
         Path logFile = modules.isEmpty() ? null
-                : modules.get(0).runtime.getProjectRoot().resolve("target/qraven/build.log");
+                : modules.get(0).runtime.getProjectRoot().resolve("target/qraven/" + logName + ".log");
         PrintStream originalOut = System.out;
         PrintStream originalErr = System.err;
         PrintStream buildLog = null;
@@ -209,6 +216,11 @@ public class BuildOrchestrator {
         if (logFile != null) {
             try {
                 Files.createDirectories(logFile.getParent());
+                try {
+                    LogRotator.rotate(logFile.getParent(), logName);
+                } catch (IOException e) {
+                    // rotation is best-effort, the new log truncates the old one
+                }
                 buildLog = new PrintStream(
                         Files.newOutputStream(logFile, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING),
                         true);
