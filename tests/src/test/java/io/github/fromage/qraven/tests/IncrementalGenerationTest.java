@@ -44,9 +44,15 @@ class IncrementalGenerationTest {
         List<String> cmd = new ArrayList<>(List.of(
                 Path.of(System.getProperty("java.home"), "bin", "java").toString()));
         cmd.addAll(jvmArgs);
+        // generation only, unless the test asks for a real build with "+build"
+        List<String> arguments = new ArrayList<>(List.of(args));
+        boolean build = arguments.remove("+build");
         cmd.addAll(List.of("-cp", System.getProperty("java.class.path"), QravenCli.class.getName(),
-                "-p", project.toString(), "-nb", "-Dno-progress"));
-        cmd.addAll(List.of(args));
+                "-p", project.toString(), "-Dno-progress"));
+        if (!build) {
+            cmd.add("-nb");
+        }
+        cmd.addAll(arguments);
         Process p = new ProcessBuilder(cmd).redirectErrorStream(true).start();
         String output = new String(p.getInputStream().readAllBytes()).replaceAll("\u001B\\[[;\\d]*[A-Za-z]", "");
         return new Run(p.waitFor(), output);
@@ -337,5 +343,80 @@ class IncrementalGenerationTest {
 
         assertThat(Files.readString(flattened)).isNotEqualTo(content).contains("2.5");
         assertThat(Files.getLastModifiedTime(flattened)).isGreaterThan(before);
+    }
+
+    // ---------------------------------------------------------------- removing a module
+
+    private static List<String> jarEntries(Path jar) throws IOException {
+        try (var zip = new java.util.zip.ZipFile(jar.toFile())) {
+            return zip.stream().map(e -> e.getName()).toList();
+        }
+    }
+
+    /**
+     * A removed module must leave nothing behind: not its generated source, not its compiled class in the jar, and
+     * nothing in the main class that still instantiates it.
+     */
+    private static void assertNothingLeftOf(Path project, String module) throws IOException {
+        Path qraven = project.resolve("target/qraven");
+        assertThat(qraven.resolve("build-src/Build_" + module + ".java")).doesNotExist();
+        assertThat(qraven.resolve("build-classes/Build_" + module + ".class")).doesNotExist();
+        assertThat(jarEntries(qraven.resolve("build.jar"))).noneMatch(e -> e.contains("Build_" + module));
+        assertThat(Files.readString(qraven.resolve("build-src/Build.java"))).doesNotContain("Build_" + module);
+    }
+
+    @Test
+    void removingAModuleFromTheBuild_leavesNothingOfIt(@TempDir Path tmp) throws Exception {
+        Path project = copyProject("multi-module", tmp.resolve("project"));
+        assertThat(cli(project).exit()).isZero();
+        assertThat(jarEntries(project.resolve("target/qraven/build.jar"))).anyMatch(e -> e.contains("Build_app"));
+        Thread.sleep(1100);
+        // the module's directory stays, it is just no longer part of the build
+        edit(project.resolve("pom.xml"), "<module>app</module>", "");
+
+        Run incremental = cli(project, "-i");
+
+        assertThat(incremental.exit()).as(incremental.output()).isZero();
+        assertThat(incremental.output())
+                .contains("Incremental generation not possible (modules were added or removed)");
+        assertNothingLeftOf(project, "app");
+        Map<String, String> result = snapshot(project);
+        assertThat(cli(project, "-fg").exit()).isZero();
+        assertThat(result).isEqualTo(snapshot(project));
+    }
+
+    @Test
+    void deletingAModulesDirectory_leavesNothingOfIt(@TempDir Path tmp) throws Exception {
+        Path project = copyProject("multi-module", tmp.resolve("project"));
+        assertThat(cli(project).exit()).isZero();
+        Thread.sleep(1100);
+        edit(project.resolve("pom.xml"), "<module>app</module>", "");
+        try (var walk = Files.walk(project.resolve("app"))) {
+            for (Path p : (Iterable<Path>) walk.sorted(java.util.Comparator.reverseOrder())::iterator) {
+                Files.delete(p);
+            }
+        }
+
+        Run incremental = cli(project, "-i");
+
+        assertThat(incremental.exit()).as(incremental.output()).isZero();
+        assertThat(incremental.output()).contains("modules were added or removed");
+        assertNothingLeftOf(project, "app");
+    }
+
+    @Test
+    void aRemovedModuleDoesNotComeBackIntoTheBuildJar(@TempDir Path tmp) throws Exception {
+        // the same, but through a real build, as the stale class used to be linked into build.jar
+        Path project = copyProject("multi-module", tmp.resolve("project"));
+        Run first = cli(project, "+build", "-i");
+        assertThat(first.exit()).as(first.output()).isZero();
+        Thread.sleep(1100);
+        edit(project.resolve("pom.xml"), "<module>app</module>", "");
+
+        Run build = cli(project, "+build", "-i");
+        assertThat(build.exit()).as(build.output()).isZero();
+        assertThat(build.output()).contains("3 succeeded");
+
+        assertNothingLeftOf(project, "app");
     }
 }
