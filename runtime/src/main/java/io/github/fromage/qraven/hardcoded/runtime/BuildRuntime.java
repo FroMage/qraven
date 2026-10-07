@@ -596,6 +596,28 @@ public class BuildRuntime {
         compileKotlinClassic(args);
     }
 
+    private static final java.util.regex.Pattern KOTLIN_PLUGIN_JAR =
+            java.util.regex.Pattern.compile("^(kotlin-.*-compiler-plugin.*?)-(\\d+\\.\\d+\\.\\d+)(?:-.+)?\\.jar$");
+
+    /**
+     * Kotlin compiler plugins use the compiler's internal APIs, so a plugin built for another Kotlin version
+     * than the embedded compiler typically fails with an opaque NoSuchMethodError. Returns a warning if the
+     * plugin's version (from its file name) differs from the compiler's, null otherwise.
+     */
+    public static String kotlinPluginMismatch(String pluginJarName, String compilerVersion) {
+        var m = KOTLIN_PLUGIN_JAR.matcher(pluginJarName);
+        if (!m.matches() || compilerVersion == null) {
+            return null;
+        }
+        String compiler = compilerVersion.replaceFirst("^(\\d+\\.\\d+\\.\\d+).*$", "$1");
+        if (m.group(2).equals(compiler)) {
+            return null;
+        }
+        return "Kotlin compiler plugin " + pluginJarName + " is for Kotlin " + m.group(2)
+                + " but qraven embeds the Kotlin " + compilerVersion + " compiler; this typically fails with a"
+                + " NoSuchMethodError in the plugin. Qraven needs to be updated to Kotlin " + m.group(2) + ".";
+    }
+
     private List<String> buildKotlinArgs(List<Path> kotlinFiles, Path javaSourceDir, Path outputDir,
             List<String> classpath, Path kotlinSourceDir,
             List<String> compilerPlugins, List<String> pluginOptions,
@@ -617,6 +639,11 @@ public class BuildRuntime {
             String resolved = pluginJar.startsWith("$HOME/")
                     ? System.getProperty("user.home") + pluginJar.substring(5) : pluginJar;
             if (Files.exists(Path.of(resolved))) {
+                String mismatch = kotlinPluginMismatch(Path.of(resolved).getFileName().toString(),
+                        org.jetbrains.kotlin.config.KotlinCompilerVersion.VERSION);
+                if (mismatch != null) {
+                    System.err.println("WARNING: " + mismatch);
+                }
                 args.add("-Xplugin=" + resolved);
             } else {
                 System.err.println("WARNING: Kotlin compiler plugin JAR not found: " + resolved);
