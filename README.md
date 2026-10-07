@@ -169,6 +169,16 @@ properties that poms are interpolated with differ. `--force-generate` always reg
 are not in poms, such as adding the first `.proto` file to a module, are not noticed by incremental generation
 (they never triggered regeneration anyway); use `--force-generate` after such a change.
 
+### Rebuilding after a pom change
+
+A pom change touches no source file, so timestamps alone can't tell an incremental build that a module has to be
+rebuilt. Each generated module therefore carries a fingerprint of its build data (classpaths, compiler arguments,
+plugin configuration, ...). The build records it in `<module>/target/qraven-build-data` when the module has been
+built, and `--incremental` rebuilds a module whose fingerprint differs, or that has none recorded, along with its
+dependents. This also covers changes made in a parent pom or a BOM, which don't touch the module's own pom. Because
+of this, `-i` stays in effect after a regeneration: a pom edit rebuilds the modules it affects instead of everything.
+The first incremental build after upgrading qraven rebuilds everything once, since nothing was recorded yet.
+
 ### Generation state
 
 Each generation also writes `target/qraven/state.cbor`: the parsed and resolved data of every module, as a

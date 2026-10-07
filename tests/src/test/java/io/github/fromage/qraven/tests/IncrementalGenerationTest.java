@@ -302,4 +302,40 @@ class IncrementalGenerationTest {
         assertThat(cli(project, "-fg").exit()).isZero();
         assertThat(incremental).isEqualTo(snapshot(project));
     }
+
+    // ---------------------------------------------------------------- the flattened poms
+
+    /**
+     * The build compares a flattened pom's timestamp with the installed artifact's. Rewriting it with the same
+     * content made its module, and everything that depends on it, look changed after every regeneration.
+     */
+    @Test
+    void regeneratingKeepsAnUnchangedFlattenedPomAsItWas(@TempDir Path tmp) throws Exception {
+        Path project = copyProject("platform-bom", tmp.resolve("project"));
+        assertThat(cli(project).exit()).isZero();
+        Path flattened = project.resolve("target/qraven/flattened-poms/test-bom-1.0.0.pom");
+        assertThat(flattened).exists();
+        var before = Files.getLastModifiedTime(flattened);
+        Thread.sleep(1100);
+
+        assertThat(cli(project, "-fg").exit()).isZero();
+
+        assertThat(Files.getLastModifiedTime(flattened)).isEqualTo(before);
+    }
+
+    @Test
+    void aChangedFlattenedPomIsRewritten(@TempDir Path tmp) throws Exception {
+        Path project = copyProject("platform-bom", tmp.resolve("project"));
+        assertThat(cli(project).exit()).isZero();
+        Path flattened = project.resolve("target/qraven/flattened-poms/test-bom-1.0.0.pom");
+        String content = Files.readString(flattened);
+        var before = Files.getLastModifiedTime(flattened);
+        Thread.sleep(1100);
+        edit(project.resolve("bom/pom.xml"), "<zed.version>2.0</zed.version>", "<zed.version>2.5</zed.version>");
+
+        assertThat(cli(project, "-fg").exit()).isZero();
+
+        assertThat(Files.readString(flattened)).isNotEqualTo(content).contains("2.5");
+        assertThat(Files.getLastModifiedTime(flattened)).isGreaterThan(before);
+    }
 }

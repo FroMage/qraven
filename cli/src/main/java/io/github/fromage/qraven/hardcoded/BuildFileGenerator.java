@@ -232,9 +232,26 @@ public class BuildFileGenerator {
         timings.lap("generator: write sources");
     }
 
+    /**
+     * Gives the generated class a fingerprint of its own content, which the build records when the module has been
+     * built, so a later incremental build can tell that the module's build data changed.
+     */
+    private static String withFingerprint(String source) {
+        try {
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(source.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            String fingerprint = java.util.HexFormat.of().formatHex(digest, 0, 16);
+            int end = source.lastIndexOf('}');
+            return source.substring(0, end)
+                    + "\n    @Override public String buildDataFingerprint() { return \"" + fingerprint + "\"; }\n}\n";
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
     /** Writes a module's source, and notes it as changed if it differs from the previous generation's. */
     private void writeModuleSource(Path file, String source, ModuleInfo module) throws IOException {
-        if (writeSource(file, source)) {
+        if (writeSource(file, withFingerprint(source))) {
             changedModules.add(module.getArtifactId());
         }
     }
@@ -258,9 +275,11 @@ public class BuildFileGenerator {
                 .resolve(module.getArtifactId() + "-" + module.getVersion() + ".pom");
         try {
             Files.createDirectories(file.getParent());
-            try (java.io.Writer w = Files.newBufferedWriter(file)) {
-                new org.apache.maven.model.io.xpp3.MavenXpp3Writer().write(w, module.getFlattenedBomModel());
-            }
+            java.io.StringWriter xml = new java.io.StringWriter();
+            new org.apache.maven.model.io.xpp3.MavenXpp3Writer().write(xml, module.getFlattenedBomModel());
+            // the build compares this file's timestamp with the installed artifact's, so rewriting it with the same
+            // content would make the module look changed (and everything depending on it)
+            writeIfChanged(file, xml.toString());
         } catch (IOException e) {
             throw new RuntimeException("Failed to write flattened pom " + file, e);
         }

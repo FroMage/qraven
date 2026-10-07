@@ -333,6 +333,7 @@ public abstract class ModuleBuild {
                     return;
                 }
                 if (progress != null) progress.moduleStarted(threadIdx, artifactId(), "pom", 0);
+                clearBuildData();
                 long t = System.currentTimeMillis();
                 runtime.install(null, pomToInstall(), groupId(), artifactId(), version(), packaging());
                 if (platformPropertiesFileName() != null) {
@@ -341,6 +342,7 @@ public abstract class ModuleBuild {
                 mainBuildSucceeded = true;
                 mainBuildDone.complete(null);
                 recordPhase("install", t);
+                recordBuildData();
             } else {
                 if (incremental && isUpToDate()) {
                     skippedIncremental = true;
@@ -363,6 +365,7 @@ public abstract class ModuleBuild {
                     return;
                 }
 
+                clearBuildData();
                 long prePhaseStart = System.currentTimeMillis();
                 if (!incremental) {
                     runtime.clean(targetDir());
@@ -621,6 +624,7 @@ public abstract class ModuleBuild {
                     QuarkusBuildHelper.run(this, dependencies);
                     recordPhase("quarkus-build", t);
                 }
+                recordBuildData();
             }
 
             if (testDependencies.isEmpty() && testJarDependencies.isEmpty()) {
@@ -1062,10 +1066,78 @@ public abstract class ModuleBuild {
         }
     }
 
+    /**
+     * A fingerprint of everything the generated build data says about this module (classpaths, compiler arguments,
+     * plugin configuration, ...), or null if it does not provide one. It is recorded when the module has been built
+     * and compared by the next incremental build: a change to a pom, which the sources' timestamps can't show,
+     * changes the fingerprint and so rebuilds the module.
+     */
+    public String buildDataFingerprint() {
+        return null;
+    }
+
+    private Path buildDataFile() {
+        return runtime.getProjectRoot().resolve(baseDir()).resolve("target").resolve("qraven-build-data");
+    }
+
+    /** Forget what the module was last built with, since a build is starting that may not finish. */
+    private void clearBuildData() {
+        if (buildDataFingerprint() == null) {
+            return;
+        }
+        try {
+            Files.deleteIfExists(buildDataFile());
+        } catch (IOException e) {
+            // best effort: without a recorded fingerprint the next incremental build rebuilds the module
+        }
+    }
+
+    private void recordBuildData() {
+        String fingerprint = buildDataFingerprint();
+        if (fingerprint == null) {
+            return;
+        }
+        try {
+            Path file = buildDataFile();
+            Files.createDirectories(file.getParent());
+            Files.writeString(file, fingerprint);
+        } catch (IOException e) {
+            // best effort
+        }
+    }
+
+    private boolean buildDataUnchanged(boolean explain) {
+        String fingerprint = buildDataFingerprint();
+        if (fingerprint == null) {
+            return true;
+        }
+        try {
+            Path file = buildDataFile();
+            if (!Files.exists(file)) {
+                if (explain) {
+                    System.err.println("[incremental] [" + artifactId() + "] not up-to-date: no record of the build data it was built with");
+                }
+                return false;
+            }
+            if (!Files.readString(file).equals(fingerprint)) {
+                if (explain) {
+                    System.err.println("[incremental] [" + artifactId() + "] not up-to-date: build data changed");
+                }
+                return false;
+            }
+            return true;
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
     private boolean isUpToDate() {
         Path installedArtifact = installedArtifactPath();
         if (!Files.exists(installedArtifact)) {
             System.err.println("[incremental] [" + artifactId() + "] not up-to-date: installed artifact missing: " + installedArtifact);
+            return false;
+        }
+        if (!buildDataUnchanged(true)) {
             return false;
         }
 
@@ -1197,23 +1269,34 @@ public abstract class ModuleBuild {
     }
 
     boolean hasChangedSources() {
+        return changedSourcesReason() != null;
+    }
+
+    /** Why this module has to be rebuilt according to what is on disk, or null if nothing changed. */
+    String changedSourcesReason() {
         Path installedArtifact = installedArtifactPath();
-        if (!Files.exists(installedArtifact)) return true;
+        if (!Files.exists(installedArtifact)) return "installed artifact missing";
+        // a change to a pom (its own, a parent's, a BOM's) shows in the build data, not in any timestamp
+        if (!buildDataUnchanged(false)) return "build data changed or not recorded";
         try {
             long artifactMtime = Files.getLastModifiedTime(installedArtifact).toMillis();
-            if (newestMtime(sourceDir()) > artifactMtime) return true;
-            if (hasKotlinSources() && newestMtime(kotlinSourceDir()) > artifactMtime) return true;
-            if (hasTestJavaSources() && newestMtime(testSourceDir()) > artifactMtime) return true;
-            if (hasTestKotlinSources() && newestMtime(testKotlinSourceDir()) > artifactMtime) return true;
-            if (hasTestProtobufSources() && newestMtime(testProtoSourceDir()) > artifactMtime) return true;
-            if (Files.getLastModifiedTime(pomFile()).toMillis() > artifactMtime) return true;
+            if (newestMtime(sourceDir()) > artifactMtime) return "sources newer";
+            if (hasKotlinSources() && newestMtime(kotlinSourceDir()) > artifactMtime) return "kotlin sources newer";
+            if (hasTestJavaSources() && newestMtime(testSourceDir()) > artifactMtime) return "test sources newer";
+            if (hasTestKotlinSources() && newestMtime(testKotlinSourceDir()) > artifactMtime) return "test kotlin sources newer";
+            if (hasTestProtobufSources() && newestMtime(testProtoSourceDir()) > artifactMtime) return "test protobuf sources newer";
+            if (Files.getLastModifiedTime(pomFile()).toMillis() > artifactMtime) return "pom newer";
             if (flattenedPomFile() != null
-                    && Files.getLastModifiedTime(Path.of(flattenedPomFile())).toMillis() > artifactMtime) return true;
-            if (platformPropertiesFileName() != null && newestResourceMtime() > artifactMtime) return true;
+                    && Files.getLastModifiedTime(Path.of(flattenedPomFile())).toMillis() > artifactMtime) {
+                return "flattened pom newer";
+            }
+            if (platformPropertiesFileName() != null && newestResourceMtime() > artifactMtime) {
+                return "platform properties resources newer";
+            }
         } catch (IOException e) {
-            return true;
+            return "unreadable: " + e;
         }
-        return false;
+        return null;
     }
 
     private static long newestMtime(Path dir) {

@@ -653,8 +653,13 @@ public class BuildOrchestrator {
         }
         Set<String> willRebuild = new LinkedHashSet<>();
         java.util.LinkedList<String> queue = new java.util.LinkedList<>();
+        boolean explain = System.getProperty("qraven.explain-rebuild") != null;
         for (ModuleBuild m : modules) {
-            if (m.hasChangedSources()) {
+            String reason = m.changedSourcesReason();
+            if (reason != null) {
+                if (explain) {
+                    System.out.println("[incremental] " + m.artifactId() + ": " + reason);
+                }
                 willRebuild.add(m.artifactId());
                 queue.add(m.artifactId());
             }

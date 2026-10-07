@@ -61,10 +61,32 @@ public class QravenCli {
 
     private static final String STATE_FILE = "state.cbor";
 
+    /**
+     * Identifies this build of qraven: a state written by another build is not reused, since the logic that derived
+     * it may differ even when the version string is the same (every development build says 1.9-SNAPSHOT).
+     */
+    private static final String STATE_VERSION = RUNTIME_VERSION + "/" + buildTimestamp();
+
+    private static String buildTimestamp() {
+        try (var is = QravenCli.class.getResourceAsStream("/qraven-build.properties")) {
+            if (is != null) {
+                var props = new java.util.Properties();
+                props.load(is);
+                String ts = props.getProperty("build.timestamp");
+                if (ts != null && !ts.isBlank()) {
+                    return ts;
+                }
+            }
+        } catch (Exception e) {
+            // fall through
+        }
+        return "unknown";
+    }
+
     /** The generation state is a cache; failing to write it must never fail the generation. */
     private static void writeState(Path outputDir, Path projectDir, String generationKey, List<ModuleInfo> modules) {
         try {
-            StateStore.write(outputDir.resolve(STATE_FILE), RUNTIME_VERSION, projectDir, generationKey, modules);
+            StateStore.write(outputDir.resolve(STATE_FILE), STATE_VERSION, projectDir, generationKey, modules);
         } catch (Exception e) {
             System.err.println("WARNING: could not write the generation state: " + e);
         }
@@ -222,7 +244,7 @@ public class QravenCli {
             boolean incrementalGeneration = false;
             if (incremental && !forceGenerate) {
                 String why;
-                var state = StateStore.read(stateFile, RUNTIME_VERSION, projectDir, generationKey);
+                var state = StateStore.read(stateFile, STATE_VERSION, projectDir, generationKey);
                 if (state.isEmpty()) {
                     why = "no usable previous generation state";
                 } else if (!Files.exists(buildJar) || !Files.isDirectory(outputDir.resolve("build-src"))
@@ -417,10 +439,9 @@ public class QravenCli {
                 System.exit(1);
             }
 
+            // -i stays after a regeneration: each module records the build data it was built with, so a pom
+            // change that altered a module's build data rebuilds exactly that module (and its dependents)
             List<String> allBuildArgs = new ArrayList<>(commonBuildArgs);
-            if (shouldGenerate) {
-                allBuildArgs.remove("-i");
-            }
             allBuildArgs.addAll(mainBuildArgs);
 
             System.out.println("Running build...");
