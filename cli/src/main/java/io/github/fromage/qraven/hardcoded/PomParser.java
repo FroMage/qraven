@@ -26,10 +26,13 @@ import java.util.LinkedHashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Properties;
 import java.util.Queue;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -261,11 +264,7 @@ public class PomParser {
         // Release models — no longer needed
         effectiveModels.clear();
 
-        for (ModuleInfo info : modules) {
-            if (info.isHasQuarkusBuildPlugin() || info.isHasExtensionPlugin()) {
-                collectQuarkusBuildMetadata(info, reactorGAs, modules);
-            }
-        }
+        collectQuarkusBuildMetadataInParallel(modules, reactorGAs);
         timings.lap("quarkus build metadata");
 
         Map<String, String> allReactorExtDeployments = new LinkedHashMap<>();
@@ -1293,6 +1292,42 @@ public class PomParser {
         info.setQuarkusBuildProperties(buildProps);
     }
 
+    /**
+     * Each module's metadata only depends on the other modules' classpaths and extension properties, which are
+     * final by now, and is written to that module alone, so modules can be processed independently.
+     */
+    private void collectQuarkusBuildMetadataInParallel(List<ModuleInfo> modules, Set<String> reactorGAs) {
+        ExecutorService pool = Executors.newFixedThreadPool(threads);
+        try {
+            List<Future<?>> futures = new ArrayList<>();
+            for (ModuleInfo info : modules) {
+                if (info.isHasQuarkusBuildPlugin() || info.isHasExtensionPlugin()) {
+                    futures.add(pool.submit(() -> {
+                        resolver.setCurrentModule(info.getArtifactId());
+                        try {
+                            collectQuarkusBuildMetadata(info, reactorGAs, modules);
+                        } finally {
+                            resolver.setCurrentModule(null);
+                        }
+                    }));
+                }
+            }
+            for (Future<?> f : futures) {
+                try {
+                    f.get();
+                } catch (ExecutionException e) {
+                    if (e.getCause() instanceof RuntimeException re) throw re;
+                    throw new RuntimeException(e.getCause());
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new RuntimeException(e);
+                }
+            }
+        } finally {
+            pool.shutdown();
+        }
+    }
+
     private void collectQuarkusBuildMetadata(ModuleInfo info, Set<String> reactorGAs,
                                               List<ModuleInfo> allModules) {
         List<String> extensionArtifacts = new ArrayList<>();
@@ -1309,8 +1344,7 @@ public class PomParser {
         Set<String> excludedReactorDeps = new LinkedHashSet<>();
         collectTransitiveReactorDeps(reactorDepIds, allModules, excludedReactorDeps, true);
         for (String depId : reactorDepIds) {
-            for (ModuleInfo m : allModules) {
-                if (!m.getArtifactId().equals(depId)) continue;
+            for (ModuleInfo m : moduleIndex(allModules).withArtifactId(depId)) {
                 if ("pom".equals(m.getPackaging())) continue;
                 if (m.isHasExtensionPlugin()) {
                     // Build extension properties from POM data (avoids stale JAR data)
@@ -1328,8 +1362,7 @@ public class PomParser {
         // Also scan reactor deps' external classpath jars for extensions
         // At build time, addReactorJars() adds these to the full classpath
         for (String depId : reactorDepIds) {
-            for (ModuleInfo m : allModules) {
-                if (!m.getArtifactId().equals(depId)) continue;
+            for (ModuleInfo m : moduleIndex(allModules).withArtifactId(depId)) {
                 if ("pom".equals(m.getPackaging())) continue;
                 for (String jarPath : m.getCompileClasspath()) {
                     scanExtensionJar(jarPath, extensionArtifacts, extensionDevProps, deploymentGAVs);
@@ -1341,8 +1374,7 @@ public class PomParser {
         // Build excluded deployment artifact set from excluded reactor deps
         Set<String> excludedDeploymentGAs = new LinkedHashSet<>();
         for (String excludedId : excludedReactorDeps) {
-            for (ModuleInfo m : allModules) {
-                if (!m.getArtifactId().equals(excludedId)) continue;
+            for (ModuleInfo m : moduleIndex(allModules).withArtifactId(excludedId)) {
                 if (m.isHasExtensionPlugin()) {
                     String deployGA = m.getExtensionDescriptorProperties().get("deployment-artifact");
                     if (deployGA != null) {
@@ -1402,8 +1434,7 @@ public class PomParser {
 
         for (String depId : reactorDepIds) {
             if (protocVersion != null && grpcVersion != null && quarkusGrpcVersion != null) break;
-            for (ModuleInfo m : allModules) {
-                if (!m.getArtifactId().equals(depId)) continue;
+            for (ModuleInfo m : moduleIndex(allModules).withArtifactId(depId)) {
                 if ("pom".equals(m.getPackaging())) continue;
                 if (quarkusGrpcVersion == null && "quarkus-grpc-protoc-plugin".equals(m.getArtifactId())) {
                     quarkusGrpcVersion = m.getVersion();
@@ -1461,18 +1492,16 @@ public class PomParser {
             if (!reactorGAs.contains(ga)) continue;
             Set<String> deployModuleAndDeps = new LinkedHashSet<>();
             deployModuleAndDeps.add(parts[1]);
-            for (ModuleInfo m : allModules) {
-                if (m.getArtifactId().equals(parts[1]) && m.getGroupId().equals(parts[0])) {
+            for (ModuleInfo m : moduleIndex(allModules).withArtifactId(parts[1])) {
+                if (m.getGroupId().equals(parts[0])) {
                     deployModuleAndDeps.addAll(m.getReactorDependencies());
                     collectTransitiveReactorDeps(deployModuleAndDeps, allModules, new LinkedHashSet<>());
                     break;
                 }
             }
             for (String depId : deployModuleAndDeps) {
-                for (ModuleInfo m : allModules) {
-                    if (!m.getArtifactId().equals(depId)) continue;
-                    java.nio.file.Path resourcesService = projectRoot.resolve(m.getBaseDir()).resolve("src/main/resources/" + CODEGEN_SERVICE);
-                    if (java.nio.file.Files.exists(resourcesService)) return true;
+                for (ModuleInfo m : moduleIndex(allModules).withArtifactId(depId)) {
+                    if (hasCodegenServiceInSources(m)) return true;
                     break;
                 }
             }
@@ -1481,24 +1510,38 @@ public class PomParser {
         Set<String> reactorDepIds = new LinkedHashSet<>(module.getReactorDependencies());
         collectTransitiveReactorDeps(reactorDepIds, allModules, new LinkedHashSet<>());
         for (String depId : reactorDepIds) {
-            for (ModuleInfo m : allModules) {
-                if (!m.getArtifactId().equals(depId)) continue;
-                java.nio.file.Path resourcesService = projectRoot.resolve(m.getBaseDir()).resolve("src/main/resources/" + CODEGEN_SERVICE);
-                if (java.nio.file.Files.exists(resourcesService)) return true;
+            for (ModuleInfo m : moduleIndex(allModules).withArtifactId(depId)) {
+                if (hasCodegenServiceInSources(m)) return true;
                 break;
             }
         }
         // Check external jars
         for (String jarPath : deploymentClasspath) {
-            java.nio.file.Path p = java.nio.file.Path.of(jarPath);
-            if (!java.nio.file.Files.exists(p) || java.nio.file.Files.isDirectory(p)) continue;
-            try (java.util.jar.JarFile jar = new java.util.jar.JarFile(p.toFile())) {
-                if (jar.getEntry(CODEGEN_SERVICE) != null) return true;
-            } catch (Exception e) {
-                // skip
-            }
+            if (hasCodegenServiceInJar(jarPath)) return true;
         }
         return false;
+    }
+
+    private final ConcurrentHashMap<String, Boolean> codegenServiceInSources = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Boolean> codegenServiceInJars = new ConcurrentHashMap<>();
+
+    private boolean hasCodegenServiceInSources(ModuleInfo m) {
+        java.nio.file.Path resourcesService = projectRoot.resolve(m.getBaseDir())
+                .resolve("src/main/resources/" + CODEGEN_SERVICE);
+        return codegenServiceInSources.computeIfAbsent(resourcesService.toString(),
+                k -> java.nio.file.Files.exists(resourcesService));
+    }
+
+    private boolean hasCodegenServiceInJar(String jarPath) {
+        return codegenServiceInJars.computeIfAbsent(jarPath, k -> {
+            java.nio.file.Path p = java.nio.file.Path.of(k);
+            if (!java.nio.file.Files.exists(p) || java.nio.file.Files.isDirectory(p)) return false;
+            try (java.util.jar.JarFile jar = new java.util.jar.JarFile(p.toFile())) {
+                return jar.getEntry(CODEGEN_SERVICE) != null;
+            } catch (Exception e) {
+                return false;
+            }
+        });
     }
 
     private void buildReactorExtensionProps(ModuleInfo m, List<String> extensionArtifacts,
@@ -1543,6 +1586,46 @@ public class PomParser {
         extensionDevProps.put(ga, packed.toString());
     }
 
+    /**
+     * Modules by artifactId, in the order of the list they were built from. The metadata phase looks modules
+     * up thousands of times per module, which was a linear scan over every module each time.
+     */
+    private static final class ModuleIndex {
+        final List<ModuleInfo> source;
+        final int size;
+        private final Map<String, List<ModuleInfo>> byArtifactId = new HashMap<>();
+
+        ModuleIndex(List<ModuleInfo> modules) {
+            this.source = modules;
+            this.size = modules.size();
+            for (ModuleInfo m : modules) {
+                byArtifactId.computeIfAbsent(m.getArtifactId(), k -> new ArrayList<>(1)).add(m);
+            }
+        }
+
+        /** All modules with this artifactId, in list order (usually exactly one). */
+        List<ModuleInfo> withArtifactId(String artifactId) {
+            return byArtifactId.getOrDefault(artifactId, List.of());
+        }
+
+        /** The last module with this artifactId, or null. */
+        ModuleInfo last(String artifactId) {
+            List<ModuleInfo> l = byArtifactId.get(artifactId);
+            return l == null ? null : l.get(l.size() - 1);
+        }
+    }
+
+    private volatile ModuleIndex moduleIndex;
+
+    private ModuleIndex moduleIndex(List<ModuleInfo> allModules) {
+        ModuleIndex index = moduleIndex;
+        if (index == null || index.source != allModules || index.size != allModules.size()) {
+            index = new ModuleIndex(allModules);
+            moduleIndex = index;
+        }
+        return index;
+    }
+
     private void collectTransitiveReactorDeps(Set<String> result, List<ModuleInfo> allModules,
                                                 Set<String> excludedDeps) {
         collectTransitiveReactorDeps(result, allModules, excludedDeps, false);
@@ -1550,10 +1633,7 @@ public class PomParser {
 
     private void collectTransitiveReactorDeps(Set<String> result, List<ModuleInfo> allModules,
                                                 Set<String> excludedDeps, boolean includeOptional) {
-        Map<String, ModuleInfo> modulesByArtifactId = new LinkedHashMap<>();
-        for (ModuleInfo m : allModules) {
-            modulesByArtifactId.put(m.getArtifactId(), m);
-        }
+        ModuleIndex index = moduleIndex(allModules);
 
         // Track exclusions that apply to each module in the result set
         Map<String, Set<String>> activeExclusions = new HashMap<>();
@@ -1562,7 +1642,7 @@ public class PomParser {
 
         while (!queue.isEmpty()) {
             String current = queue.poll();
-            ModuleInfo m = modulesByArtifactId.get(current);
+            ModuleInfo m = index.last(current);
             if (m == null) continue;
 
             Set<String> myExclusions = activeExclusions.getOrDefault(current, Set.of());
@@ -1691,7 +1771,16 @@ public class PomParser {
         return groupId + ":" + artifactId;
     }
 
+    /** Each jar is looked at by hundreds of modules; read it once. Values are shared, treat as read-only. */
+    private final ConcurrentHashMap<String, Optional<Properties>> extensionPropertiesCache = new ConcurrentHashMap<>();
+
     private Properties readExtensionProperties(String jarPath) {
+        return extensionPropertiesCache
+                .computeIfAbsent(jarPath, p -> Optional.ofNullable(readExtensionPropertiesUncached(p)))
+                .orElse(null);
+    }
+
+    private Properties readExtensionPropertiesUncached(String jarPath) {
         Path path = Path.of(jarPath);
         if (!Files.exists(path) || Files.isDirectory(path)) return null;
         try (JarFile jf = new JarFile(path.toFile())) {
@@ -1765,8 +1854,7 @@ public class PomParser {
         }
         collectTransitiveReactorDeps(runtimeReactorDeps, allModules, new LinkedHashSet<>(), true);
         for (String depId : runtimeReactorDeps) {
-            for (ModuleInfo m : allModules) {
-                if (!m.getArtifactId().equals(depId)) continue;
+            for (ModuleInfo m : moduleIndex(allModules).withArtifactId(depId)) {
                 if ("pom".equals(m.getPackaging())) continue;
                 runtimePaths.add(resolver.expectedArtifactPath(m.getGroupId(), m.getArtifactId(), m.getVersion()));
                 runtimePaths.addAll(m.getCompileClasspath());
@@ -1788,32 +1876,35 @@ public class PomParser {
 
         // For reactor deployment modules, collect their classpaths directly
         Set<String> visited = new LinkedHashSet<>();
+        Set<String> deploymentOnlySet = new HashSet<>(deploymentOnly);
         for (String artifactId : reactorDeploymentArtifactIds) {
-            collectReactorModuleClasspath(artifactId, allModules, deploymentOnly, runtimePaths,
-                    visited, excludedDeploymentArtifactIds);
+            collectReactorModuleClasspath(artifactId, allModules, deploymentOnly, deploymentOnlySet,
+                    runtimePaths, visited, excludedDeploymentArtifactIds);
         }
 
         return deploymentOnly;
     }
 
+    /** {@code resultSet} mirrors {@code result} for O(1) membership tests. */
     private void collectReactorModuleClasspath(String artifactId, List<ModuleInfo> allModules,
-                                                List<String> result, Set<String> exclude, Set<String> visited,
+                                                List<String> result, Set<String> resultSet,
+                                                Set<String> exclude, Set<String> visited,
                                                 Set<String> excludedArtifactIds) {
         if (!visited.add(artifactId)) return;
         if (excludedArtifactIds.contains(artifactId)) return;
-        for (ModuleInfo m : allModules) {
-            if (!m.getArtifactId().equals(artifactId)) continue;
+        for (ModuleInfo m : moduleIndex(allModules).withArtifactId(artifactId)) {
             if ("pom".equals(m.getPackaging())) continue;
 
             String jarPath = resolver.expectedArtifactPath(m.getGroupId(), m.getArtifactId(), m.getVersion());
-            if (!exclude.contains(jarPath) && !result.contains(jarPath)) {
+            if (!exclude.contains(jarPath) && resultSet.add(jarPath)) {
                 result.add(jarPath);
             }
 
             Set<String> optionalEntries = m.getOptionalClasspathEntries();
             for (String cp : m.getCompileClasspath()) {
-                if (!exclude.contains(cp) && !result.contains(cp)
+                if (!exclude.contains(cp) && !resultSet.contains(cp)
                         && !optionalEntries.contains(cp)) {
+                    resultSet.add(cp);
                     result.add(cp);
                 }
             }
@@ -1827,7 +1918,7 @@ public class PomParser {
                         mergedExclusions = new HashSet<>(excludedArtifactIds);
                         mergedExclusions.addAll(depExclusions);
                     }
-                    collectReactorModuleClasspath(depId, allModules, result, exclude, visited,
+                    collectReactorModuleClasspath(depId, allModules, result, resultSet, exclude, visited,
                             mergedExclusions);
                 }
             }

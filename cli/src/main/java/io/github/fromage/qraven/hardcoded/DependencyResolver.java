@@ -314,7 +314,9 @@ public class DependencyResolver {
             }
             depKeys.add(dk.toString());
         }
-        Collections.sort(depKeys);
+        // Not sorted: the resolved classpath follows the order the dependencies are declared in, and that
+        // order matters (first wins for duplicate classes). Modules with the same dependencies in another order
+        // must not share a cached result, or the order a module gets would depend on which one resolved first.
         int managedFp = managedDependencies != null ? managedDependencies.size() : 0;
         if (managedDependencies != null && !managedDependencies.isEmpty()) {
             var first = managedDependencies.get(0);
@@ -490,7 +492,12 @@ public class DependencyResolver {
     }
 
     public String resolveArtifactPath(String groupId, String artifactId, String version) {
-        String path = expectedArtifactPath(groupId, artifactId, version);
+        return resolveArtifactPath(groupId, artifactId, version, "jar");
+    }
+
+    /** The installed file with the given extension ("jar", or "pom" for pom-packaged modules), or null. */
+    public String resolveArtifactPath(String groupId, String artifactId, String version, String extension) {
+        String path = expectedArtifactPath(groupId, artifactId, version, extension);
         if (new java.io.File(path).exists()) {
             return path;
         }
@@ -498,11 +505,15 @@ public class DependencyResolver {
     }
 
     public String expectedArtifactPath(String groupId, String artifactId, String version) {
+        return expectedArtifactPath(groupId, artifactId, version, "jar");
+    }
+
+    public String expectedArtifactPath(String groupId, String artifactId, String version, String extension) {
         return localRepoPath
                 .resolve(groupId.replace('.', '/'))
                 .resolve(artifactId)
                 .resolve(version)
-                .resolve(artifactId + "-" + version + ".jar")
+                .resolve(artifactId + "-" + version + "." + extension)
                 .toAbsolutePath().toString();
     }
 

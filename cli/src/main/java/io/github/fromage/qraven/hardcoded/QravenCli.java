@@ -204,10 +204,8 @@ public class QravenCli {
                 System.out.println();
                 System.out.println("Bootstrap needed: " + bootstrapModules.size() + " modules");
                 for (ModuleInfo m : bootstrapModules) {
-                    String status = resolver.resolveArtifactPath(
-                            m.getGroupId(), m.getArtifactId(), m.getVersion()) == null
-                            ? "MISSING" : "STALE";
-                    System.out.println("  " + m.getArtifactId() + " (" + status + ")");
+                    String status = bootstrapStatus(m, resolver);
+                    System.out.println("  " + m.getArtifactId() + " (" + (status != null ? status : "up to date") + ")");
                 }
 
                 long stepStart = System.currentTimeMillis();
@@ -398,21 +396,35 @@ public class QravenCli {
 
     private static boolean bootstrapNeeded(List<ModuleInfo> bootstrapModules, DependencyResolver resolver) {
         for (ModuleInfo module : bootstrapModules) {
-            String jarPath = resolver.resolveArtifactPath(
-                    module.getGroupId(), module.getArtifactId(), module.getVersion());
-            if (jarPath == null) {
-                return true;
-            }
-            try {
-                long jarTime = Files.getLastModifiedTime(Path.of(jarPath)).toMillis();
-                if (hasNewerSources(module.getBaseDir(), jarTime)) {
-                    return true;
-                }
-            } catch (IOException e) {
+            if (bootstrapStatus(module, resolver) != null) {
                 return true;
             }
         }
         return false;
+    }
+
+    /**
+     * Why a bootstrap module needs rebuilding: "MISSING" if it is not installed in the local repository, "STALE"
+     * if it is installed but older than its sources (or, for pom-packaged modules, its pom); null if up to date.
+     * Pom-packaged modules have no jar, so they are looked up by their installed pom.
+     */
+    public static String bootstrapStatus(ModuleInfo module, DependencyResolver resolver) {
+        boolean pomPackaging = "pom".equals(module.getPackaging());
+        String installed = resolver.resolveArtifactPath(module.getGroupId(), module.getArtifactId(),
+                module.getVersion(), pomPackaging ? "pom" : "jar");
+        if (installed == null) {
+            return "MISSING";
+        }
+        try {
+            long installedTime = Files.getLastModifiedTime(Path.of(installed)).toMillis();
+            if (pomPackaging) {
+                return module.getPomFile() != null
+                        && Files.getLastModifiedTime(module.getPomFile()).toMillis() > installedTime ? "STALE" : null;
+            }
+            return hasNewerSources(module.getBaseDir(), installedTime) ? "STALE" : null;
+        } catch (IOException e) {
+            return "STALE";
+        }
     }
 
     private static boolean hasNewerSources(Path moduleDir, long referenceTime) {
