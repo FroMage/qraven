@@ -106,6 +106,7 @@ Build options:
   -D<key>=<value>           Set a system property
 
 Other options:
+  --dump-module <id>        Print a module's generation state as JSON (groupId:artifactId or artifactId)
   --report-bug              Interactively report a qraven issue (alias: --report-issue)
   -h, --help                Show this help message and exit
   -V, --version             Show version and exit
@@ -148,6 +149,13 @@ Qraven automatically detects when regeneration is needed by comparing `pom.xml` 
 Generation is skipped when:
 - `--no-generate` is passed, or
 - All `pom.xml` files are older than `build.jar`
+
+### Generation state
+
+Each generation also writes `target/qraven/state.cbor`: the parsed and resolved data of every module, as a
+[CBOR](https://www.rfc-editor.org/rfc/rfc8949) file (about 4 MB for Quarkus, with strings shared between modules).
+It is a cache of what the poms say, so it is discarded and rebuilt whenever it is missing, corrupt, or was written
+by another qraven version or for another project. `qraven --dump-module <artifactId>` prints a module's data as JSON.
 
 ### Bootstrap mode
 

@@ -43,6 +43,33 @@ public class QravenCli {
         }
     }
 
+    private static final String STATE_FILE = "state.cbor";
+
+    /** The generation state is a cache; failing to write it must never fail the generation. */
+    private static void writeState(Path outputDir, Path projectDir, List<ModuleInfo> modules) {
+        try {
+            StateStore.write(outputDir.resolve(STATE_FILE), RUNTIME_VERSION, projectDir, modules);
+        } catch (Exception e) {
+            System.err.println("WARNING: could not write the generation state: " + e);
+        }
+    }
+
+    private static int dumpModule(Path stateFile, String module) {
+        var state = StateStore.read(stateFile, null, null);
+        if (state.isEmpty()) {
+            System.err.println("No usable generation state at " + stateFile
+                    + " (run qraven first, or it was written by an incompatible qraven).");
+            return 1;
+        }
+        var found = state.get().find(module);
+        if (found.isEmpty()) {
+            System.err.println("No module '" + module + "' in the generation state.");
+            return 1;
+        }
+        System.out.print(StateStore.toJson(found.get()));
+        return 0;
+    }
+
     /** Printed on stderr when qraven fails, so users who think it should not have failed know what to do. */
     private static void printReportBugHint() {
         System.err.println();
@@ -65,6 +92,7 @@ public class QravenCli {
         boolean quickly = false;
         boolean noQuickly = false;
         boolean reportBug = false;
+        String dumpModule = null;
 
         List<String> commonBuildArgs = new ArrayList<>();
         List<String> mainBuildArgs = new ArrayList<>();
@@ -74,6 +102,7 @@ public class QravenCli {
                 case "--help", "-h" -> { printHelp(); return; }
                 case "--version", "-V" -> { printVersion(); return; }
                 case "--report-bug", "--report-issue" -> reportBug = true;
+                case "--dump-module" -> dumpModule = args[++i];
                 case "--project", "-p" -> projectDir = Path.of(args[++i]).toAbsolutePath().normalize();
                 case "--threads", "-t" -> {
                     threads = Integer.parseInt(args[++i]);
@@ -111,6 +140,10 @@ public class QravenCli {
 
         if (outputDir == null) {
             outputDir = projectDir.resolve("target/qraven");
+        }
+
+        if (dumpModule != null) {
+            System.exit(dumpModule(outputDir.resolve(STATE_FILE), dumpModule));
         }
 
         if (reportBug) {
@@ -185,6 +218,8 @@ public class QravenCli {
             }
 
             timings.reset();
+            writeState(outputDir, projectDir, modules);
+            timings.lap("write state");
             List<ModuleInfo> bootstrapModules = detectBootstrapModules(modules, resolver);
             timings.lap("detect bootstrap modules");
             boolean bootstrapRequired = !bootstrapModules.isEmpty()
@@ -575,6 +610,8 @@ public class QravenCli {
                   -D<key>=<value>           Set a system property
 
                 Other options:
+                  --dump-module <id>        Print a module's generation state as JSON (groupId:artifactId or
+                                            artifactId), from the last generation
                   --report-bug              Interactively report a qraven issue (shows what will be
                                             collected and asks for confirmation; alias: --report-issue)
                   -h, --help                Show this help message and exit
