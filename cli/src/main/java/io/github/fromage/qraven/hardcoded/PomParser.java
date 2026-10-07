@@ -59,6 +59,7 @@ public class PomParser {
     private int threads = Runtime.getRuntime().availableProcessors();
     private long scanTimeMs;
     private long resolveTimeMs;
+    private PhaseTimings timings = new PhaseTimings();
 
     public PomParser(Path projectRoot, DependencyResolver resolver) {
         this.projectRoot = projectRoot;
@@ -83,6 +84,10 @@ public class PomParser {
         return scanTimeMs;
     }
 
+    public void setPhaseTimings(PhaseTimings timings) {
+        this.timings = timings;
+    }
+
     public long getResolveTimeMs() {
         return resolveTimeMs;
     }
@@ -95,12 +100,14 @@ public class PomParser {
 
     public List<ModuleInfo> parseProject() {
         // Phase 1: Quick discover all pom paths and build reactor GAV map
+        timings.reset();
         long scanStart = System.currentTimeMillis();
         List<PomEntry> pomEntries = new ArrayList<>();
         Map<String, Path> reactorPoms = new LinkedHashMap<>();
         quickDiscoverPoms(projectRoot.resolve("pom.xml"), projectRoot, pomEntries, reactorPoms);
 
         // Phase 2: Build effective models in parallel
+        timings.lap("discover poms");
         int totalPoms = pomEntries.size();
         ModuleInfo[] moduleInfos = new ModuleInfo[totalPoms];
         Model[] modelArray = new Model[totalPoms];
@@ -146,6 +153,7 @@ public class PomParser {
         }
 
         scanTimeMs = System.currentTimeMillis() - scanStart;
+        timings.lap("effective models");
 
         Set<String> reactorGAs = new LinkedHashSet<>();
         for (ModuleInfo m : modules) {
@@ -192,6 +200,7 @@ public class PomParser {
         }
 
         resolveTimeMs = System.currentTimeMillis() - resolveStart;
+        timings.lap("resolve dependencies");
 
         try {
             Path logDir = projectRoot.resolve("target/qraven");
@@ -221,6 +230,8 @@ public class PomParser {
 
         failOnUnresolvedDependencies();
 
+        timings.lap("write generate.log");
+
         List<String> allReactorGAsList = new ArrayList<>(reactorGAs);
         for (ModuleInfo info : modules) {
             if (info.isHasExtensionPlugin()) {
@@ -230,6 +241,7 @@ public class PomParser {
                 }
             }
         }
+        timings.lap("extension metadata");
 
         for (ModuleInfo info : modules) {
             if (info.isHasQuarkusBuildPlugin() || info.isHasExtensionPlugin()) {
@@ -239,9 +251,12 @@ public class PomParser {
                 }
             }
         }
+        timings.lap("quarkus build properties");
 
         resolveReactorAnnotationProcessorClasspaths(modules, reactorGAs);
+        timings.lap("annotation processor classpaths");
         resolveSourceGeneratorClasspaths(modules, reactorGAs);
+        timings.lap("source generator classpaths");
 
         // Release models — no longer needed
         effectiveModels.clear();
@@ -251,6 +266,7 @@ public class PomParser {
                 collectQuarkusBuildMetadata(info, reactorGAs, modules);
             }
         }
+        timings.lap("quarkus build metadata");
 
         Map<String, String> allReactorExtDeployments = new LinkedHashMap<>();
         for (ModuleInfo m : modules) {

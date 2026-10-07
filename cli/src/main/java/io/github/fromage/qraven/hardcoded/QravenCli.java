@@ -7,6 +7,7 @@ import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
+import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -157,7 +158,9 @@ public class QravenCli {
             System.out.println("Regenerating: " + regenReason + " (" + regenCheckMs + "ms)");
             long totalStart = System.currentTimeMillis();
 
+            PhaseTimings timings = new PhaseTimings();
             PomParser parser = new PomParser(projectDir, resolver);
+            parser.setPhaseTimings(timings);
             parser.setThreads(threads);
             parser.setProgressListener((phase, detail, current, total) -> {
                 String msg = switch (phase) {
@@ -181,9 +184,14 @@ public class QravenCli {
                 }
             }
 
+            timings.reset();
             List<ModuleInfo> bootstrapModules = detectBootstrapModules(modules, resolver);
+            timings.lap("detect bootstrap modules");
+            boolean bootstrapRequired = !bootstrapModules.isEmpty()
+                    && (forceBootstrap || bootstrapNeeded(bootstrapModules, resolver));
+            timings.lap("check bootstrap jars");
 
-            if (!bootstrapModules.isEmpty() && (forceBootstrap || bootstrapNeeded(bootstrapModules, resolver))) {
+            if (bootstrapRequired) {
                 needsBootstrapRun = true;
 
                 Set<String> bootstrapIds = bootstrapModules.stream()
@@ -204,13 +212,16 @@ public class QravenCli {
 
                 long stepStart = System.currentTimeMillis();
                 BuildFileGenerator bootstrapGen = new BuildFileGenerator(projectDir, outputDir, threads, resolver);
+                bootstrapGen.setPhaseTimings(timings);
                 bootstrapGen.generate(bootstrapModules, "bootstrap");
                 bootstrapGen.compileAndPackage("bootstrap");
+                timings.lap("compile bootstrap.jar");
                 System.out.println("Generated bootstrap.jar (" + bootstrapModules.size() + " modules) in " +
                         (System.currentTimeMillis() - stepStart) + "ms");
 
                 stepStart = System.currentTimeMillis();
                 deferredMainGen = new BuildFileGenerator(projectDir, outputDir, threads, resolver);
+                deferredMainGen.setPhaseTimings(timings);
                 deferredMainGen.setPreBuiltModules(bootstrapModules);
                 deferredMainGen.setProgressListener((detail, current, total) ->
                         System.err.print(ERASE_LINE + "  Generating " + current + "/" + total + " (" + detail + ")"));
@@ -226,6 +237,7 @@ public class QravenCli {
 
                 long stepStart = System.currentTimeMillis();
                 BuildFileGenerator generator = new BuildFileGenerator(projectDir, outputDir, threads, resolver);
+                generator.setPhaseTimings(timings);
                 generator.setProgressListener((detail, current, total) ->
                         System.err.print(ERASE_LINE + "  Generating " + current + "/" + total + " (" + detail + ")"));
                 generator.generate(modules, "build");
@@ -237,6 +249,7 @@ public class QravenCli {
                 stepStart = System.currentTimeMillis();
                 System.err.print("  Compiling and packaging build.jar...");
                 generator.compileAndPackage("build");
+                timings.lap("compile + package build.jar");
                 System.err.print(ERASE_LINE);
                 System.out.println("Packaged build.jar in " + (System.currentTimeMillis() - stepStart) + "ms");
 
@@ -247,6 +260,14 @@ public class QravenCli {
 
             System.out.println();
             System.out.println("Total generation time: " + (System.currentTimeMillis() - totalStart) + "ms");
+            timings.lap("other");
+            System.out.println(timings.report());
+            try {
+                Files.writeString(projectDir.resolve("target/qraven/generate.log"), "\n" + timings.report(),
+                        java.nio.charset.StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+            } catch (IOException e) {
+                // best effort
+            }
         } else if (!noGenerate) {
             System.out.println("Build files up to date, skipping generation (" + regenCheckMs + "ms)");
         }

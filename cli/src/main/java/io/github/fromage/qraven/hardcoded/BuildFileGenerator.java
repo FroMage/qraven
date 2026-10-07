@@ -71,6 +71,12 @@ public class BuildFileGenerator {
         generate(modules, "build");
     }
 
+    private PhaseTimings timings = new PhaseTimings();
+
+    public void setPhaseTimings(PhaseTimings timings) {
+        this.timings = timings;
+    }
+
     public void generate(List<ModuleInfo> modules, String buildName) throws IOException {
         Path srcDir = outputDir.resolve(buildName + "-src");
         Path classesDir = outputDir.resolve(buildName + "-classes");
@@ -88,6 +94,7 @@ public class BuildFileGenerator {
         }
         resolveJdtFormatterClasspath(modules);
         resolveKtfmtClasspath(modules);
+        timings.lap("generator: tool classpaths (protoc, antlr, jdt, ktfmt)");
 
         int total = modules.size() + 1;
         AtomicInteger progress = new AtomicInteger();
@@ -144,6 +151,7 @@ public class BuildFileGenerator {
         if (progressListener != null) {
             progressListener.update("Build.java", total, total);
         }
+        timings.lap("generator: write sources");
     }
 
     /** Writes the module's flattened BOM, if any, under the output directory; returns its path. */
