@@ -18,20 +18,20 @@ import java.util.zip.CRC32;
  * treated as absent, and the caller regenerates.
  * <p>
  * Layout, as CBOR: {@code [payload (byte string), crc32 of the payload]}, where the payload is
- * {@code [format version, qraven version, schema hash, project root, strings, module ids, records]} and each record
+ * {@code [format version, qraven version, schema hash, project root, generation key, strings, module ids, records]} and each record
  * is a byte string holding one encoded module. Strings are shared by all modules (see {@link ModuleStateCodec}),
  * and records can be decoded one at a time without decoding the others.
  */
 public final class StateStore {
 
-    public static final int FORMAT_VERSION = 1;
+    public static final int FORMAT_VERSION = 2;
 
     private StateStore() {
     }
 
     /** Writes the state atomically: readers see the previous file or the new one, never a partial one. */
-    public static void write(Path file, String qravenVersion, Path projectRoot, List<ModuleInfo> modules)
-            throws IOException {
+    public static void write(Path file, String qravenVersion, Path projectRoot, String generationKey,
+            List<ModuleInfo> modules) throws IOException {
         ModuleStateCodec.Strings strings = new ModuleStateCodec.Strings();
         List<byte[]> records = new ArrayList<>(modules.size());
         List<String> ids = new ArrayList<>(modules.size());
@@ -41,11 +41,12 @@ public final class StateStore {
         }
 
         Cbor.Writer payload = new Cbor.Writer();
-        payload.array(7)
+        payload.array(8)
                 .uint(FORMAT_VERSION)
                 .text(qravenVersion == null ? "" : qravenVersion)
                 .text(ModuleStateCodec.schemaHash())
-                .text(projectRoot.toString());
+                .text(projectRoot.toString())
+                .text(generationKey == null ? "" : generationKey);
         List<String> table = strings.list();
         payload.array(table.size());
         for (String s : table) {
@@ -80,10 +81,11 @@ public final class StateStore {
     }
 
     /**
-     * Reads the state, or returns empty if there is none or it can't be trusted. A null {@code qravenVersion} or
-     * {@code projectRoot} skips that check (for inspecting a state file); the layout is always checked.
+     * Reads the state, or returns empty if there is none or it can't be trusted. A null {@code qravenVersion},
+     * {@code projectRoot} or {@code generationKey} skips that check (for inspecting a state file); the layout is
+     * always checked.
      */
-    public static Optional<State> read(Path file, String qravenVersion, Path projectRoot) {
+    public static Optional<State> read(Path file, String qravenVersion, Path projectRoot, String generationKey) {
         try {
             byte[] data = Files.readAllBytes(file);
             Cbor.Reader top = new Cbor.Reader(data);
@@ -102,15 +104,17 @@ public final class StateStore {
             }
 
             Cbor.Reader r = new Cbor.Reader(data, body.offset(), body.length());
-            if (r.array() != 7 || r.uint() != FORMAT_VERSION) {
+            if (r.array() != 8 || r.uint() != FORMAT_VERSION) {
                 return Optional.empty();
             }
             String writtenBy = r.text();
             String schema = r.text();
             String root = r.text();
+            String key = r.text();
             if ((qravenVersion != null && !qravenVersion.equals(writtenBy))
                     || !ModuleStateCodec.schemaHash().equals(schema)
-                    || (projectRoot != null && !projectRoot.toString().equals(root))) {
+                    || (projectRoot != null && !projectRoot.toString().equals(root))
+                    || (generationKey != null && !generationKey.equals(key))) {
                 return Optional.empty();
             }
 

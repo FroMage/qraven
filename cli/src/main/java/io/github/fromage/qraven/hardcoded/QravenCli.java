@@ -43,19 +43,35 @@ public class QravenCli {
         }
     }
 
+    private static PomParser newParser(Path projectDir, DependencyResolver resolver, PhaseTimings timings,
+            int threads) {
+        PomParser parser = new PomParser(projectDir, resolver);
+        parser.setPhaseTimings(timings);
+        parser.setThreads(threads);
+        parser.setProgressListener((phase, detail, current, total) -> {
+            String msg = switch (phase) {
+                case "scan" -> "Scanning modules... " + current + " found (" + detail + ")";
+                case "resolve" -> "Resolving " + current + "/" + total + " (" + detail + ")";
+                default -> phase + ": " + detail;
+            };
+            System.err.print(ERASE_LINE + "  " + msg);
+        });
+        return parser;
+    }
+
     private static final String STATE_FILE = "state.cbor";
 
     /** The generation state is a cache; failing to write it must never fail the generation. */
-    private static void writeState(Path outputDir, Path projectDir, List<ModuleInfo> modules) {
+    private static void writeState(Path outputDir, Path projectDir, String generationKey, List<ModuleInfo> modules) {
         try {
-            StateStore.write(outputDir.resolve(STATE_FILE), RUNTIME_VERSION, projectDir, modules);
+            StateStore.write(outputDir.resolve(STATE_FILE), RUNTIME_VERSION, projectDir, generationKey, modules);
         } catch (Exception e) {
             System.err.println("WARNING: could not write the generation state: " + e);
         }
     }
 
     private static int dumpModule(Path stateFile, String module) {
-        var state = StateStore.read(stateFile, null, null);
+        var state = StateStore.read(stateFile, null, null, null);
         if (state.isEmpty()) {
             System.err.println("No usable generation state at " + stateFile
                     + " (run qraven first, or it was written by an incompatible qraven).");
@@ -93,6 +109,7 @@ public class QravenCli {
         boolean noQuickly = false;
         boolean reportBug = false;
         String dumpModule = null;
+        boolean incremental = false;
 
         List<String> commonBuildArgs = new ArrayList<>();
         List<String> mainBuildArgs = new ArrayList<>();
@@ -123,7 +140,10 @@ public class QravenCli {
                     mainBuildArgs.add(args[++i]);
                 }
                 case "--also-make", "-am" -> mainBuildArgs.add("-am");
-                case "--incremental", "-i" -> commonBuildArgs.add("-i");
+                case "--incremental", "-i" -> {
+                    commonBuildArgs.add("-i");
+                    incremental = true;
+                }
                 case "--no-kotlin" -> commonBuildArgs.add("--no-kotlin");
                 case "--no-fast-kotlin" -> commonBuildArgs.add("--no-fast-kotlin");
                 default -> {
@@ -180,6 +200,7 @@ public class QravenCli {
         Path bootstrapJar = outputDir.resolve("bootstrap.jar");
         boolean needsBootstrapRun = false;
         BuildFileGenerator deferredMainGen = null;
+        Runnable pendingStateWrite = null;
 
         // Phase 1: Generation
         long regenCheckStart = System.currentTimeMillis();
@@ -192,22 +213,53 @@ public class QravenCli {
             long totalStart = System.currentTimeMillis();
 
             PhaseTimings timings = new PhaseTimings();
-            PomParser parser = new PomParser(projectDir, resolver);
-            parser.setPhaseTimings(timings);
-            parser.setThreads(threads);
-            parser.setProgressListener((phase, detail, current, total) -> {
-                String msg = switch (phase) {
-                    case "scan" -> "Scanning modules... " + current + " found (" + detail + ")";
-                    case "resolve" -> "Resolving " + current + "/" + total + " (" + detail + ")";
-                    default -> phase + ": " + detail;
-                };
-                System.err.print(ERASE_LINE + "  " + msg);
-            });
-            List<ModuleInfo> modules = parser.parseProject();
-            System.err.print(ERASE_LINE);
+            PomParser parser = newParser(projectDir, resolver, timings, threads);
+            Path stateFile = outputDir.resolve(STATE_FILE);
+            String generationKey = GenerationEnvironment.key();
 
-            System.out.println("Scanned " + modules.size() + " modules in " + parser.getScanTimeMs() + "ms");
-            System.out.println("Resolved dependencies in " + parser.getResolveTimeMs() + "ms");
+            // --incremental: bring the previous generation up to date instead of redoing all of it
+            List<ModuleInfo> modules = null;
+            boolean incrementalGeneration = false;
+            if (incremental && !forceGenerate) {
+                String why;
+                var state = StateStore.read(stateFile, RUNTIME_VERSION, projectDir, generationKey);
+                if (state.isEmpty()) {
+                    why = "no usable previous generation state";
+                } else if (!Files.exists(buildJar) || !Files.isDirectory(outputDir.resolve("build-src"))
+                        || !Files.isDirectory(outputDir.resolve("build-classes"))) {
+                    why = "the previous generated build files are missing";
+                } else {
+                    // from here on the generated files change, so the state only describes them again once
+                    // generation has completed
+                    Files.deleteIfExists(stateFile);
+                    var result = parser.parseIncremental(state.get());
+                    if (result.usable()) {
+                        modules = result.modules();
+                        incrementalGeneration = true;
+                        System.err.print(ERASE_LINE);
+                        System.out.println("Incremental generation: " + result.recomputed().size() + " of "
+                                + modules.size() + " modules recomputed"
+                                + (result.recomputed().isEmpty() ? "" : " ("
+                                + result.recomputed().stream().limit(8).collect(Collectors.joining(", "))
+                                + (result.recomputed().size() > 8 ? ", ..." : "") + ")"));
+                    }
+                    why = result.fallbackReason();
+                }
+                if (modules == null) {
+                    System.out.println("Incremental generation not possible (" + why
+                            + "), regenerating everything");
+                    resolver.clearUnresolved();
+                    parser = newParser(projectDir, resolver, timings, threads);
+                }
+            }
+            // the state is only valid again once this generation has completed
+            Files.deleteIfExists(stateFile);
+            if (modules == null) {
+                modules = parser.parseProject();
+                System.err.print(ERASE_LINE);
+                System.out.println("Scanned " + modules.size() + " modules in " + parser.getScanTimeMs() + "ms");
+                System.out.println("Resolved dependencies in " + parser.getResolveTimeMs() + "ms");
+            }
             System.out.println(resolver.resolutionCacheStats());
 
             List<String> warnings = parser.getWarnings();
@@ -218,8 +270,11 @@ public class QravenCli {
             }
 
             timings.reset();
-            writeState(outputDir, projectDir, modules);
-            timings.lap("write state");
+            final Path generatedIn = outputDir;
+            final Path generatedFor = projectDir;
+            final String generatedKey = generationKey;
+            final List<ModuleInfo> generatedModules = modules;
+            final PhaseTimings generationTimings = timings;
             List<ModuleInfo> bootstrapModules = detectBootstrapModules(modules, resolver);
             timings.lap("detect bootstrap modules");
             boolean bootstrapRequired = !bootstrapModules.isEmpty()
@@ -255,14 +310,19 @@ public class QravenCli {
                 stepStart = System.currentTimeMillis();
                 deferredMainGen = new BuildFileGenerator(projectDir, outputDir, threads, resolver);
                 deferredMainGen.setPhaseTimings(timings);
+                deferredMainGen.setIncremental(incrementalGeneration);
                 deferredMainGen.setPreBuiltModules(bootstrapModules);
                 deferredMainGen.setProgressListener((detail, current, total) ->
                         System.err.print(ERASE_LINE + "  Generating " + current + "/" + total + " (" + detail + ")"));
                 deferredMainGen.generate(mainModules, "build");
                 System.err.print(ERASE_LINE);
                 System.out.println("Generated " + (mainModules.size() + 1) + " main build sources in " +
-                        (System.currentTimeMillis() - stepStart) + "ms");
+                        (System.currentTimeMillis() - stepStart) + "ms"
+                        + (deferredMainGen.reusedPreviousOutput() ? " (" + deferredMainGen.getChangedModules().size()
+                        + " changed)" : ""));
                 System.out.println("  (build.jar will be packaged after bootstrap runs)");
+                // the generated files are only complete once build.jar is packaged, after the bootstrap build
+                pendingStateWrite = () -> writeState(generatedIn, generatedFor, generatedKey, generatedModules);
             } else {
                 if (!bootstrapModules.isEmpty()) {
                     System.out.println("Bootstrap modules found but jars are fresh — including in main build");
@@ -271,13 +331,16 @@ public class QravenCli {
                 long stepStart = System.currentTimeMillis();
                 BuildFileGenerator generator = new BuildFileGenerator(projectDir, outputDir, threads, resolver);
                 generator.setPhaseTimings(timings);
+                generator.setIncremental(incrementalGeneration);
                 generator.setProgressListener((detail, current, total) ->
                         System.err.print(ERASE_LINE + "  Generating " + current + "/" + total + " (" + detail + ")"));
                 generator.generate(modules, "build");
                 System.err.print(ERASE_LINE);
 
                 System.out.println("Generated " + (modules.size() + 1) + " source files in " +
-                        (System.currentTimeMillis() - stepStart) + "ms");
+                        (System.currentTimeMillis() - stepStart) + "ms"
+                        + (generator.reusedPreviousOutput() ? " (" + generator.getChangedModules().size()
+                        + " changed)" : ""));
 
                 stepStart = System.currentTimeMillis();
                 System.err.print("  Compiling and packaging build.jar...");
@@ -287,6 +350,8 @@ public class QravenCli {
                 System.out.println("Packaged build.jar in " + (System.currentTimeMillis() - stepStart) + "ms");
 
                 Files.deleteIfExists(bootstrapJar);
+                writeState(generatedIn, projectDir, generatedKey, generatedModules);
+                generationTimings.lap("write state");
             }
 
             savePomPaths(outputDir, modules, projectDir);
@@ -338,6 +403,10 @@ public class QravenCli {
                     System.err.print(ERASE_LINE);
                     System.out.println("Packaged build.jar in " + (System.currentTimeMillis() - stepStart) + "ms");
                     deferredMainGen = null;
+                    if (pendingStateWrite != null) {
+                        pendingStateWrite.run();
+                        pendingStateWrite = null;
+                    }
                 }
                 System.out.println();
             }
@@ -604,7 +673,9 @@ public class QravenCli {
                   --no-quickly              Disable auto-quickly for Quarkus projects
                   -pl, --projects <list>    Comma-separated list of module artifactIds to build
                   -am, --also-make          Build dependencies of modules specified by -pl
-                  -i, --incremental         Only rebuild modules with changed sources
+                  -i, --incremental         Only rebuild modules with changed sources, and when poms changed,
+                                            only regenerate the modules they affect (falls back to a full
+                                            regeneration when that isn't possible; see --force-generate)
                   --no-kotlin               Skip Kotlin modules and their dependents
                   --no-fast-kotlin          Disable JIT warmup for Kotlin compiler (enabled by default)
                   -D<key>=<value>           Set a system property

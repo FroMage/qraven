@@ -97,6 +97,11 @@ public class DependencyResolver {
         }
     }
 
+    /** Forget the failures recorded so far, e.g. when an attempt is abandoned and generation starts over. */
+    public void clearUnresolved() {
+        unresolved.clear();
+    }
+
     public boolean hasUnresolved() {
         return !unresolved.isEmpty();
     }

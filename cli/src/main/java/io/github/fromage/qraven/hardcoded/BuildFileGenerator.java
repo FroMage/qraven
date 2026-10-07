@@ -12,9 +12,13 @@ import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -77,11 +81,60 @@ public class BuildFileGenerator {
         this.timings = timings;
     }
 
+    private boolean incremental;
+    /** The generated sources that differ from the existing ones; null when everything must be compiled. */
+    private List<Path> changedSources;
+    private final Set<String> changedModules = ConcurrentHashMap.newKeySet();
+
+    /**
+     * Keep the sources and classes of a previous generation and only rewrite and recompile the files whose
+     * content changed. Without usable previous output this behaves like a full generation.
+     */
+    public void setIncremental(boolean incremental) {
+        this.incremental = incremental;
+    }
+
+    /** After an incremental generate(): the artifactIds whose generated build data changed. */
+    public Set<String> getChangedModules() {
+        return changedModules;
+    }
+
+    /** Whether the last generate() could reuse the previous output (and so only changed files are compiled). */
+    public boolean reusedPreviousOutput() {
+        return changedSources != null;
+    }
+
+    private static boolean hasClassFiles(Path dir) {
+        try (var stream = Files.walk(dir)) {
+            return stream.anyMatch(p -> p.toString().endsWith(".class"));
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    /** Writes the file unless it already has exactly this content; returns whether it was written. */
+    private static boolean writeIfChanged(Path file, String content) throws IOException {
+        byte[] bytes = content.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        if (Files.exists(file) && Arrays.equals(Files.readAllBytes(file), bytes)) {
+            return false;
+        }
+        Files.write(file, bytes);
+        return true;
+    }
+
     public void generate(List<ModuleInfo> modules, String buildName) throws IOException {
         Path srcDir = outputDir.resolve(buildName + "-src");
         Path classesDir = outputDir.resolve(buildName + "-classes");
-        deleteDirectory(srcDir);
-        deleteDirectory(classesDir);
+        boolean reuse = incremental && Files.isDirectory(srcDir) && Files.isDirectory(classesDir)
+                && hasClassFiles(classesDir);
+        changedModules.clear();
+        if (reuse) {
+            changedSources = Collections.synchronizedList(new ArrayList<>());
+        } else {
+            changedSources = null;
+            deleteDirectory(srcDir);
+            deleteDirectory(classesDir);
+        }
         Files.createDirectories(srcDir);
 
         hasProtobufModules = modules.stream().anyMatch(m -> m.isHasProtobufSources() || m.isHasTestProtobufSources());
@@ -108,7 +161,7 @@ public class BuildFileGenerator {
                     String source = generateModuleClass(module, className);
                     Path sourceFile = srcDir.resolve("Build_" + className + ".java");
                     try {
-                        Files.writeString(sourceFile, source);
+                        writeModuleSource(sourceFile, source, module);
                     } catch (IOException e) {
                         throw new RuntimeException(e);
                     }
@@ -134,7 +187,7 @@ public class BuildFileGenerator {
             String className = sanitizeClassName(preBuilt.getArtifactId());
             String source = generateModuleClass(preBuilt, className);
             Path sourceFile = srcDir.resolve("Build_" + className + ".java");
-            Files.writeString(sourceFile, source);
+            writeModuleSource(sourceFile, source, preBuilt);
         }
 
         Map<String, String> rv = new HashMap<>();
@@ -147,11 +200,55 @@ public class BuildFileGenerator {
         this.reactorVersions = rv;
 
         Path mainFile = srcDir.resolve("Build.java");
-        Files.writeString(mainFile, generateMainClass(modules, buildName));
+        writeSource(mainFile, generateMainClass(modules, buildName));
         if (progressListener != null) {
             progressListener.update("Build.java", total, total);
         }
+
+        if (changedSources != null) {
+            Set<String> expected = new HashSet<>();
+            expected.add("Build.java");
+            for (ModuleInfo m : modules) {
+                expected.add("Build_" + sanitizeClassName(m.getArtifactId()) + ".java");
+            }
+            for (ModuleInfo m : preBuiltModules) {
+                expected.add("Build_" + sanitizeClassName(m.getArtifactId()) + ".java");
+            }
+            boolean stale = false;
+            try (var files = Files.list(srcDir)) {
+                for (Path f : (Iterable<Path>) files::iterator) {
+                    if (f.getFileName().toString().endsWith(".java") && !expected.contains(f.getFileName().toString())) {
+                        Files.delete(f);
+                        stale = true;
+                    }
+                }
+            }
+            if (stale) {
+                // classes of modules that no longer exist would stay in the jar: start over
+                deleteDirectory(classesDir);
+                changedSources = null;
+            }
+        }
         timings.lap("generator: write sources");
+    }
+
+    /** Writes a module's source, and notes it as changed if it differs from the previous generation's. */
+    private void writeModuleSource(Path file, String source, ModuleInfo module) throws IOException {
+        if (writeSource(file, source)) {
+            changedModules.add(module.getArtifactId());
+        }
+    }
+
+    private boolean writeSource(Path file, String source) throws IOException {
+        if (changedSources == null) {
+            Files.writeString(file, source);
+            return true;
+        }
+        if (writeIfChanged(file, source)) {
+            changedSources.add(file);
+            return true;
+        }
+        return false;
     }
 
     /** Writes the module's flattened BOM, if any, under the output directory; returns its path. */
@@ -720,10 +817,23 @@ public class BuildFileGenerator {
         }
 
         List<Path> sourceFiles;
-        try (var stream = Files.walk(srcDir)) {
-            sourceFiles = stream
-                    .filter(p -> p.toString().endsWith(".java"))
-                    .toList();
+        boolean partial = changedSources != null && Files.exists(buildJar);
+        if (partial) {
+            if (changedSources.isEmpty()) {
+                // nothing changed: the jar is current, just record that it was checked
+                Files.setLastModifiedTime(buildJar, java.nio.file.attribute.FileTime.from(java.time.Instant.now()));
+                return;
+            }
+            sourceFiles = new ArrayList<>(changedSources);
+            for (Path changed : sourceFiles) {
+                deleteClassFiles(classesDir, changed.getFileName().toString().replaceFirst("\\.java$", ""));
+            }
+        } else {
+            try (var stream = Files.walk(srcDir)) {
+                sourceFiles = stream
+                        .filter(p -> p.toString().endsWith(".java"))
+                        .toList();
+            }
         }
 
         JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
@@ -732,6 +842,10 @@ public class BuildFileGenerator {
         }
 
         String classpath = String.join(File.pathSeparator, runtimeClasspath);
+        if (partial) {
+            // the classes that were not recompiled are what the changed ones (Build.java in particular) refer to
+            classpath += File.pathSeparator + classesDir;
+        }
 
         var diagnostics = new javax.tools.DiagnosticCollector<javax.tools.JavaFileObject>();
         try (var fileManager = compiler.getStandardFileManager(diagnostics, null, null)) {
@@ -753,6 +867,17 @@ public class BuildFileGenerator {
 
         runtimeClasspath = substituteReactorVersions(runtimeClasspath);
         createBuildJar(classesDir, runtimeClasspath, buildJar);
+    }
+
+    private static void deleteClassFiles(Path classesDir, String className) throws IOException {
+        Files.deleteIfExists(classesDir.resolve(className + ".class"));
+        try (var files = Files.list(classesDir)) {
+            for (Path f : (Iterable<Path>) files::iterator) {
+                if (f.getFileName().toString().startsWith(className + "$")) {
+                    Files.delete(f);
+                }
+            }
+        }
     }
 
     private List<String> substituteReactorVersions(List<String> classpath) {

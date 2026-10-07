@@ -32,6 +32,7 @@ class StateStoreTest {
 
     private static final String VERSION = "1.2.3";
     private static final Path ROOT = Path.of("/projects/demo");
+    private static final String KEY = "environment-1";
 
     // ---------------------------------------------------------------- fixtures
 
@@ -139,8 +140,8 @@ class StateStoreTest {
         }
 
         Path file = dir.resolve("state.cbor");
-        StateStore.write(file, VERSION, ROOT, List.of(original));
-        ModuleInfo restored = StateStore.read(file, VERSION, ROOT).orElseThrow().module(0);
+        StateStore.write(file, VERSION, ROOT, KEY, List.of(original));
+        ModuleInfo restored = StateStore.read(file, VERSION, ROOT, KEY).orElseThrow().module(0);
 
         for (Field f : declaredFields()) {
             f.setAccessible(true);
@@ -153,9 +154,9 @@ class StateStoreTest {
     void emptyAndNullFieldsSurviveToo(@TempDir Path dir) throws Exception {
         ModuleInfo bare = new ModuleInfo();
         Path file = dir.resolve("state.cbor");
-        StateStore.write(file, VERSION, ROOT, List.of(bare));
+        StateStore.write(file, VERSION, ROOT, KEY, List.of(bare));
 
-        ModuleInfo restored = StateStore.read(file, VERSION, ROOT).orElseThrow().module(0);
+        ModuleInfo restored = StateStore.read(file, VERSION, ROOT, KEY).orElseThrow().module(0);
 
         assertThat(StateStore.toJson(restored)).isEqualTo(StateStore.toJson(bare));
         assertThat(restored.getGroupId()).isNull();
@@ -166,9 +167,9 @@ class StateStoreTest {
     @Test
     void modulesAreFoundByIdOrArtifactId(@TempDir Path dir) throws Exception {
         Path file = dir.resolve("state.cbor");
-        StateStore.write(file, VERSION, ROOT, List.of(simple("a"), simple("b"), simple("c")));
+        StateStore.write(file, VERSION, ROOT, KEY, List.of(simple("a"), simple("b"), simple("c")));
 
-        StateStore.State state = StateStore.read(file, VERSION, ROOT).orElseThrow();
+        StateStore.State state = StateStore.read(file, VERSION, ROOT, KEY).orElseThrow();
 
         assertThat(state.size()).isEqualTo(3);
         assertThat(state.moduleIds()).containsExactly("com.test:a", "com.test:b", "com.test:c");
@@ -186,12 +187,12 @@ class StateStoreTest {
         }
         Path one = dir.resolve("one.cbor");
         Path many = dir.resolve("many.cbor");
-        StateStore.write(one, VERSION, ROOT, List.of(simple("m0", classpath)));
+        StateStore.write(one, VERSION, ROOT, KEY, List.of(simple("m0", classpath)));
         List<ModuleInfo> modules = new ArrayList<>();
         for (int i = 0; i < 50; i++) {
             modules.add(simple("m" + i, classpath));
         }
-        StateStore.write(many, VERSION, ROOT, modules);
+        StateStore.write(many, VERSION, ROOT, KEY, modules);
 
         // 50 modules with the same 200 jars cost far less than 50 times one module
         assertThat(Files.size(many)).isLessThan(Files.size(one) * 3);
@@ -203,8 +204,8 @@ class StateStoreTest {
         Path first = dir.resolve("first.cbor");
         Path second = dir.resolve("second.cbor");
 
-        StateStore.write(first, VERSION, ROOT, modules);
-        StateStore.write(second, VERSION, ROOT, modules);
+        StateStore.write(first, VERSION, ROOT, KEY, modules);
+        StateStore.write(second, VERSION, ROOT, KEY, modules);
 
         assertThat(Files.readAllBytes(second)).isEqualTo(Files.readAllBytes(first));
     }
@@ -212,53 +213,54 @@ class StateStoreTest {
     @Test
     void writingReplacesThePreviousStateAndLeavesNoTempFile(@TempDir Path dir) throws Exception {
         Path file = dir.resolve("state.cbor");
-        StateStore.write(file, VERSION, ROOT, List.of(simple("old")));
-        StateStore.write(file, VERSION, ROOT, List.of(simple("new")));
+        StateStore.write(file, VERSION, ROOT, KEY, List.of(simple("old")));
+        StateStore.write(file, VERSION, ROOT, KEY, List.of(simple("new")));
 
-        assertThat(StateStore.read(file, VERSION, ROOT).orElseThrow().moduleIds()).containsExactly("com.test:new");
+        assertThat(StateStore.read(file, VERSION, ROOT, KEY).orElseThrow().moduleIds()).containsExactly("com.test:new");
         try (var files = Files.list(dir)) {
             assertThat(files.map(p -> p.getFileName().toString())).containsExactly("state.cbor");
         }
     }
 
     @Test
-    void stateFromAnotherVersionOrProjectIsIgnored(@TempDir Path dir) throws Exception {
+    void stateFromAnotherVersionProjectOrEnvironmentIsIgnored(@TempDir Path dir) throws Exception {
         Path file = dir.resolve("state.cbor");
-        StateStore.write(file, VERSION, ROOT, List.of(simple("a")));
+        StateStore.write(file, VERSION, ROOT, KEY, List.of(simple("a")));
 
-        assertThat(StateStore.read(file, VERSION, ROOT)).isPresent();
-        assertThat(StateStore.read(file, "9.9.9", ROOT)).isEmpty();
-        assertThat(StateStore.read(file, VERSION, Path.of("/projects/other"))).isEmpty();
-        // inspection skips those two checks
-        assertThat(StateStore.read(file, null, null)).isPresent();
+        assertThat(StateStore.read(file, VERSION, ROOT, KEY)).isPresent();
+        assertThat(StateStore.read(file, "9.9.9", ROOT, KEY)).isEmpty();
+        assertThat(StateStore.read(file, VERSION, Path.of("/projects/other"), KEY)).isEmpty();
+        assertThat(StateStore.read(file, VERSION, ROOT, "another-environment")).isEmpty();
+        // inspection skips those checks
+        assertThat(StateStore.read(file, null, null, null)).isPresent();
     }
 
     @Test
     void unreadableStateIsTreatedAsAbsent(@TempDir Path dir) throws Exception {
         Path file = dir.resolve("state.cbor");
-        StateStore.write(file, VERSION, ROOT, List.of(populated("a"), populated("b")));
+        StateStore.write(file, VERSION, ROOT, KEY, List.of(populated("a"), populated("b")));
         byte[] good = Files.readAllBytes(file);
 
-        assertThat(StateStore.read(dir.resolve("missing.cbor"), VERSION, ROOT)).isEmpty();
+        assertThat(StateStore.read(dir.resolve("missing.cbor"), VERSION, ROOT, KEY)).isEmpty();
 
         Files.write(file, new byte[0]);
-        assertThat(StateStore.read(file, VERSION, ROOT)).isEmpty();
+        assertThat(StateStore.read(file, VERSION, ROOT, KEY)).isEmpty();
 
         Files.write(file, "not cbor at all".getBytes());
-        assertThat(StateStore.read(file, VERSION, ROOT)).isEmpty();
+        assertThat(StateStore.read(file, VERSION, ROOT, KEY)).isEmpty();
 
         Files.write(file, Arrays.copyOf(good, good.length / 2));
-        assertThat(StateStore.read(file, VERSION, ROOT)).as("truncated").isEmpty();
+        assertThat(StateStore.read(file, VERSION, ROOT, KEY)).as("truncated").isEmpty();
 
         for (int position : new int[] { 10, good.length / 2, good.length - 8 }) {
             byte[] corrupt = good.clone();
             corrupt[position] ^= 0x55;
             Files.write(file, corrupt);
-            assertThat(StateStore.read(file, VERSION, ROOT)).as("byte %d flipped", position).isEmpty();
+            assertThat(StateStore.read(file, VERSION, ROOT, KEY)).as("byte %d flipped", position).isEmpty();
         }
 
         Files.write(file, good);
-        assertThat(StateStore.read(file, VERSION, ROOT)).isPresent();
+        assertThat(StateStore.read(file, VERSION, ROOT, KEY)).isPresent();
     }
 
     @Test

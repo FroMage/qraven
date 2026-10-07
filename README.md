@@ -100,7 +100,8 @@ Build options:
   --no-quickly              Disable auto-quickly for Quarkus projects
   -pl, --projects <list>    Comma-separated list of module artifactIds to build
   -am, --also-make          Build dependencies of modules specified by -pl
-  -i, --incremental         Only rebuild modules with changed sources
+  -i, --incremental         Only rebuild modules with changed sources; when poms changed, also only
+                            regenerate the modules they affect
   --no-kotlin               Skip Kotlin modules and their dependents
   --no-fast-kotlin          Disable JIT warmup for Kotlin compiler (enabled by default)
   -D<key>=<value>           Set a system property
@@ -149,6 +150,24 @@ Qraven automatically detects when regeneration is needed by comparing `pom.xml` 
 Generation is skipped when:
 - `--no-generate` is passed, or
 - All `pom.xml` files are older than `build.jar`
+
+### Incremental generation
+
+With `--incremental`, a change to a pom no longer regenerates the whole build. qraven reads the generation state
+(see below), finds the modules whose input poms changed (a module's own pom, its parents, and the BOMs it imports,
+compared by content hash), and redoes the expensive work (building the effective model and resolving dependencies)
+only for those. The steps that combine several modules are cheap and always redone, so a change to an extension is
+reflected in the modules that depend on it. Only the generated build files that actually differ are rewritten and
+recompiled.
+
+On Quarkus (1,443 modules), editing a leaf module's pom takes about 5 s instead of about 25 s, and editing a widely
+used extension such as `quarkus-arc` about 8 s. The result is checked to be identical to a full regeneration.
+
+qraven falls back to a full regeneration, and says why, when there is no usable state or the previous generated
+build files are missing, when modules were added or removed, when a module's coordinates changed, or when the JVM
+properties that poms are interpolated with differ. `--force-generate` always regenerates everything. Changes that
+are not in poms, such as adding the first `.proto` file to a module, are not noticed by incremental generation
+(they never triggered regeneration anyway); use `--force-generate` after such a change.
 
 ### Generation state
 

@@ -16,6 +16,7 @@ import org.codehaus.plexus.util.xml.Xpp3Dom;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
+import java.util.Collection;
 import java.util.Collections;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -123,9 +124,11 @@ public class PomParser {
                 final int idx = i;
                 PomEntry entry = pomEntries.get(idx);
                 futures.add(executor.submit(() -> {
-                    Model model = buildEffectiveModel(entry.pomFile, reactorPoms);
+                    Set<Path> inputs = Collections.synchronizedSet(new LinkedHashSet<>());
+                    Model model = buildEffectiveModel(entry.pomFile, reactorPoms, inputs);
                     if (model != null) {
                         ModuleInfo info = toModuleInfo(model, entry.baseDir);
+                        info.setInputPomHashes(inputHashes(inputs));
                         moduleInfos[idx] = info;
                         modelArray[idx] = model;
                     }
@@ -180,16 +183,7 @@ public class PomParser {
                             info.getGroupId() + ":" + info.getArtifactId());
                     if (model == null) return;
 
-                    extractCompilerConfig(model, info, reactorGAs);
-
-                    if (!"pom".equals(info.getPackaging())) {
-                        resolver.setCurrentModule(info.getArtifactId());
-                        try {
-                            resolveDependencies(model, info, reactorGAs, resolveTimings);
-                        } finally {
-                            resolver.setCurrentModule(null);
-                        }
-                    }
+                    resolveOwn(model, info, reactorGAs, resolveTimings);
 
                     int done = resolveCounter.incrementAndGet();
                     progress("resolve", info.getArtifactId(), done, totalModules);
@@ -205,11 +199,98 @@ public class PomParser {
         resolveTimeMs = System.currentTimeMillis() - resolveStart;
         timings.lap("resolve dependencies");
 
+        writeGenerateLog(resolveTimings, null);
+
+        failOnUnresolvedDependencies();
+
+        timings.lap("write generate.log");
+
+        collectExtensionAndBuildMetadata(modules, modules, reactorGAs, effectiveModels);
+
+        crossModulePhases(modules, reactorGAs);
+
+        failOnUnresolvedDependencies();
+
+        return modules;
+    }
+
+    /** The part of a module's data that only depends on its own model (and which coordinates are in the reactor). */
+    private void resolveOwn(Model model, ModuleInfo info, Set<String> reactorGAs, List<String> resolveTimings) {
+        extractCompilerConfig(model, info, reactorGAs);
+
+        if (!"pom".equals(info.getPackaging())) {
+            resolver.setCurrentModule(info.getArtifactId());
+            try {
+                resolveDependencies(model, info, reactorGAs, resolveTimings);
+            } finally {
+                resolver.setCurrentModule(null);
+            }
+        }
+    }
+
+    /** Extension descriptor and Quarkus build properties of {@code subset}, which need their effective models. */
+    private void collectExtensionAndBuildMetadata(Collection<ModuleInfo> subset, List<ModuleInfo> modules,
+                                                  Set<String> reactorGAs, Map<String, Model> effectiveModels) {
+        List<String> allReactorGAsList = new ArrayList<>(reactorGAs);
+        for (ModuleInfo info : subset) {
+            if (info.isHasExtensionPlugin()) {
+                Model model = effectiveModels.get(info.getGroupId() + ":" + info.getArtifactId());
+                if (model != null) {
+                    collectExtensionMetadata(model, info, allReactorGAsList);
+                }
+            }
+        }
+        timings.lap("extension metadata");
+
+        for (ModuleInfo info : subset) {
+            if (info.isHasQuarkusBuildPlugin() || info.isHasExtensionPlugin()) {
+                Model model = effectiveModels.get(info.getGroupId() + ":" + info.getArtifactId());
+                if (model != null) {
+                    extractQuarkusBuildProperties(model, info, modules);
+                }
+            }
+        }
+        timings.lap("quarkus build properties");
+    }
+
+    /**
+     * The phases that combine data of several modules: annotation processor and source generator classpaths, and the
+     * Quarkus build metadata, which reads the reactor dependencies of a module. They are cheap, and recomputed from
+     * scratch for all the modules they apply to, so incremental generation runs them in full.
+     */
+    private void crossModulePhases(List<ModuleInfo> modules, Set<String> reactorGAs) {
+        resolveReactorAnnotationProcessorClasspaths(modules, reactorGAs);
+        timings.lap("annotation processor classpaths");
+        resolveSourceGeneratorClasspaths(modules, reactorGAs);
+        timings.lap("source generator classpaths");
+
+        collectQuarkusBuildMetadataInParallel(modules, reactorGAs);
+        timings.lap("quarkus build metadata");
+
+        Map<String, String> allReactorExtDeployments = new LinkedHashMap<>();
+        for (ModuleInfo m : modules) {
+            if (!m.isHasExtensionPlugin()) continue;
+            String deployArtifact = m.getExtensionDescriptorProperties().get("deployment-artifact");
+            if (deployArtifact != null) {
+                allReactorExtDeployments.put(m.getGroupId() + ":" + m.getArtifactId(), deployArtifact);
+            }
+        }
+        for (ModuleInfo m : modules) {
+            if (m.isHasExtensionPlugin()) {
+                m.setAllReactorExtensionDeployments(allReactorExtDeployments);
+            }
+        }
+    }
+
+    private void writeGenerateLog(List<String> resolveTimings, String header) {
         try {
             Path logDir = projectRoot.resolve("target/qraven");
             Files.createDirectories(logDir);
             LogRotator.rotate(logDir, "generate");
             StringBuilder logContent = new StringBuilder();
+            if (header != null) {
+                logContent.append(header).append("\n\n");
+            }
             logContent.append(resolver.resolutionCacheStats()).append("\n\n");
             for (String line : resolveTimings) {
                 logContent.append(line).append("\n");
@@ -230,60 +311,165 @@ public class PomParser {
         } catch (Exception e) {
             // ignore
         }
+    }
 
+    /** What an incremental parse produced, or why it could not be used. */
+    public record IncrementalResult(List<ModuleInfo> modules, List<String> recomputed, String fallbackReason) {
+        public boolean usable() {
+            return fallbackReason == null;
+        }
+
+        static IncrementalResult fallback(String reason) {
+            return new IncrementalResult(null, List.of(), reason);
+        }
+    }
+
+    /**
+     * Brings a previous generation state up to date, redoing the expensive work (effective model and dependency
+     * resolution) only for the modules whose input poms changed. Gives up, so the caller regenerates everything, when
+     * the set of modules or their coordinates changed.
+     * <p>
+     * A module's own data only depends on its effective model and on which coordinates are in the reactor, so
+     * unchanged modules keep what was stored. The cross-module phases are cheap and are always redone for every
+     * module, which means nothing has to be reasoned about which modules read which.
+     */
+    public IncrementalResult parseIncremental(StateStore.State state) {
+        timings.reset();
+        List<PomEntry> pomEntries = new ArrayList<>();
+        Map<String, Path> reactorPoms = new LinkedHashMap<>();
+        quickDiscoverPoms(projectRoot.resolve("pom.xml"), projectRoot, pomEntries, reactorPoms);
+        timings.lap("discover poms");
+
+        List<ModuleInfo> stored = state.modules();
+        timings.lap("read state");
+
+        Map<String, PomEntry> entriesByPom = new HashMap<>();
+        for (PomEntry e : pomEntries) {
+            entriesByPom.put(e.baseDir.resolve("pom.xml").toAbsolutePath().toString(), e);
+        }
+        Set<String> storedPoms = new HashSet<>();
+        for (ModuleInfo m : stored) {
+            storedPoms.add(m.getPomFile().toString());
+        }
+        if (!storedPoms.equals(entriesByPom.keySet())) {
+            return IncrementalResult.fallback("modules were added or removed");
+        }
+
+        List<Integer> dirty = java.util.stream.IntStream.range(0, stored.size()).parallel()
+                .filter(i -> !inputsUnchanged(stored.get(i))).boxed().sorted().toList();
+        timings.lap("detect changed poms");
+        if (dirty.isEmpty()) {
+            return new IncrementalResult(stored, List.of(), null);
+        }
+
+        Set<String> reactorGAs = new LinkedHashSet<>();
+        for (ModuleInfo m : stored) {
+            reactorGAs.add(m.getGroupId() + ":" + m.getArtifactId());
+        }
+        resolver.setReactorGAs(reactorGAs);
+
+        ModuleInfo[] fresh = new ModuleInfo[dirty.size()];
+        Model[] models = new Model[dirty.size()];
+        ExecutorService executor = Executors.newFixedThreadPool(threads);
+        try {
+            List<Future<?>> futures = new ArrayList<>();
+            for (int k = 0; k < dirty.size(); k++) {
+                final int slot = k;
+                ModuleInfo old = stored.get(dirty.get(k));
+                futures.add(executor.submit(() -> {
+                    PomEntry entry = entriesByPom.get(old.getPomFile().toString());
+                    Set<Path> inputs = Collections.synchronizedSet(new LinkedHashSet<>());
+                    Model model = buildEffectiveModel(entry.pomFile, reactorPoms, inputs);
+                    if (model != null) {
+                        ModuleInfo info = toModuleInfo(model, entry.baseDir);
+                        info.setInputPomHashes(inputHashes(inputs));
+                        fresh[slot] = info;
+                        models[slot] = model;
+                    }
+                }));
+            }
+            for (Future<?> f : futures) {
+                try {
+                    f.get();
+                } catch (Exception e) {
+                    return IncrementalResult.fallback("a module model failed to build: " + e);
+                }
+            }
+        } finally {
+            executor.shutdown();
+        }
+        timings.lap("effective models (changed modules)");
+
+        List<ModuleInfo> modules = new ArrayList<>(stored);
+        Map<String, Model> effectiveModels = new LinkedHashMap<>();
+        List<String> recomputed = new ArrayList<>();
+        for (int k = 0; k < dirty.size(); k++) {
+            ModuleInfo old = stored.get(dirty.get(k));
+            ModuleInfo info = fresh[k];
+            if (info == null) {
+                return IncrementalResult.fallback("the model of " + old.getArtifactId() + " could not be built");
+            }
+            if (!java.util.Objects.equals(info.getGroupId(), old.getGroupId())
+                    || !java.util.Objects.equals(info.getArtifactId(), old.getArtifactId())
+                    || !java.util.Objects.equals(info.getVersion(), old.getVersion())
+                    || !java.util.Objects.equals(info.getPackaging(), old.getPackaging())) {
+                return IncrementalResult.fallback("the coordinates or packaging of " + old.getArtifactId()
+                        + " changed");
+            }
+            modules.set(dirty.get(k), info);
+            effectiveModels.put(info.getGroupId() + ":" + info.getArtifactId(), models[k]);
+            recomputed.add(info.getGroupId() + ":" + info.getArtifactId());
+        }
+
+        List<ModuleInfo> changed = new ArrayList<>(dirty.size());
+        for (int k = 0; k < dirty.size(); k++) {
+            changed.add(fresh[k]);
+        }
+        List<String> resolveTimings = Collections.synchronizedList(new ArrayList<>());
+        long resolveStart = System.currentTimeMillis();
+        executor = Executors.newFixedThreadPool(threads);
+        try {
+            List<Future<?>> futures = new ArrayList<>();
+            for (ModuleInfo info : changed) {
+                futures.add(executor.submit(() -> resolveOwn(
+                        effectiveModels.get(info.getGroupId() + ":" + info.getArtifactId()), info, reactorGAs,
+                        resolveTimings)));
+            }
+            for (Future<?> f : futures) {
+                try {
+                    f.get();
+                } catch (Exception e) {
+                    /* errors are recorded by the resolver, as in a full generation */
+                }
+            }
+        } finally {
+            executor.shutdown();
+        }
+        resolveTimeMs = System.currentTimeMillis() - resolveStart;
+        timings.lap("resolve dependencies (changed modules)");
+
+        writeGenerateLog(resolveTimings, "Incremental generation: " + recomputed.size() + " of " + stored.size()
+                + " modules recomputed: " + String.join(", ", recomputed));
         failOnUnresolvedDependencies();
-
         timings.lap("write generate.log");
 
-        List<String> allReactorGAsList = new ArrayList<>(reactorGAs);
-        for (ModuleInfo info : modules) {
-            if (info.isHasExtensionPlugin()) {
-                Model model = effectiveModels.get(info.getGroupId() + ":" + info.getArtifactId());
-                if (model != null) {
-                    collectExtensionMetadata(model, info, allReactorGAsList);
-                }
-            }
-        }
-        timings.lap("extension metadata");
-
-        for (ModuleInfo info : modules) {
-            if (info.isHasQuarkusBuildPlugin() || info.isHasExtensionPlugin()) {
-                Model model = effectiveModels.get(info.getGroupId() + ":" + info.getArtifactId());
-                if (model != null) {
-                    extractQuarkusBuildProperties(model, info, modules);
-                }
-            }
-        }
-        timings.lap("quarkus build properties");
-
-        resolveReactorAnnotationProcessorClasspaths(modules, reactorGAs);
-        timings.lap("annotation processor classpaths");
-        resolveSourceGeneratorClasspaths(modules, reactorGAs);
-        timings.lap("source generator classpaths");
-
-        // Release models — no longer needed
-        effectiveModels.clear();
-
-        collectQuarkusBuildMetadataInParallel(modules, reactorGAs);
-        timings.lap("quarkus build metadata");
-
-        Map<String, String> allReactorExtDeployments = new LinkedHashMap<>();
-        for (ModuleInfo m : modules) {
-            if (!m.isHasExtensionPlugin()) continue;
-            String deployArtifact = m.getExtensionDescriptorProperties().get("deployment-artifact");
-            if (deployArtifact != null) {
-                allReactorExtDeployments.put(m.getGroupId() + ":" + m.getArtifactId(), deployArtifact);
-            }
-        }
-        for (ModuleInfo m : modules) {
-            if (m.isHasExtensionPlugin()) {
-                m.setAllReactorExtensionDeployments(allReactorExtDeployments);
-            }
-        }
-
+        collectExtensionAndBuildMetadata(changed, modules, reactorGAs, effectiveModels);
+        crossModulePhases(modules, reactorGAs);
         failOnUnresolvedDependencies();
+        return new IncrementalResult(modules, recomputed, null);
+    }
 
-        return modules;
+    private boolean inputsUnchanged(ModuleInfo module) {
+        if (module.getInputPomHashes().isEmpty()) {
+            return false;
+        }
+        for (Map.Entry<String, String> input : module.getInputPomHashes().entrySet()) {
+            Path pom = Path.of(input.getKey());
+            if (!Files.exists(pom) || !pomHash(pom).equals(input.getValue())) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -547,7 +733,12 @@ public class PomParser {
     }
 
 
-    private Model buildEffectiveModel(Path pomFile, Map<String, Path> reactorPoms) {
+    /**
+     * Builds the effective model. Every pom it was built from (this one, its parents, imported BOMs) is added to
+     * {@code inputs}, since a change to any of them can change the model.
+     */
+    private Model buildEffectiveModel(Path pomFile, Map<String, Path> reactorPoms, Set<Path> inputs) {
+        inputs.add(pomFile.toAbsolutePath().normalize());
         try {
             DefaultModelBuildingRequest request = new DefaultModelBuildingRequest();
             request.setPomFile(pomFile.toFile());
@@ -556,19 +747,58 @@ public class PomParser {
             request.setTwoPhaseBuilding(false);
             request.setSystemProperties(System.getProperties());
             request.setUserProperties(new Properties());
-            request.setModelResolver(new LocalRepoModelResolver(localRepoDir, resolver, reactorPoms));
+            request.setModelResolver(new LocalRepoModelResolver(localRepoDir, resolver, reactorPoms,
+                    p -> inputs.add(p.toAbsolutePath().normalize())));
 
             ModelBuilder builder = threadLocalModelBuilder.get();
             ModelBuildingResult result = builder.build(request);
+            addLineage(result, inputs);
             return result.getEffectiveModel();
         } catch (ModelBuildingException e) {
             warnings.add("Model building problems for " + pomFile + ": " + e.getMessage());
             try {
+                if (e.getResult() != null) {
+                    addLineage(e.getResult(), inputs);
+                }
                 return e.getResult() != null ? e.getResult().getEffectiveModel() : null;
             } catch (Exception ex) {
                 return null;
             }
         }
+    }
+
+    /** The parents the builder found through relativePath don't go through the model resolver. */
+    private static void addLineage(ModelBuildingResult result, Set<Path> inputs) {
+        for (String id : result.getModelIds()) {
+            Model raw = result.getRawModel(id);
+            if (raw != null && raw.getPomFile() != null) {
+                inputs.add(raw.getPomFile().toPath().toAbsolutePath().normalize());
+            }
+        }
+    }
+
+    private final ConcurrentHashMap<Path, String> pomHashes = new ConcurrentHashMap<>();
+
+    /** A hash of a pom's content; poms are shared by many modules, so each is hashed once. */
+    private String pomHash(Path pom) {
+        return pomHashes.computeIfAbsent(pom, p -> {
+            try {
+                java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
+                return java.util.HexFormat.of().formatHex(digest.digest(Files.readAllBytes(p)), 0, 16);
+            } catch (IOException e) {
+                return "unreadable";
+            } catch (java.security.NoSuchAlgorithmException e) {
+                throw new IllegalStateException(e);
+            }
+        });
+    }
+
+    private Map<String, String> inputHashes(Set<Path> inputs) {
+        Map<String, String> sorted = new java.util.TreeMap<>();
+        for (Path p : inputs) {
+            sorted.put(p.toString(), pomHash(p));
+        }
+        return new LinkedHashMap<>(sorted);
     }
 
     private ModuleInfo toModuleInfo(Model model, Path baseDir) {
@@ -2022,6 +2252,7 @@ public class PomParser {
 
         info.setCompilerArgs(compilerArgs);
         info.setAnnotationProcessorPaths(annotationProcessorPaths);
+        info.setDeclaredAnnotationProcessorPaths(new ArrayList<>(annotationProcessorPaths));
         info.setApCacheable(checkApCacheable(annotationProcessorPaths));
         for (String apArtifactId : reactorApArtifactIds) {
             if (!info.getReactorDependencies().contains(apArtifactId)) {
@@ -2171,6 +2402,9 @@ public class PomParser {
             byArtifactId.put(m.getArtifactId(), m);
         }
         for (ModuleInfo info : modules) {
+            if (!info.getDeclaredAnnotationProcessorPaths().isEmpty()) {
+                info.setAnnotationProcessorPaths(new ArrayList<>(info.getDeclaredAnnotationProcessorPaths()));
+            }
             List<String> apPaths = info.getAnnotationProcessorPaths();
             if (apPaths.isEmpty()) continue;
             List<String> expanded = new ArrayList<>();

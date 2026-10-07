@@ -86,6 +86,13 @@ public class ModuleInfo {
     private String projectName;
     private String projectDescription;
     private List<ShadeExecution> shadeExecutions = new ArrayList<>();
+    /**
+     * The pom files the effective model was built from (own pom, parents, imported BOMs), with their content hash,
+     * so incremental generation can tell whether this module's model could have changed.
+     */
+    private Map<String, String> inputPomHashes = new LinkedHashMap<>();
+    /** The annotation processor paths as declared, before reactor processors' classpaths are added to them. */
+    private List<String> declaredAnnotationProcessorPaths = new ArrayList<>();
 
     public record ResourceDir(String directory, boolean filtering, String targetPath) {}
     /** An exec-maven-plugin:java execution bound to generate-sources. */
@@ -94,6 +101,12 @@ public class ModuleInfo {
     public record ShadeExecution(String id, boolean attached, String classifier,
             List<String> includeArtifacts, List<ShadeFilter> filters, String mainClass) {}
     public record ShadeFilter(String artifact, List<String> excludes) {}
+
+    public Map<String, String> getInputPomHashes() { return inputPomHashes; }
+    public void setInputPomHashes(Map<String, String> v) { this.inputPomHashes = v; }
+
+    public List<String> getDeclaredAnnotationProcessorPaths() { return declaredAnnotationProcessorPaths; }
+    public void setDeclaredAnnotationProcessorPaths(List<String> v) { this.declaredAnnotationProcessorPaths = v; }
 
     public String getGroupId() { return groupId; }
     public void setGroupId(String groupId) { this.groupId = groupId; }

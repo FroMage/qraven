@@ -12,12 +12,14 @@ import org.apache.maven.model.resolution.UnresolvableModelException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
+import java.util.function.Consumer;
 
 public class LocalRepoModelResolver implements ModelResolver {
 
     private final Path localRepoDir;
     private final DependencyResolver resolver;
     private final Map<String, Path> reactorPoms;
+    private final Consumer<Path> onResolved;
 
     public LocalRepoModelResolver(Path localRepoDir, DependencyResolver resolver) {
         this(localRepoDir, resolver, Map.of());
@@ -25,9 +27,23 @@ public class LocalRepoModelResolver implements ModelResolver {
 
     public LocalRepoModelResolver(Path localRepoDir, DependencyResolver resolver,
                                    Map<String, Path> reactorPoms) {
+        this(localRepoDir, resolver, reactorPoms, null);
+    }
+
+    /** {@code onResolved} is told about every pom file this resolver hands out (parents, imported BOMs). */
+    public LocalRepoModelResolver(Path localRepoDir, DependencyResolver resolver,
+                                   Map<String, Path> reactorPoms, Consumer<Path> onResolved) {
         this.localRepoDir = localRepoDir;
         this.resolver = resolver;
         this.reactorPoms = reactorPoms;
+        this.onResolved = onResolved;
+    }
+
+    private ModelSource source(Path pom) {
+        if (onResolved != null) {
+            onResolved.accept(pom);
+        }
+        return new FileModelSource(pom.toFile());
     }
 
     @Override
@@ -35,7 +51,7 @@ public class LocalRepoModelResolver implements ModelResolver {
             throws UnresolvableModelException {
         Path reactorPom = reactorPoms.get(groupId + ":" + artifactId);
         if (reactorPom != null && Files.exists(reactorPom)) {
-            return new FileModelSource(reactorPom.toFile());
+            return source(reactorPom);
         }
         Path pomPath = localRepoDir
                 .resolve(groupId.replace('.', '/'))
@@ -43,12 +59,12 @@ public class LocalRepoModelResolver implements ModelResolver {
                 .resolve(version)
                 .resolve(artifactId + "-" + version + ".pom");
         if (Files.exists(pomPath)) {
-            return new FileModelSource(pomPath.toFile());
+            return source(pomPath);
         }
         if (resolver != null) {
             Path downloaded = resolver.resolvePom(groupId, artifactId, version);
             if (downloaded != null) {
-                return new FileModelSource(downloaded.toFile());
+                return source(downloaded);
             }
         }
         throw new UnresolvableModelException(
@@ -76,6 +92,6 @@ public class LocalRepoModelResolver implements ModelResolver {
 
     @Override
     public ModelResolver newCopy() {
-        return new LocalRepoModelResolver(localRepoDir, resolver, reactorPoms);
+        return new LocalRepoModelResolver(localRepoDir, resolver, reactorPoms, onResolved);
     }
 }
