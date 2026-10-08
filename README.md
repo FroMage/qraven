@@ -161,13 +161,62 @@ reflected in the modules that depend on it. Only the generated build files that 
 recompiled.
 
 On Quarkus (1,443 modules), editing a leaf module's pom takes about 5 s instead of about 25 s, and editing a widely
-used extension such as `quarkus-arc` about 8 s. The result is checked to be identical to a full regeneration.
+used extension such as `quarkus-arc` about 8 s. The result is checked to be identical to a full regeneration: a test
+generates a project, edits it, regenerates incrementally and then fully, and compares every generated file and every
+module's stored data.
 
-qraven falls back to a full regeneration, and says why, when there is no usable state or the previous generated
-build files are missing, when modules were added or removed, when a module's coordinates changed, or when the JVM
-properties that poms are interpolated with differ. `--force-generate` always regenerates everything. Changes that
-are not in poms, such as adding the first `.proto` file to a module, are not noticed by incremental generation
-(they never triggered regeneration anyway); use `--force-generate` after such a change.
+#### Status
+
+Incremental generation is an opt-in feature (`--incremental`). Without it, a generation (which happens when a pom is
+newer than `build.jar`) always redoes everything, and `--force-generate` always does, even together with
+`--incremental`. It has been validated on the test projects and on
+Quarkus, but it is newer than the full path, so if a build ever looks wrong after an incremental generation,
+`--force-generate` is the first thing to try (and a bug report with `--report-bug` is welcome).
+
+#### When it falls back to a full regeneration
+
+qraven then prints `Incremental generation not possible (<reason>), regenerating everything`:
+
+- **No usable previous state.** `target/qraven/state.cbor` is missing or corrupt, or was written by another qraven
+  build, for another project directory, or with a different internal layout. It is also ignored when the JVM
+  environment differs: the JDK, the OS, or any `-D` property that is not part of the JDK, since poms are interpolated
+  and profiles activated from them.
+- **The previous generated build files are missing** (`build.jar`, `build-src` or `build-classes`).
+- **Modules were added or removed.** This also applies, on every run, to a project that contains a pom whose model
+  fails to build, because that pom is never part of the stored state.
+- **A changed module's model cannot be built.**
+- **A module's coordinates or packaging changed** (groupId, artifactId, version or packaging).
+
+If a changed pom introduces a dependency that cannot be resolved, the run fails with the unresolved dependency report,
+as a full generation would, and the next run is a full one.
+
+#### Limitations
+
+- **Only pom changes are noticed.** What a module's generated build file says also depends on files that are not poms:
+  whether it has Java, Kotlin, protobuf or ANTLR sources, a `CodeGenProvider` service file in the sources of a module
+  it depends on, or the properties file of a platform BOM. Adding the first `.proto` file to a module, for example, is
+  not noticed. This is the same blind spot as the rule that decides whether to regenerate at all (a pom is newer than
+  `build.jar`); use `--force-generate` after such a change.
+- **Resolution results are reused.** The dependencies of a module whose input poms did not change are not resolved
+  again, so a SNAPSHOT that changed upstream is not picked up until the module's poms change or you use
+  `--force-generate`.
+- **Bootstrap modules are always regenerated in full**, since there are few of them.
+- **After rebuilding qraven itself the first generation is a full one**, as the state records which build of qraven
+  wrote it.
+
+#### Planned improvements
+
+These are known and deliberately left for later:
+
+- Handle a removed or added module incrementally instead of regenerating everything. Today it is safe but
+  conservative: the generated sources and classes are wiped and rebuilt, so nothing of a removed module is left behind.
+- Detect changes that are not in poms, but only for the modules whose plugins make them relevant (for example look
+  for Kotlin sources only in modules with the Kotlin plugin), stopping at the first file found, so the check stays
+  cheap.
+- Update `build.jar` by copying the entries that did not change instead of writing the whole jar again, which is most
+  of what is left of the time for a one-module change.
+- Replace the generated classes by the stored state (read directly by the build), which would remove compiling them
+  from generation altogether.
 
 ### Rebuilding after a pom change
 
