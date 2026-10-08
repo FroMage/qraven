@@ -82,44 +82,28 @@ class PlatformBomBuildTest {
         return new BuildResult(process.waitFor(), output);
     }
 
-    private static String generatedSource(Path outputDir, String artifactId) throws IOException {
-        try (Stream<Path> files = Files.walk(outputDir.resolve("build-src"))) {
-            return files.filter(p -> p.toString().endsWith(".java"))
-                    .map(p -> {
-                        try {
-                            return Files.readString(p);
-                        } catch (IOException e) {
-                            throw new RuntimeException(e);
-                        }
-                    })
-                    .filter(c -> c.contains("String artifactId() { return \"" + artifactId + "\"; }"))
-                    .findFirst()
-                    .orElseThrow(() -> new AssertionError("No generated source for " + artifactId));
-        }
-    }
-
     @Test
-    void generatedCodeCarriesTheGoalConfiguration(@TempDir Path tmp) throws Exception {
+    void generationCarriesTheGoalConfiguration(@TempDir Path tmp) throws Exception {
         Path project = copyFixture(tmp);
         Path outputDir = tmp.resolve("out");
         generate(project, outputDir);
 
-        String props = generatedSource(outputDir, "test-platform-properties");
-        assertThat(props).contains("String platformPropertiesFileName() { return \"platform-properties.properties\"; }");
-        assertThat(props).contains("String flattenedPomFile() { return null; }");
+        var props = GeneratedModules.module(outputDir, "test-platform-properties");
+        assertThat(props.platformPropertiesFileName()).isEqualTo("platform-properties.properties");
+        assertThat(props.flattenedPomFile()).isNull();
 
-        String bom = generatedSource(outputDir, "test-bom");
-        assertThat(bom).contains("String platformPropertiesFileName() { return null; }");
+        var bom = GeneratedModules.module(outputDir, "test-bom");
+        assertThat(bom.platformPropertiesFileName()).isNull();
         Path flattened = outputDir.resolve("flattened-poms/test-bom-1.0.0.pom");
-        assertThat(bom).contains("String flattenedPomFile() { return \"" + flattened + "\"; }");
+        assertThat(bom.flattenedPomFile()).isEqualTo(flattened.toString());
         assertThat(flattened).exists();
         assertThat(Files.readString(flattened))
                 .contains("<artifactId>alpha</artifactId>")
                 .doesNotContain("junit", "only-test", "<parent>");
 
-        String app = generatedSource(outputDir, "platform-app");
-        assertThat(app).contains("String platformPropertiesFileName() { return null; }");
-        assertThat(app).contains("String flattenedPomFile() { return null; }");
+        var app = GeneratedModules.module(outputDir, "platform-app");
+        assertThat(app.platformPropertiesFileName()).isNull();
+        assertThat(app.flattenedPomFile()).isNull();
     }
 
     @Test

@@ -30,6 +30,7 @@ class BugReporterTest {
         Files.createDirectories(outputDir.resolve("build-src"));
         Files.writeString(outputDir.resolve("build.log"), "line\n=== BUILD FAILURE SUMMARY ===\nDirect failures: core\n");
         Files.writeString(outputDir.resolve("build-src/Build.java"), "class Build {}");
+        Files.write(outputDir.resolve("state.cbor"), new byte[] { (byte) 0x82, 0x40, 0x00 });
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         List<String> submitted = new ArrayList<>();
         int exit = new BugReporter(project, outputDir, new BufferedReader(new StringReader(input)),
@@ -109,7 +110,7 @@ class BugReporterTest {
         assertThat(r.exit()).isZero();
         Set<String> entries = zipEntries(tmp);
         assertThat(entries).contains("poms/pom.xml", "poms/sub/pom.xml", "file-listing.txt",
-                "logs/build.log", "generated/build-src/Build.java", "environment.txt", "description.txt");
+                "logs/build.log", "generated/build-src/Build.java", "generated/state.cbor", "environment.txt", "description.txt");
         assertThat(entries).noneMatch(e -> e.contains("Secret.java") || e.contains(".env") || e.contains("settings.xml"));
         // the listing names files but must not leak sensitive ones
         try (var files = Files.list(tmp.resolve("target/qraven"))) {

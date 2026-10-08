@@ -5,6 +5,8 @@ import io.github.fromage.qraven.hardcoded.DependencyResolver;
 import io.github.fromage.qraven.hardcoded.ModuleInfo;
 import io.github.fromage.qraven.hardcoded.PomParser;
 
+import io.github.fromage.qraven.hardcoded.runtime.ModuleBuild;
+
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -74,35 +76,20 @@ class ExecGeneratorBuildTest {
         return new BuildResult(process.waitFor(), output);
     }
 
-    private static String generatedSource(Path outputDir, String artifactId) throws IOException {
-        try (Stream<Path> files = Files.walk(outputDir.resolve("build-src"))) {
-            return files.filter(p -> p.toString().endsWith(".java"))
-                    .map(p -> {
-                        try {
-                            return Files.readString(p);
-                        } catch (IOException e) {
-                            throw new RuntimeException(e);
-                        }
-                    })
-                    .filter(c -> c.contains("String artifactId() { return \"" + artifactId + "\"; }"))
-                    .findFirst()
-                    .orElseThrow(() -> new AssertionError("No generated source for " + artifactId));
-        }
-    }
-
     @Test
-    void generatedCodeCarriesTheGenerators(@TempDir Path tmp) throws Exception {
+    void generationCarriesTheGenerators(@TempDir Path tmp) throws Exception {
         Path project = copyFixture(tmp);
         Path outputDir = tmp.resolve("out");
         generate(project, outputDir);
 
-        String app = generatedSource(outputDir, "exec-generator-app");
-        assertThat(app).contains("new SourceGenerator(\"com.test.generator.MakeSources\", List.of("
-                + "\"${project.build.directory}/generated-sources/gen\", \"from-generator\"), \"${exec.skip}\")");
-        assertThat(app).contains("exec-generator-maker-1.0.0.jar");
-        assertThat(app).contains("public List<String> addedSourceDirs()");
+        var app = GeneratedModules.module(outputDir, "exec-generator-app");
+        assertThat(app.sourceGenerators()).containsExactly(new ModuleBuild.SourceGenerator(
+                "com.test.generator.MakeSources",
+                List.of("${project.build.directory}/generated-sources/gen", "from-generator"), "${exec.skip}"));
+        assertThat(app.generatorClasspath()).anyMatch(p -> p.contains("exec-generator-maker-1.0.0.jar"));
+        assertThat(app.addedSourceDirs()).isNotEmpty();
 
-        assertThat(generatedSource(outputDir, "exec-generator-maker")).doesNotContain("sourceGenerators()");
+        assertThat(GeneratedModules.module(outputDir, "exec-generator-maker").sourceGenerators()).isEmpty();
     }
 
     @Test

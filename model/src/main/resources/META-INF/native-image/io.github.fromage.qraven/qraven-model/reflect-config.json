@@ -1,0 +1,32 @@
+[
+  {
+    "name": "io.github.fromage.qraven.hardcoded.ModuleInfo",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true
+  },
+  {
+    "name": "io.github.fromage.qraven.hardcoded.ModuleInfo$ResourceDir",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true
+  },
+  {
+    "name": "io.github.fromage.qraven.hardcoded.ModuleInfo$SourceGenerator",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true
+  },
+  {
+    "name": "io.github.fromage.qraven.hardcoded.ModuleInfo$ShadeExecution",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true
+  },
+  {
+    "name": "io.github.fromage.qraven.hardcoded.ModuleInfo$ShadeFilter",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true
+  }
+]

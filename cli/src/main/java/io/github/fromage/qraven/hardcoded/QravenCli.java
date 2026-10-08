@@ -92,6 +92,41 @@ public class QravenCli {
         }
     }
 
+    private static final String COMPLETE_FILE = "generation.complete";
+
+    private static String stateDigest(Path stateFile) throws IOException {
+        try {
+            return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(Files.readAllBytes(stateFile)));
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    /**
+     * Records that the generated files are complete and go with the current state. The state is written as soon as
+     * the modules are known, since the bootstrap build reads it before the main build is packaged; this marker is
+     * what says generation then ran to the end, so a crash or --no-build never leaves a state that claims more than
+     * was generated.
+     */
+    private static void markGenerationComplete(Path outputDir) {
+        try {
+            Files.writeString(outputDir.resolve(COMPLETE_FILE), stateDigest(outputDir.resolve(STATE_FILE)));
+        } catch (IOException e) {
+            System.err.println("WARNING: could not record that generation completed: " + e);
+        }
+    }
+
+    private static boolean generationComplete(Path outputDir) {
+        try {
+            Path marker = outputDir.resolve(COMPLETE_FILE);
+            return Files.exists(marker)
+                    && Files.readString(marker).equals(stateDigest(outputDir.resolve(STATE_FILE)));
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
     private static int dumpModule(Path stateFile, String module) {
         var state = StateStore.read(stateFile, null, null, null);
         if (state.isEmpty()) {
@@ -247,13 +282,12 @@ public class QravenCli {
                 var state = StateStore.read(stateFile, STATE_VERSION, projectDir, generationKey);
                 if (state.isEmpty()) {
                     why = "no usable previous generation state";
+                } else if (!generationComplete(outputDir)) {
+                    why = "the previous generation did not complete";
                 } else if (!Files.exists(buildJar) || !Files.isDirectory(outputDir.resolve("build-src"))
                         || !Files.isDirectory(outputDir.resolve("build-classes"))) {
                     why = "the previous generated build files are missing";
                 } else {
-                    // from here on the generated files change, so the state only describes them again once
-                    // generation has completed
-                    Files.deleteIfExists(stateFile);
                     var result = parser.parseIncremental(state.get());
                     if (result.usable()) {
                         modules = result.modules();
@@ -274,8 +308,9 @@ public class QravenCli {
                     parser = newParser(projectDir, resolver, timings, threads);
                 }
             }
-            // the state is only valid again once this generation has completed
-            Files.deleteIfExists(stateFile);
+            // from here on the generated files change; they only go with the state again once this generation has
+            // completed
+            Files.deleteIfExists(outputDir.resolve(COMPLETE_FILE));
             if (modules == null) {
                 modules = parser.parseProject();
                 System.err.print(ERASE_LINE);
@@ -292,10 +327,9 @@ public class QravenCli {
             }
 
             timings.reset();
+            writeState(outputDir, projectDir, generationKey, modules);
+            timings.lap("write state");
             final Path generatedIn = outputDir;
-            final Path generatedFor = projectDir;
-            final String generatedKey = generationKey;
-            final List<ModuleInfo> generatedModules = modules;
             final PhaseTimings generationTimings = timings;
             List<ModuleInfo> bootstrapModules = detectBootstrapModules(modules, resolver);
             timings.lap("detect bootstrap modules");
@@ -323,6 +357,7 @@ public class QravenCli {
                 long stepStart = System.currentTimeMillis();
                 BuildFileGenerator bootstrapGen = new BuildFileGenerator(projectDir, outputDir, threads, resolver);
                 bootstrapGen.setPhaseTimings(timings);
+                bootstrapGen.setStateWrittenByCaller(true);
                 bootstrapGen.generate(bootstrapModules, "bootstrap");
                 bootstrapGen.compileAndPackage("bootstrap");
                 timings.lap("compile bootstrap.jar");
@@ -332,19 +367,18 @@ public class QravenCli {
                 stepStart = System.currentTimeMillis();
                 deferredMainGen = new BuildFileGenerator(projectDir, outputDir, threads, resolver);
                 deferredMainGen.setPhaseTimings(timings);
+                deferredMainGen.setStateWrittenByCaller(true);
                 deferredMainGen.setIncremental(incrementalGeneration);
                 deferredMainGen.setPreBuiltModules(bootstrapModules);
                 deferredMainGen.setProgressListener((detail, current, total) ->
                         System.err.print(ERASE_LINE + "  Generating " + current + "/" + total + " (" + detail + ")"));
                 deferredMainGen.generate(mainModules, "build");
                 System.err.print(ERASE_LINE);
-                System.out.println("Generated " + (mainModules.size() + 1) + " main build sources in " +
-                        (System.currentTimeMillis() - stepStart) + "ms"
-                        + (deferredMainGen.reusedPreviousOutput() ? " (" + deferredMainGen.getChangedModules().size()
-                        + " changed)" : ""));
+                System.out.println("Prepared the main build of " + mainModules.size() + " modules in " +
+                        (System.currentTimeMillis() - stepStart) + "ms");
                 System.out.println("  (build.jar will be packaged after bootstrap runs)");
                 // the generated files are only complete once build.jar is packaged, after the bootstrap build
-                pendingStateWrite = () -> writeState(generatedIn, generatedFor, generatedKey, generatedModules);
+                pendingStateWrite = () -> markGenerationComplete(generatedIn);
             } else {
                 if (!bootstrapModules.isEmpty()) {
                     System.out.println("Bootstrap modules found but jars are fresh — including in main build");
@@ -353,16 +387,15 @@ public class QravenCli {
                 long stepStart = System.currentTimeMillis();
                 BuildFileGenerator generator = new BuildFileGenerator(projectDir, outputDir, threads, resolver);
                 generator.setPhaseTimings(timings);
+                generator.setStateWrittenByCaller(true);
                 generator.setIncremental(incrementalGeneration);
                 generator.setProgressListener((detail, current, total) ->
                         System.err.print(ERASE_LINE + "  Generating " + current + "/" + total + " (" + detail + ")"));
                 generator.generate(modules, "build");
                 System.err.print(ERASE_LINE);
 
-                System.out.println("Generated " + (modules.size() + 1) + " source files in " +
-                        (System.currentTimeMillis() - stepStart) + "ms"
-                        + (generator.reusedPreviousOutput() ? " (" + generator.getChangedModules().size()
-                        + " changed)" : ""));
+                System.out.println("Prepared the build of " + modules.size() + " modules in " +
+                        (System.currentTimeMillis() - stepStart) + "ms");
 
                 stepStart = System.currentTimeMillis();
                 System.err.print("  Compiling and packaging build.jar...");
@@ -372,8 +405,7 @@ public class QravenCli {
                 System.out.println("Packaged build.jar in " + (System.currentTimeMillis() - stepStart) + "ms");
 
                 Files.deleteIfExists(bootstrapJar);
-                writeState(generatedIn, projectDir, generatedKey, generatedModules);
-                generationTimings.lap("write state");
+                markGenerationComplete(generatedIn);
             }
 
             savePomPaths(outputDir, modules, projectDir);

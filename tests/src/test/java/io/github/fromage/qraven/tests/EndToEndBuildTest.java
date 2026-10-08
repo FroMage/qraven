@@ -191,7 +191,7 @@ class EndToEndBuildTest {
     }
 
     @Test
-    void optionalDeps_generatedCodeTracksOptionalDeps(@TempDir Path outputDir) throws Exception {
+    void optionalDeps_generationTracksOptionalDeps(@TempDir Path outputDir) throws Exception {
         Path projectDir = TEST_PROJECTS.resolve("optional-deps");
         DependencyResolver resolver = new DependencyResolver();
         PomParser parser = new PomParser(projectDir, resolver);
@@ -200,30 +200,12 @@ class EndToEndBuildTest {
         BuildFileGenerator generator = new BuildFileGenerator(projectDir, outputDir, 1, resolver);
         generator.generate(modules);
 
-        Path srcDir = outputDir.resolve("build-src");
-        String libSource = findGeneratedSource(srcDir, "lib");
-        assertThat(libSource).contains("optionalModuleDependencyIds");
-        assertThat(libSource).contains("\"optional-lib\"");
+        var lib = GeneratedModules.module(outputDir, "lib");
+        assertThat(lib.optionalModuleDependencyIds()).containsExactly("optional-lib");
 
-        String appSource = findGeneratedSource(srcDir, "app");
-        assertThat(appSource).doesNotContain("optional-lib");
-    }
-
-    private String findGeneratedSource(Path srcDir, String moduleArtifactId) throws IOException {
-        try (var stream = Files.walk(srcDir)) {
-            return stream.filter(p -> p.toString().endsWith(".java"))
-                    .map(p -> {
-                        try {
-                            return Files.readString(p);
-                        } catch (IOException e) {
-                            return "";
-                        }
-                    })
-                    .filter(content -> content.contains("String artifactId() { return \"" + moduleArtifactId + "\"; }"))
-                    .findFirst()
-                    .orElseThrow(() -> new AssertionError(
-                            "No generated source found for module: " + moduleArtifactId));
-        }
+        var app = GeneratedModules.module(outputDir, "app");
+        assertThat(app.optionalModuleDependencyIds()).doesNotContain("optional-lib");
+        assertThat(app.moduleDependencyIds()).doesNotContain("optional-lib");
     }
 
     @Test

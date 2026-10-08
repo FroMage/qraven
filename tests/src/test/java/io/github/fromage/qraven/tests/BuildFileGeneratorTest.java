@@ -53,7 +53,7 @@ class BuildFileGeneratorTest {
     }
 
     @Test
-    void simpleJar_generatesSourceFiles(@TempDir Path outputDir) throws IOException {
+    void simpleJar_generatesTheBuildClassAndTheState(@TempDir Path outputDir) throws IOException {
         Path projectDir = TEST_PROJECTS.resolve("simple-jar");
         DependencyResolver resolver = new DependencyResolver();
         PomParser parser = new PomParser(projectDir, resolver);
@@ -62,18 +62,17 @@ class BuildFileGeneratorTest {
         BuildFileGenerator generator = new BuildFileGenerator(projectDir, outputDir, 1, resolver);
         generator.generate(modules);
 
-        Path srcDir = outputDir.resolve("build-src");
-        assertThat(srcDir).exists();
-
-        long javaFileCount;
-        try (var stream = Files.walk(srcDir)) {
-            javaFileCount = stream.filter(p -> p.toString().endsWith(".java")).count();
+        // the main class is the only thing generated as code; each module is data in the state
+        assertThat(outputDir.resolve("build-src/Build.java")).exists();
+        try (var stream = Files.list(outputDir.resolve("build-src"))) {
+            assertThat(stream.map(p -> p.getFileName().toString())).containsExactly("Build.java");
         }
-        assertThat(javaFileCount).isGreaterThanOrEqualTo(2);
+        assertThat(GeneratedModules.ids(outputDir)).containsExactly("com.test:simple-jar");
+        assertThat(GeneratedModules.module(outputDir, "simple-jar").hasJavaSources()).isTrue();
     }
 
     @Test
-    void multiModule_generatesSourcesForAllModules(@TempDir Path outputDir) throws IOException {
+    void multiModule_putsAllModulesInTheState(@TempDir Path outputDir) throws IOException {
         Path projectDir = TEST_PROJECTS.resolve("multi-module");
         DependencyResolver resolver = new DependencyResolver();
         PomParser parser = new PomParser(projectDir, resolver);
@@ -82,11 +81,8 @@ class BuildFileGeneratorTest {
         BuildFileGenerator generator = new BuildFileGenerator(projectDir, outputDir, 1, resolver);
         generator.generate(modules);
 
-        Path srcDir = outputDir.resolve("build-src");
-        long javaFileCount;
-        try (var stream = Files.walk(srcDir)) {
-            javaFileCount = stream.filter(p -> p.toString().endsWith(".java")).count();
-        }
-        assertThat(javaFileCount).isGreaterThanOrEqualTo(5);
+        assertThat(GeneratedModules.ids(outputDir)).hasSize(modules.size()).hasSizeGreaterThanOrEqualTo(4);
+        assertThat(Files.readString(outputDir.resolve("build-src/Build.java")))
+                .contains("com.test:core").contains("com.test:util").contains("com.test:app");
     }
 }

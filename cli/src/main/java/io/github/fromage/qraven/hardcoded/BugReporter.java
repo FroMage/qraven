@@ -215,6 +215,7 @@ public class BugReporter {
         Contents c = new Contents();
         collectLogs(c);
         collectGeneratedSources(c);
+        collectState(c);
         GitInfo git = readGitInfo();
         if (git != null) {
             c.git = git;
@@ -246,6 +247,15 @@ public class BugReporter {
                     addFile(c, "Previous logs", "logs/previous/" + p.getFileName(), p);
                 }
             }
+        }
+    }
+
+    /** What generation learned about each module, which the build reads; the closest thing to the build's input. */
+    private void collectState(Contents c) throws IOException {
+        Path state = outputDir.resolve("state.cbor");
+        if (Files.isRegularFile(state)) {
+            addFile(c, "Generation state (qraven --dump-module <artifactId> prints a module of it)",
+                    "generated/state.cbor", state);
         }
     }
 

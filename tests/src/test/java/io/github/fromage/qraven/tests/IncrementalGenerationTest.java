@@ -164,8 +164,7 @@ class IncrementalGenerationTest {
     void addingADependencyToOneModule_recomputesOnlyThatModule(@TempDir Path tmp) throws Exception {
         String output = check("multi-module", tmp, p -> addDependency(p.resolve("util/pom.xml"), OPENTEST4J));
 
-        assertThat(output).contains("Incremental generation: 1 of 4 modules recomputed (com.test:util)")
-                .contains("(1 changed)");
+        assertThat(output).contains("Incremental generation: 1 of 4 modules recomputed (com.test:util)");
     }
 
     @Test
@@ -354,22 +353,24 @@ class IncrementalGenerationTest {
     }
 
     /**
-     * A removed module must leave nothing behind: not its generated source, not its compiled class in the jar, and
-     * nothing in the main class that still instantiates it.
+     * A removed module must leave nothing behind: not in the state the build reads its modules from, not in the
+     * main class that lists them, and no class of its own in the jar.
      */
     private static void assertNothingLeftOf(Path project, String module) throws IOException {
         Path qraven = project.resolve("target/qraven");
-        assertThat(qraven.resolve("build-src/Build_" + module + ".java")).doesNotExist();
-        assertThat(qraven.resolve("build-classes/Build_" + module + ".class")).doesNotExist();
-        assertThat(jarEntries(qraven.resolve("build.jar"))).noneMatch(e -> e.contains("Build_" + module));
-        assertThat(Files.readString(qraven.resolve("build-src/Build.java"))).doesNotContain("Build_" + module);
+        assertThat(GeneratedModules.ids(qraven)).noneMatch(id -> id.endsWith(":" + module));
+        assertThat(Files.readString(qraven.resolve("build-src/Build.java"))).doesNotContain(":" + module);
+        assertThat(jarEntries(qraven.resolve("build.jar"))).noneMatch(e -> e.startsWith("Build_"));
+        try (var files = Files.list(qraven.resolve("build-src"))) {
+            assertThat(files.map(f -> f.getFileName().toString())).noneMatch(n -> n.startsWith("Build_"));
+        }
     }
 
     @Test
     void removingAModuleFromTheBuild_leavesNothingOfIt(@TempDir Path tmp) throws Exception {
         Path project = copyProject("multi-module", tmp.resolve("project"));
         assertThat(cli(project).exit()).isZero();
-        assertThat(jarEntries(project.resolve("target/qraven/build.jar"))).anyMatch(e -> e.contains("Build_app"));
+        assertThat(GeneratedModules.ids(project.resolve("target/qraven"))).contains("com.test:app");
         Thread.sleep(1100);
         // the module's directory stays, it is just no longer part of the build
         edit(project.resolve("pom.xml"), "<module>app</module>", "");

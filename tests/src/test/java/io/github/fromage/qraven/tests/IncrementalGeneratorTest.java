@@ -34,13 +34,36 @@ class IncrementalGeneratorTest {
     }
 
     @Test
-    void aModuleThatDisappears_isRemovedFromSourcesClassesAndJar(@TempDir Path out) throws Exception {
+    void whenNothingChanged_theCompiledMainClassIsKept(@TempDir Path out) throws Exception {
         DependencyResolver resolver = new DependencyResolver();
         List<ModuleInfo> all = new PomParser(PROJECT, resolver).parseProject();
         BuildFileGenerator first = generator(out, resolver, false);
         first.generate(all);
         first.compileAndPackage();
-        assertThat(out.resolve("build-classes/Build_app.class")).exists();
+        Path mainClass = out.resolve("build-classes/Build.class");
+        var compiledAt = Files.getLastModifiedTime(mainClass);
+        var packagedAt = Files.getLastModifiedTime(out.resolve("build.jar"));
+        Thread.sleep(50);
+
+        BuildFileGenerator second = generator(out, resolver, true);
+        second.generate(all);
+        second.compileAndPackage();
+
+        assertThat(second.reusedPreviousOutput()).isTrue();
+        assertThat(Files.getLastModifiedTime(mainClass)).as("not compiled again").isEqualTo(compiledAt);
+        assertThat(Files.getLastModifiedTime(out.resolve("build.jar"))).as("checked, and recorded as such")
+                .isGreaterThan(packagedAt);
+    }
+
+    @Test
+    void aModuleThatDisappears_isGoneFromTheMainClassTheStateAndTheJar(@TempDir Path out) throws Exception {
+        DependencyResolver resolver = new DependencyResolver();
+        List<ModuleInfo> all = new PomParser(PROJECT, resolver).parseProject();
+        BuildFileGenerator first = generator(out, resolver, false);
+        first.generate(all);
+        first.compileAndPackage();
+        assertThat(GeneratedModules.ids(out)).contains("com.test:app");
+        assertThat(Files.readString(out.resolve("build-src/Build.java"))).contains("com.test:app");
 
         // asked to reuse the previous output although a module is gone
         List<ModuleInfo> remaining = all.stream().filter(m -> !m.getArtifactId().equals("app")).toList();
@@ -48,35 +71,32 @@ class IncrementalGeneratorTest {
         second.generate(remaining);
         second.compileAndPackage();
 
-        assertThat(out.resolve("build-src/Build_app.java")).doesNotExist();
-        assertThat(out.resolve("build-classes/Build_app.class")).doesNotExist();
-        assertThat(jarEntries(out.resolve("build.jar"))).noneMatch(e -> e.contains("Build_app"))
-                .anyMatch(e -> e.equals("Build_core.class")).anyMatch(e -> e.equals("Build.class"));
-        assertThat(Files.readString(out.resolve("build-src/Build.java"))).doesNotContain("Build_app");
-        // the classes of the other modules had to be rebuilt too: nothing is trusted once something disappeared
-        assertThat(second.reusedPreviousOutput()).isFalse();
+        assertThat(GeneratedModules.ids(out)).doesNotContain("com.test:app").contains("com.test:core");
+        assertThat(Files.readString(out.resolve("build-src/Build.java"))).doesNotContain("com.test:app")
+                .contains("com.test:core");
+        // nothing is compiled per module, so there is nothing of the module left in the jar to link
+        assertThat(jarEntries(out.resolve("build.jar"))).noneMatch(e -> e.startsWith("Build_"))
+                .anyMatch(e -> e.equals("Build.class"));
     }
 
     @Test
-    void aStaleClassOfAChangedModuleIsReplacedNotLinkedTwice(@TempDir Path out) throws Exception {
+    void outputFromTheTimeOfAClassPerModule_isNotReused(@TempDir Path out) throws Exception {
         DependencyResolver resolver = new DependencyResolver();
         List<ModuleInfo> all = new PomParser(PROJECT, resolver).parseProject();
         BuildFileGenerator first = generator(out, resolver, false);
         first.generate(all);
         first.compileAndPackage();
+        // what an older qraven left behind
+        Files.writeString(out.resolve("build-src/Build_app.java"), "public class Build_app {}");
+        Files.writeString(out.resolve("build-classes/Build_app.class"), "stale");
 
-        // one module's data changes: only its source and class are redone, and nothing else is added to the jar
-        ModuleInfo util = all.stream().filter(m -> m.getArtifactId().equals("util")).findFirst().orElseThrow();
-        util.getCompilerArgs().add("-Xlint:all");
         BuildFileGenerator second = generator(out, resolver, true);
         second.generate(all);
         second.compileAndPackage();
 
-        assertThat(second.reusedPreviousOutput()).isTrue();
-        assertThat(second.getChangedModules()).containsExactly("util");
-        assertThat(jarEntries(out.resolve("build.jar")).stream().filter(e -> e.startsWith("Build_util")))
-                .containsExactly("Build_util.class");
-        assertThat(jarEntries(out.resolve("build.jar")).stream().filter(e -> e.endsWith(".class")).count())
-                .isEqualTo(all.size() + 1);
+        assertThat(second.reusedPreviousOutput()).isFalse();
+        assertThat(out.resolve("build-src/Build_app.java")).doesNotExist();
+        assertThat(out.resolve("build-classes/Build_app.class")).doesNotExist();
+        assertThat(jarEntries(out.resolve("build.jar"))).noneMatch(e -> e.startsWith("Build_"));
     }
 }

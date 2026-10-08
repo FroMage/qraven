@@ -1,12 +1,12 @@
 # Qraven
 
-A fast build tool that reads Maven `pom.xml` files and generates a self-contained Java build script (`build.jar`) that can be compiled to a native binary via GraalVM. Automatically detects POM changes, handles bootstrapping, and runs the build.
+A fast build tool that reads Maven `pom.xml` files and generates a build (`build.jar`) that reads what was learned about each module from a generation state, and that can be compiled to a native binary via GraalVM. Automatically detects POM changes, handles bootstrapping, and runs the build.
 
 ## How it works
 
-1. **Generate** -- Qraven parses all `pom.xml` files in a multi-module Maven project, resolves dependencies via Maven Resolver (Aether), and generates one Java source file per module plus a `Build.java` main class. These are compiled and packaged into a thin `build.jar` whose `Class-Path` manifest references `qraven-runtime` and its transitive dependencies in `~/.m2/repository`.
+1. **Generate** -- Qraven parses all `pom.xml` files in a multi-module Maven project, resolves dependencies via Maven Resolver (Aether), and records everything it learns about each module (classpaths, compiler arguments, plugin configuration, ...) in a generation state, `target/qraven/state.cbor`. It also generates a small `Build.java` main class that names the modules to build. That class is compiled and packaged into a thin `build.jar` whose `Class-Path` manifest references `qraven-runtime` and its transitive dependencies in `~/.m2/repository`.
 
-2. **Build** -- Running `build.jar` compiles all modules using the `javax.tools.JavaCompiler` API, copies resources, generates Jandex indexes, creates JARs, and installs artifacts to `~/.m2/repository`.
+2. **Build** -- Running `build.jar` reads the modules from the generation state, compiles them all using the `javax.tools.JavaCompiler` API, copies resources, generates Jandex indexes, creates JARs, and installs artifacts to `~/.m2/repository`.
 
 3. **Bootstrap** -- When building a project that contains qraven's own dependencies as reactor modules (e.g. Quarkus itself), qraven detects this and enters a two-phase bootstrap mode: it first builds and installs the dependency modules, then packages and runs the full build.
 
@@ -131,7 +131,7 @@ Your project's source code is never included, except for an optional patch of yo
   files), you are asked whether to include a patch of those changes.
 - **Otherwise**, it includes all `pom.xml` files and a listing of the project's file names.
 - **In both cases** it includes the logs (`build.log`, `generate.log`, `bootstrap.log` and the
-  previous runs), the generated build sources, and the qraven/JDK/OS versions.
+  previous runs), the generation state and generated main class, and the qraven/JDK/OS versions.
 
 Files that look sensitive (`.env*`, `*.pem`, `*.key`, `*.jks`, `settings.xml`, ...) are always
 left out, but logs contain absolute paths from your machine, so read the list before confirming.
@@ -209,20 +209,20 @@ as a full generation would, and the next run is a full one.
 These are known and deliberately left for later:
 
 - Handle a removed or added module incrementally instead of regenerating everything. Today it is safe but
-  conservative: the generated sources and classes are wiped and rebuilt, so nothing of a removed module is left behind.
+  conservative: the generated main class and jar are rebuilt from the new list of modules, so nothing of a removed module is left behind.
 - Detect changes that are not in poms, but only for the modules whose plugins make them relevant (for example look
   for Kotlin sources only in modules with the Kotlin plugin), stopping at the first file found, so the check stays
   cheap.
 - Update `build.jar` by copying the entries that did not change instead of writing the whole jar again, which is most
   of what is left of the time for a one-module change.
-- Replace the generated classes by the stored state (read directly by the build), which would remove compiling them
-  from generation altogether.
+- Move the rest of `Build.java` (option parsing and setting up the build) into the runtime, so that the only thing
+  generation produces besides the state is the list of modules.
 
 ### Rebuilding after a pom change
 
 A pom change touches no source file, so timestamps alone can't tell an incremental build that a module has to be
-rebuilt. Each generated module therefore carries a fingerprint of its build data (classpaths, compiler arguments,
-plugin configuration, ...). The build records it in `<module>/target/qraven-build-data` when the module has been
+rebuilt. The build therefore computes a fingerprint of each module's data (classpaths, compiler arguments,
+plugin configuration, ... as it reads them from the generation state). The build records it in `<module>/target/qraven-build-data` when the module has been
 built, and `--incremental` rebuilds a module whose fingerprint differs, or that has none recorded, along with its
 dependents. This also covers changes made in a parent pom or a BOM, which don't touch the module's own pom. Because
 of this, `-i` stays in effect after a regeneration: a pom edit rebuilds the modules it affects instead of everything.
@@ -230,10 +230,13 @@ The first incremental build after upgrading qraven rebuilds everything once, sin
 
 ### Generation state
 
-Each generation also writes `target/qraven/state.cbor`: the parsed and resolved data of every module, as a
+Generation writes `target/qraven/state.cbor`: the parsed and resolved data of every module, as a
 [CBOR](https://www.rfc-editor.org/rfc/rfc8949) file (about 4 MB for Quarkus, with strings shared between modules).
-It is a cache of what the poms say, so it is discarded and rebuilt whenever it is missing, corrupt, or was written
-by another qraven version or for another project. `qraven --dump-module <artifactId>` prints a module's data as JSON.
+It is what the build reads its modules from, and what incremental generation starts from. It can always be rebuilt
+from the poms, so it is discarded when it is missing or corrupt, or was written by another qraven build or for
+another project. Next to it, `generation.complete` records that the generated files go with that state: it is removed
+when a generation starts and written when it ends, so an interrupted generation is never mistaken for a complete one.
+`qraven --dump-module <artifactId>` prints a module's data as JSON.
 
 ### Bootstrap mode
 
@@ -277,6 +280,8 @@ java -jar target/qraven/build.jar --no-kotlin           # Skip Kotlin modules
 java -jar target/qraven/build.jar -DskipTests           # Skip tests
 ```
 
+`build.jar` reads the modules to build from `target/qraven/state.cbor`, so it has to stay next to the state generation wrote for it.
+
 ### JVM AOT cache (JDK 25+)
 
 ```bash
@@ -308,6 +313,8 @@ $GRAALVM_HOME/bin/native-image \
 ```
 
 **Important:** `build.jar` must be compiled with the same JDK version used by `native-image`. A mismatch causes `UnsupportedClassVersionError`.
+
+The binary reads the generation state at run time, which uses reflection on `ModuleInfo`; `qraven-model` ships the reachability metadata for it (`META-INF/native-image/.../reflect-config.json`). This has not been tried with GraalVM since modules became data, so report a problem if the native binary cannot read the state.
 
 Run the native binary:
 
@@ -361,12 +368,18 @@ qraven/
       QravenCli.java                   # CLI entry point (generation + build orchestration)
       PomParser.java                   # Parses pom.xml files recursively
       DependencyResolver.java          # Resolves dependencies via Maven Resolver (Aether)
+      BuildFileGenerator.java          # Generates the Build.java main class and the flattened poms
+  model/
+    pom.xml                            # Model module (small: shared by the CLI and the runtime)
+    src/main/java/.../
       ModuleInfo.java                  # Module metadata (coords, deps, source dirs)
-      BuildFileGenerator.java          # Generates Build_*.java per module + Build.java
+      StateStore.java, Cbor.java       # The generation state, as CBOR
   runtime/
     pom.xml                            # Runtime module (depends on Quarkus bootstrap, Jandex, Kotlin)
     src/main/java/.../runtime/
-      ModuleBuild.java                 # Per-module build logic (abstract base for generated classes)
+      ModuleBuild.java                 # Per-module build logic
+      DataModuleBuild.java             # A ModuleBuild whose data is a module of the generation state
+      ModuleStates.java                # Opens the generation state and creates the modules
       BuildRuntime.java                # Compilation, resource copying, JAR creation
       BuildOrchestrator.java           # Multi-threaded build execution
       QuarkusBuildHelper.java          # Quarkus augmentation (quarkus:build goal)
@@ -378,11 +391,13 @@ qraven/
 
 ### How the pieces fit together
 
-- **`qraven-cli`** has no Quarkus dependencies. It parses POMs, resolves dependencies, generates Java source files, compiles them, and packages them into a thin `build.jar`. JBang installs this module directly from its Maven GAV.
+- **`qraven-model`** is small: `ModuleInfo` (what generation learns about a module) and the code that stores it as the generation state. Both the CLI, which writes it, and the runtime, which reads it, depend on it.
+
+- **`qraven-cli`** has no Quarkus dependencies. It parses POMs, resolves dependencies, writes the generation state, generates the `Build.java` main class, compiles it, and packages it into a thin `build.jar`. JBang installs this module directly from its Maven GAV.
 
 - **`qraven-runtime`** depends on Quarkus bootstrap, Jandex, and the Kotlin compiler. It is NOT shaded into the CLI. Instead, `build.jar` references it (and its transitive dependencies) via `Class-Path` manifest entries pointing to jars in `~/.m2/repository`.
 
-- **Generated `Build_*.java` classes** extend `ModuleBuild` from `qraven-runtime`. Each generated class hardcodes one module's coordinates, classpath, compiler args, and plugin configuration. The generated `Build.java` main class instantiates all module classes and delegates to `BuildOrchestrator`.
+- **Modules are data.** `DataModuleBuild` in `qraven-runtime` is a `ModuleBuild` whose coordinates, classpath, compiler arguments and plugin configuration come from one module of the generation state; there is no class per module. The generated `Build.java` main class opens the state, creates the modules it names and delegates to `BuildOrchestrator`. Because of that, `build.jar` is not self-contained: it reads `target/qraven/state.cbor` (the path is written into `Build.java`), so it only works while that file is there and is the one generation wrote for it.
 
 ## Performance
 

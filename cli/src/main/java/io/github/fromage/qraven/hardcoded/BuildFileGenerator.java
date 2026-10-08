@@ -82,26 +82,36 @@ public class BuildFileGenerator {
     }
 
     private boolean incremental;
-    /** The generated sources that differ from the existing ones; null when everything must be compiled. */
-    private List<Path> changedSources;
-    private final Set<String> changedModules = ConcurrentHashMap.newKeySet();
+    private boolean stateWrittenByCaller;
+    private boolean reused;
+    /** Whether the main class or what it is built from differs from the previous generation's. */
+    private boolean mainChanged = true;
 
     /**
-     * Keep the sources and classes of a previous generation and only rewrite and recompile the files whose
-     * content changed. Without usable previous output this behaves like a full generation.
+     * Keep the compiled main class and jar of a previous generation when nothing in them changed. Without usable
+     * previous output this behaves like a full generation.
      */
     public void setIncremental(boolean incremental) {
         this.incremental = incremental;
     }
 
-    /** After an incremental generate(): the artifactIds whose generated build data changed. */
-    public Set<String> getChangedModules() {
-        return changedModules;
+    /**
+     * The generation state covers every module of the project, not just those of this build (the bootstrap build and
+     * the main build share it), so when several generators work on one project the caller writes it. Otherwise the
+     * generator writes it from the modules it is given.
+     */
+    public void setStateWrittenByCaller(boolean stateWrittenByCaller) {
+        this.stateWrittenByCaller = stateWrittenByCaller;
     }
 
-    /** Whether the last generate() could reuse the previous output (and so only changed files are compiled). */
+    /** Whether the last generate() could reuse the previous output. */
     public boolean reusedPreviousOutput() {
-        return changedSources != null;
+        return reused;
+    }
+
+    /** The file the build reads its modules from. */
+    public Path stateFile() {
+        return outputDir.resolve("state.cbor");
     }
 
     private static boolean hasClassFiles(Path dir) {
@@ -109,6 +119,15 @@ public class BuildFileGenerator {
             return stream.anyMatch(p -> p.toString().endsWith(".class"));
         } catch (IOException e) {
             return false;
+        }
+    }
+
+    /** Older generations wrote a class per module, which the build no longer uses. */
+    private static boolean hasModuleSources(Path srcDir) {
+        try (var files = Files.list(srcDir)) {
+            return files.anyMatch(f -> f.getFileName().toString().startsWith("Build_"));
+        } catch (IOException e) {
+            return true;
         }
     }
 
@@ -126,12 +145,9 @@ public class BuildFileGenerator {
         Path srcDir = outputDir.resolve(buildName + "-src");
         Path classesDir = outputDir.resolve(buildName + "-classes");
         boolean reuse = incremental && Files.isDirectory(srcDir) && Files.isDirectory(classesDir)
-                && hasClassFiles(classesDir);
-        changedModules.clear();
-        if (reuse) {
-            changedSources = Collections.synchronizedList(new ArrayList<>());
-        } else {
-            changedSources = null;
+                && hasClassFiles(classesDir) && !hasModuleSources(srcDir);
+        reused = reuse;
+        if (!reuse) {
             deleteDirectory(srcDir);
             deleteDirectory(classesDir);
         }
@@ -149,45 +165,17 @@ public class BuildFileGenerator {
         resolveKtfmtClasspath(modules);
         timings.lap("generator: tool classpaths (protoc, antlr, jdt, ktfmt)");
 
-        int total = modules.size() + 1;
-        AtomicInteger progress = new AtomicInteger();
-
-        ExecutorService executor = Executors.newFixedThreadPool(threads);
-        try {
-            List<Future<?>> futures = new ArrayList<>(modules.size());
-            for (ModuleInfo module : modules) {
-                futures.add(executor.submit(() -> {
-                    String className = sanitizeClassName(module.getArtifactId());
-                    String source = generateModuleClass(module, className);
-                    Path sourceFile = srcDir.resolve("Build_" + className + ".java");
-                    try {
-                        writeModuleSource(sourceFile, source, module);
-                    } catch (IOException e) {
-                        throw new RuntimeException(e);
-                    }
-                    int done = progress.incrementAndGet();
-                    if (progressListener != null) {
-                        progressListener.update(module.getArtifactId(), done, total);
-                    }
-                }));
-            }
-            for (Future<?> f : futures) {
-                try {
-                    f.get();
-                } catch (Exception e) {
-                    if (e.getCause() instanceof IOException ioe) throw ioe;
-                    throw new RuntimeException(e);
-                }
-            }
-        } finally {
-            executor.shutdown();
+        // the build reads each module's data from the state; the flattened poms it points to live next to it
+        for (ModuleInfo m : modules) {
+            writeFlattenedPom(m);
         }
-
-        for (ModuleInfo preBuilt : preBuiltModules) {
-            String className = sanitizeClassName(preBuilt.getArtifactId());
-            String source = generateModuleClass(preBuilt, className);
-            Path sourceFile = srcDir.resolve("Build_" + className + ".java");
-            writeModuleSource(sourceFile, source, preBuilt);
+        for (ModuleInfo m : preBuiltModules) {
+            writeFlattenedPom(m);
+        }
+        if (!stateWrittenByCaller) {
+            List<ModuleInfo> all = new ArrayList<>(modules);
+            all.addAll(preBuiltModules);
+            StateStore.write(stateFile(), "generator", projectRoot, "", all);
         }
 
         Map<String, String> rv = new HashMap<>();
@@ -200,75 +188,13 @@ public class BuildFileGenerator {
         this.reactorVersions = rv;
 
         Path mainFile = srcDir.resolve("Build.java");
-        writeSource(mainFile, generateMainClass(modules, buildName));
+        mainChanged = writeIfChanged(mainFile, generateMainClass(modules, buildName)) || !reuse;
         if (progressListener != null) {
-            progressListener.update("Build.java", total, total);
-        }
-
-        if (changedSources != null) {
-            Set<String> expected = new HashSet<>();
-            expected.add("Build.java");
-            for (ModuleInfo m : modules) {
-                expected.add("Build_" + sanitizeClassName(m.getArtifactId()) + ".java");
-            }
-            for (ModuleInfo m : preBuiltModules) {
-                expected.add("Build_" + sanitizeClassName(m.getArtifactId()) + ".java");
-            }
-            boolean stale = false;
-            try (var files = Files.list(srcDir)) {
-                for (Path f : (Iterable<Path>) files::iterator) {
-                    if (f.getFileName().toString().endsWith(".java") && !expected.contains(f.getFileName().toString())) {
-                        Files.delete(f);
-                        stale = true;
-                    }
-                }
-            }
-            if (stale) {
-                // classes of modules that no longer exist would stay in the jar: start over
-                deleteDirectory(classesDir);
-                changedSources = null;
-            }
+            progressListener.update("Build.java", 1, 1);
         }
         timings.lap("generator: write sources");
     }
 
-    /**
-     * Gives the generated class a fingerprint of its own content, which the build records when the module has been
-     * built, so a later incremental build can tell that the module's build data changed.
-     */
-    private static String withFingerprint(String source) {
-        try {
-            byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
-                    .digest(source.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-            String fingerprint = java.util.HexFormat.of().formatHex(digest, 0, 16);
-            int end = source.lastIndexOf('}');
-            return source.substring(0, end)
-                    + "\n    @Override public String buildDataFingerprint() { return \"" + fingerprint + "\"; }\n}\n";
-        } catch (java.security.NoSuchAlgorithmException e) {
-            throw new IllegalStateException(e);
-        }
-    }
-
-    /** Writes a module's source, and notes it as changed if it differs from the previous generation's. */
-    private void writeModuleSource(Path file, String source, ModuleInfo module) throws IOException {
-        if (writeSource(file, withFingerprint(source))) {
-            changedModules.add(module.getArtifactId());
-        }
-    }
-
-    private boolean writeSource(Path file, String source) throws IOException {
-        if (changedSources == null) {
-            Files.writeString(file, source);
-            return true;
-        }
-        if (writeIfChanged(file, source)) {
-            changedSources.add(file);
-            return true;
-        }
-        return false;
-    }
-
-    /** Writes the module's flattened BOM, if any, under the output directory; returns its path. */
     private String writeFlattenedPom(ModuleInfo module) {
         if (module.getFlattenedBomModel() == null) return null;
         Path file = outputDir.resolve("flattened-poms")
@@ -284,440 +210,6 @@ public class BuildFileGenerator {
             throw new RuntimeException("Failed to write flattened pom " + file, e);
         }
         return file.toString();
-    }
-
-    private String generateModuleClass(ModuleInfo module, String className) {
-        StringBuilder sb = new StringBuilder();
-        sb.append("import io.github.fromage.qraven.hardcoded.runtime.ModuleBuild;\n");
-        sb.append("import io.github.fromage.qraven.hardcoded.runtime.BuildRuntime;\n");
-        sb.append("import java.nio.file.Path;\n");
-        sb.append("import java.util.List;\n");
-        sb.append("import java.util.Map;\n\n");
-
-        sb.append("public class Build_").append(className).append(" extends ModuleBuild {\n\n");
-
-        sb.append("    public Build_").append(className).append("(BuildRuntime runtime) { super(runtime); }\n\n");
-
-        sb.append("    @Override public String groupId() { return ").append(quote(module.getGroupId())).append("; }\n");
-        sb.append("    @Override public String artifactId() { return ").append(quote(module.getArtifactId())).append("; }\n");
-        sb.append("    @Override public String version() { return ").append(quote(module.getVersion())).append("; }\n");
-        sb.append("    @Override public String packaging() { return ").append(quote(module.getPackaging())).append("; }\n");
-        sb.append("    @Override public Path baseDir() { return Path.of(").append(quote(module.getBaseDir().toString())).append("); }\n");
-        sb.append("    @Override public boolean hasJavaSources() { return ").append(module.isHasJavaSources()).append("; }\n");
-        sb.append("    @Override public boolean hasKotlinSources() { return ").append(module.isHasKotlinSources()).append("; }\n");
-        sb.append("    @Override public boolean hasTestJavaSources() { return ").append(module.isHasTestJavaSources()).append("; }\n");
-        sb.append("    @Override public boolean hasTestKotlinSources() { return ").append(module.isHasTestKotlinSources()).append("; }\n");
-        sb.append("    @Override public boolean hasProtobufSources() { return ").append(module.isHasProtobufSources()).append("; }\n");
-        sb.append("    @Override public boolean hasTestProtobufSources() { return ").append(module.isHasTestProtobufSources()).append("; }\n");
-        sb.append("    @Override public boolean protobufUsesGrpc() { return ").append(module.isProtobufUsesGrpc()).append("; }\n");
-        sb.append("    @Override public boolean protobufUsesMutiny() { return ").append(module.isProtobufUsesMutiny()).append("; }\n");
-        sb.append("    @Override public boolean hasAntlrSources() { return ").append(module.isHasAntlrSources()).append("; }\n");
-        sb.append("    @Override public boolean antlrVisitor() { return ").append(module.isAntlrVisitor()).append("; }\n");
-        sb.append("    @Override public boolean needsJandexIndex() { return ").append(module.isNeedsJandexIndex()).append("; }\n");
-        sb.append("    @Override public String platformPropertiesFileName() { return ")
-                .append(quoteOrNull(module.getPlatformPropertiesFileName())).append("; }\n");
-        sb.append("    @Override public String flattenedPomFile() { return ")
-                .append(quoteOrNull(writeFlattenedPom(module))).append("; }\n");
-        sb.append("    @Override public boolean hasExtensionPlugin() { return ").append(module.isHasExtensionPlugin()).append("; }\n");
-        sb.append("    @Override public String extensionValidationSkipWhen() { return ")
-                .append(quoteOrNull(module.getExtensionValidationSkipWhen())).append("; }\n\n");
-
-        // resourceDirs
-        sb.append("    @Override\n");
-        sb.append("    public String[][] resourceDirs() {\n");
-        List<ModuleInfo.ResourceDir> rds = module.getResourceDirs();
-        if (rds.isEmpty()) {
-            sb.append("        return new String[0][];\n");
-        } else {
-            sb.append("        return new String[][] {\n");
-            for (int i = 0; i < rds.size(); i++) {
-                ModuleInfo.ResourceDir rd = rds.get(i);
-                sb.append("            {").append(quote(rd.directory())).append(", ")
-                        .append(quote(String.valueOf(rd.filtering()))).append(", ")
-                        .append(quoteOrNull(rd.targetPath())).append("}");
-                if (i < rds.size() - 1) sb.append(",");
-                sb.append("\n");
-            }
-            sb.append("        };\n");
-        }
-        sb.append("    }\n\n");
-
-        // filterProperties
-        Map<String, String> props = module.getFilterProperties();
-        if (props.isEmpty()) {
-            sb.append("    @Override\n");
-            sb.append("    public Map<String, String> filterProperties() { return Map.of(); }\n\n");
-        } else {
-            sb.append("    private static final String FILTER_PROPS = \"\"\"\n");
-            for (Map.Entry<String, String> entry : props.entrySet()) {
-                sb.append("            ").append(escapeTextBlock(entry.getKey()))
-                        .append("=").append(escapeTextBlock(entry.getValue())).append("\n");
-            }
-            sb.append("            \"\"\";\n\n");
-            sb.append("    @Override\n");
-            sb.append("    public Map<String, String> filterProperties() { return parseProps(FILTER_PROPS); }\n\n");
-        }
-
-        // manifestEntries
-        sb.append("    @Override\n");
-        sb.append("    public Map<String, String> manifestEntries() {\n");
-        Map<String, String> manifest = module.getManifestEntries();
-        if (manifest.isEmpty()) {
-            sb.append("        return Map.of();\n");
-        } else {
-            sb.append("        return Map.of(\n");
-            List<Map.Entry<String, String>> mentries = List.copyOf(manifest.entrySet());
-            for (int i = 0; i < mentries.size(); i++) {
-                Map.Entry<String, String> entry = mentries.get(i);
-                sb.append("            ").append(quote(entry.getKey())).append(", ")
-                        .append(quote(entry.getValue()));
-                if (i < mentries.size() - 1) sb.append(",");
-                sb.append("\n");
-            }
-            sb.append("        );\n");
-        }
-        sb.append("    }\n\n");
-
-        sb.append("    @Override\n");
-        sb.append("    public List<String> compileClasspath() {\n");
-        sb.append("        return List.of(\n");
-        List<String> nonOptionalCp = new ArrayList<>(module.getCompileClasspath());
-        nonOptionalCp.removeAll(module.getOptionalClasspathEntries());
-        sb.append(formatStringList(makePortable(nonOptionalCp), "            "));
-        sb.append("        );\n");
-        sb.append("    }\n\n");
-
-        sb.append("    @Override\n");
-        sb.append("    public List<String> optionalCompileClasspath() {\n");
-        sb.append("        return List.of(\n");
-        List<String> optionalCp = new ArrayList<>(module.getOptionalClasspathEntries());
-        sb.append(formatStringList(makePortable(optionalCp), "            "));
-        sb.append("        );\n");
-        sb.append("    }\n\n");
-
-        sb.append("    @Override\n");
-        sb.append("    public List<String> testCompileClasspath() {\n");
-        sb.append("        return List.of(\n");
-        sb.append(formatStringList(makePortable(module.getTestCompileClasspath()), "            "));
-        sb.append("        );\n");
-        sb.append("    }\n\n");
-
-        sb.append("    @Override\n");
-        sb.append("    public List<String> annotationProcessorPaths() {\n");
-        sb.append("        return List.of(\n");
-        sb.append(formatStringList(makePortable(module.getAnnotationProcessorPaths()), "            "));
-        sb.append("        );\n");
-        sb.append("    }\n\n");
-
-        sb.append("    @Override public boolean isApCacheable() { return ")
-                .append(module.isApCacheable()).append("; }\n\n");
-
-        sb.append("    @Override\n");
-        sb.append("    public List<String> compilerArgs() {\n");
-        sb.append("        return List.of(\n");
-        sb.append(formatStringList(module.getCompilerArgs(), "            "));
-        sb.append("        );\n");
-        sb.append("    }\n\n");
-
-        sb.append("    @Override\n");
-        sb.append("    public List<String> moduleDependencyIds() {\n");
-        sb.append("        return List.of(\n");
-        sb.append(formatStringList(module.getReactorDependencies(), "            "));
-        sb.append("        );\n");
-        sb.append("    }\n\n");
-
-        sb.append("    @Override\n");
-        sb.append("    public List<String> optionalModuleDependencyIds() {\n");
-        sb.append("        return List.of(\n");
-        sb.append(formatStringList(new java.util.ArrayList<>(module.getOptionalReactorDependencies()), "            "));
-        sb.append("        );\n");
-        sb.append("    }\n\n");
-
-        sb.append("    @Override\n");
-        sb.append("    public List<String> testModuleDependencyIds() {\n");
-        sb.append("        return List.of(\n");
-        sb.append(formatStringList(module.getTestReactorDependencies(), "            "));
-        sb.append("        );\n");
-        sb.append("    }\n\n");
-
-        if (!module.getTestJarReactorDependencies().isEmpty()) {
-            sb.append("    @Override\n");
-            sb.append("    public List<String> testJarModuleDependencyIds() {\n");
-            sb.append("        return List.of(\n");
-            sb.append(formatStringList(module.getTestJarReactorDependencies(), "            "));
-            sb.append("        );\n");
-            sb.append("    }\n\n");
-        }
-
-        // extensionDescriptorProperties
-        Map<String, String> extProps = module.getExtensionDescriptorProperties();
-        sb.append("    @Override\n");
-        sb.append("    public Map<String, String> extensionDescriptorProperties() {\n");
-        if (extProps.isEmpty()) {
-            sb.append("        return Map.of();\n");
-        } else {
-            sb.append("        return Map.of(\n");
-            List<Map.Entry<String, String>> extEntries = List.copyOf(extProps.entrySet());
-            for (int i = 0; i < extEntries.size(); i++) {
-                Map.Entry<String, String> entry = extEntries.get(i);
-                sb.append("            ").append(quote(entry.getKey())).append(", ")
-                        .append(quote(entry.getValue()));
-                if (i < extEntries.size() - 1) sb.append(",");
-                sb.append("\n");
-            }
-            sb.append("        );\n");
-        }
-        sb.append("    }\n\n");
-
-        // extension metadata methods
-        sb.append("    @Override public String extensionProjectName() { return ")
-                .append(quoteOrNull(module.getExtensionProjectName())).append("; }\n");
-        sb.append("    @Override public String extensionProjectDescription() { return ")
-                .append(quoteOrNull(module.getExtensionProjectDescription())).append("; }\n");
-        sb.append("    @Override public String extensionScmUrl() { return ")
-                .append(quoteOrNull(module.getExtensionScmUrl())).append("; }\n");
-        sb.append("    @Override public String extensionMinimumJavaVersion() { return ")
-                .append(quoteOrNull(module.getExtensionMinimumJavaVersion())).append("; }\n\n");
-
-        sb.append("    @Override\n");
-        sb.append("    public List<String> extensionModelDeps() {\n");
-        sb.append("        return List.of(\n");
-        sb.append(formatStringList(module.getExtensionModelDeps(), "            "));
-        sb.append("        );\n");
-        sb.append("    }\n\n");
-
-        sb.append("    @Override\n");
-        sb.append("    public List<String> extensionReactorGAs() {\n");
-        sb.append("        return List.of(\n");
-        sb.append(formatStringList(module.getExtensionReactorGAs(), "            "));
-        sb.append("        );\n");
-        sb.append("    }\n\n");
-
-        sb.append("    @Override\n");
-        sb.append("    public List<String> extensionParentFirstArtifacts() {\n");
-        sb.append("        return List.of(\n");
-        sb.append(formatStringList(module.getExtensionParentFirstArtifacts(), "            "));
-        sb.append("        );\n");
-        sb.append("    }\n\n");
-
-        sb.append("    @Override\n");
-        sb.append("    public List<String> extensionRunnerParentFirstArtifacts() {\n");
-        sb.append("        return List.of(\n");
-        sb.append(formatStringList(module.getExtensionRunnerParentFirstArtifacts(), "            "));
-        sb.append("        );\n");
-        sb.append("    }\n\n");
-
-        sb.append("    @Override\n");
-        sb.append("    public List<String> extensionExcludedArtifacts() {\n");
-        sb.append("        return List.of(\n");
-        sb.append(formatStringList(module.getExtensionExcludedArtifacts(), "            "));
-        sb.append("        );\n");
-        sb.append("    }\n\n");
-
-        sb.append("    @Override\n");
-        sb.append("    public List<String> extensionLesserPriorityArtifacts() {\n");
-        sb.append("        return List.of(\n");
-        sb.append(formatStringList(module.getExtensionLesserPriorityArtifacts(), "            "));
-        sb.append("        );\n");
-        sb.append("    }\n\n");
-
-        sb.append("    @Override\n");
-        sb.append("    public List<String> extensionProvidesCapabilities() {\n");
-        sb.append("        return List.of(\n");
-        sb.append(formatStringList(module.getExtensionProvidesCapabilities(), "            "));
-        sb.append("        );\n");
-        sb.append("    }\n\n");
-
-        sb.append("    @Override\n");
-        sb.append("    public List<String> extensionRequiresCapabilities() {\n");
-        sb.append("        return List.of(\n");
-        sb.append(formatStringList(module.getExtensionRequiresCapabilities(), "            "));
-        sb.append("        );\n");
-        sb.append("    }\n\n");
-
-        // quarkus build plugin
-        sb.append("    @Override public boolean hasQuarkusBuildPlugin() { return ")
-                .append(module.isHasQuarkusBuildPlugin()).append("; }\n");
-        sb.append("    @Override public String quarkusBuildSkipWhen() { return ")
-                .append(quoteOrNull(module.getQuarkusBuildSkipWhen())).append("; }\n");
-        sb.append("    @Override public boolean hasGenerateCodeGoal() { return ")
-                .append(module.isHasGenerateCodeGoal()).append("; }\n");
-        sb.append("    @Override public boolean hasGenerateCodeTestsGoal() { return ")
-                .append(module.isHasGenerateCodeTestsGoal()).append("; }\n");
-        sb.append("    @Override public boolean hasCodeGenProviders() { return ")
-                .append(module.isHasCodeGenProviders()).append("; }\n");
-        sb.append("    @Override public boolean hasSisuPlugin() { return ")
-                .append(module.isHasSisuPlugin()).append("; }\n");
-        sb.append("    @Override public String generateCodeSkipWhen() { return ")
-                .append(quoteOrNull(module.getGenerateCodeSkipWhen())).append("; }\n\n");
-
-        // quarkusBuildProperties
-        Map<String, String> qbProps = module.getQuarkusBuildProperties();
-        if (qbProps.isEmpty()) {
-            sb.append("    @Override\n");
-            sb.append("    public Map<String, String> quarkusBuildProperties() { return Map.of(); }\n\n");
-        } else {
-            sb.append("    private static final String QUARKUS_BUILD_PROPS = \"\"\"\n");
-            for (Map.Entry<String, String> entry : qbProps.entrySet()) {
-                sb.append("            ").append(escapeTextBlock(entry.getKey()))
-                        .append("=").append(escapeTextBlock(entry.getValue())).append("\n");
-            }
-            sb.append("            \"\"\";\n\n");
-            sb.append("    @Override\n");
-            sb.append("    public Map<String, String> quarkusBuildProperties() { return parseProps(QUARKUS_BUILD_PROPS); }\n\n");
-        }
-
-        // deploymentClasspath
-        sb.append("    @Override\n");
-        sb.append("    public List<String> deploymentClasspath() {\n");
-        sb.append("        return List.of(\n");
-        sb.append(formatStringList(makePortable(module.getDeploymentClasspath()), "            "));
-        sb.append("        );\n");
-        sb.append("    }\n\n");
-
-        // runtimeExtensionArtifacts
-        sb.append("    @Override\n");
-        sb.append("    public List<String> runtimeExtensionArtifacts() {\n");
-        sb.append("        return List.of(\n");
-        sb.append(formatStringList(module.getRuntimeExtensionArtifacts(), "            "));
-        sb.append("        );\n");
-        sb.append("    }\n\n");
-
-        // extensionDevProperties
-        Map<String, String> edProps = module.getExtensionDevProperties();
-        if (edProps.isEmpty()) {
-            sb.append("    @Override\n");
-            sb.append("    public Map<String, String> extensionDevProperties() { return Map.of(); }\n");
-        } else {
-            sb.append("    private static final String EXT_DEV_PROPS = \"\"\"\n");
-            for (Map.Entry<String, String> entry : edProps.entrySet()) {
-                sb.append("            ").append(escapeTextBlock(entry.getKey()))
-                        .append("=").append(escapeTextBlock(entry.getValue().replace("\n", "\\n"))).append("\n");
-            }
-            sb.append("            \"\"\";\n\n");
-            sb.append("    @Override\n");
-            sb.append("    public Map<String, String> extensionDevProperties() { return parseProps(EXT_DEV_PROPS); }\n");
-        }
-
-        sb.append("    @Override public String protocVersion() { return ")
-                .append(quoteOrNull(module.getProtocVersion())).append("; }\n");
-        sb.append("    @Override public String grpcVersion() { return ")
-                .append(quoteOrNull(module.getGrpcVersion())).append("; }\n");
-        sb.append("    @Override public String quarkusGrpcVersion() { return ")
-                .append(quoteOrNull(module.getQuarkusGrpcVersion())).append("; }\n");
-
-        Map<String, String> reactorExtDeploy = module.getAllReactorExtensionDeployments();
-        if (reactorExtDeploy.isEmpty()) {
-            sb.append("    @Override\n");
-            sb.append("    public Map<String, String> allReactorExtensionDeployments() { return Map.of(); }\n");
-        } else {
-            sb.append("    private static final String REACTOR_EXT_DEPLOYMENTS = \"\"\"\n");
-            for (Map.Entry<String, String> entry : reactorExtDeploy.entrySet()) {
-                sb.append("            ").append(escapeTextBlock(entry.getKey()))
-                        .append("=").append(escapeTextBlock(entry.getValue())).append("\n");
-            }
-            sb.append("            \"\"\";\n\n");
-            sb.append("    @Override\n");
-            sb.append("    public Map<String, String> allReactorExtensionDeployments() { return parseProps(REACTOR_EXT_DEPLOYMENTS); }\n");
-        }
-
-        sb.append("    @Override public String pluginName() { return ")
-                .append(quoteOrNull(module.getProjectName())).append("; }\n");
-        sb.append("    @Override public String pluginDescription() { return ")
-                .append(quoteOrNull(module.getProjectDescription())).append("; }\n\n");
-
-        sb.append("    @Override\n");
-        sb.append("    public List<String> kotlinCompilerPlugins() {\n");
-        sb.append("        return List.of(\n");
-        sb.append(formatStringList(module.getKotlinCompilerPlugins(), "            "));
-        sb.append("        );\n");
-        sb.append("    }\n\n");
-
-        sb.append("    @Override\n");
-        sb.append("    public List<String> kotlinPluginOptions() {\n");
-        sb.append("        return List.of(\n");
-        sb.append(formatStringList(module.getKotlinPluginOptions(), "            "));
-        sb.append("        );\n");
-        sb.append("    }\n");
-
-        if (!module.getShadeExecutions().isEmpty()) {
-            sb.append("\n    @Override\n");
-            sb.append("    public List<ShadeExecution> shadeExecutions() {\n");
-            sb.append("        return List.of(\n");
-            List<ModuleInfo.ShadeExecution> shadeExecs = module.getShadeExecutions();
-            for (int i = 0; i < shadeExecs.size(); i++) {
-                ModuleInfo.ShadeExecution exec = shadeExecs.get(i);
-                sb.append("            new ShadeExecution(")
-                        .append(quote(exec.id())).append(", ")
-                        .append(exec.attached()).append(", ")
-                        .append(quoteOrNull(exec.classifier())).append(",\n");
-                sb.append("                List.of(");
-                if (!exec.includeArtifacts().isEmpty()) {
-                    sb.append(exec.includeArtifacts().stream()
-                            .map(this::quote).collect(Collectors.joining(", ")));
-                }
-                sb.append("),\n");
-                sb.append("                List.of(");
-                if (!exec.filters().isEmpty()) {
-                    sb.append("\n");
-                    for (int j = 0; j < exec.filters().size(); j++) {
-                        ModuleInfo.ShadeFilter filter = exec.filters().get(j);
-                        sb.append("                    new ShadeFilter(").append(quote(filter.artifact())).append(", List.of(");
-                        sb.append(filter.excludes().stream()
-                                .map(this::quote).collect(Collectors.joining(", ")));
-                        sb.append("))");
-                        if (j < exec.filters().size() - 1) sb.append(",");
-                        sb.append("\n");
-                    }
-                    sb.append("                ");
-                }
-                sb.append("),\n");
-                sb.append("                ").append(quoteOrNull(exec.mainClass())).append(")");
-                if (i < shadeExecs.size() - 1) sb.append(",");
-                sb.append("\n");
-            }
-            sb.append("        );\n");
-            sb.append("    }\n");
-        }
-
-        if (!module.getSourceGenerators().isEmpty()) {
-            sb.append("\n    @Override\n");
-            sb.append("    public List<SourceGenerator> sourceGenerators() {\n");
-            sb.append("        return List.of(\n");
-            List<ModuleInfo.SourceGenerator> generators = module.getSourceGenerators();
-            for (int i = 0; i < generators.size(); i++) {
-                ModuleInfo.SourceGenerator g = generators.get(i);
-                sb.append("            new SourceGenerator(").append(quote(g.mainClass())).append(", List.of(")
-                        .append(g.arguments().stream().map(this::quote).collect(Collectors.joining(", ")))
-                        .append("), ").append(quoteOrNull(g.skipWhen())).append(")");
-                if (i < generators.size() - 1) sb.append(",");
-                sb.append("\n");
-            }
-            sb.append("        );\n");
-            sb.append("    }\n\n");
-            sb.append("    @Override\n");
-            sb.append("    public List<String> generatorClasspath() {\n");
-            sb.append("        return List.of(\n");
-            sb.append(formatStringList(makePortable(module.getGeneratorClasspath()), "            "));
-            sb.append("        );\n");
-            sb.append("    }\n");
-        }
-
-        if (!module.getAddedSourceDirs().isEmpty()) {
-            sb.append("\n    @Override\n");
-            sb.append("    public List<String> addedSourceDirs() {\n");
-            sb.append("        return List.of(\n");
-            sb.append(formatStringList(module.getAddedSourceDirs(), "            "));
-            sb.append("        );\n");
-            sb.append("    }\n");
-        }
-
-        sb.append("}\n");
-        return sb.toString();
-    }
-
-    private String quoteOrNull(String s) {
-        return s != null ? quote(s) : "null";
     }
 
     private String generateMainClass(List<ModuleInfo> modules, String buildName) {
@@ -796,25 +288,52 @@ public class BuildFileGenerator {
         if (ktfmtClasspath != null) {
             sb.append("        runtime.setKtfmtClasspath(").append(quote(ktfmtClasspath)).append(");\n");
         }
+        sb.append("        ModuleStates states = ModuleStates.open(java.nio.file.Path.of(")
+                .append(quote(stateFile().toString())).append("));\n");
         sb.append("        List<ModuleBuild> modules = new ArrayList<>();\n");
-
-        for (ModuleInfo module : modules) {
-            String className = sanitizeClassName(module.getArtifactId());
-            sb.append("        modules.add(new Build_").append(className).append("(runtime));\n");
-        }
+        sb.append("        for (String id : ids(").append(idChunks(modules)).append(")) {\n");
+        sb.append("            modules.add(states.create(id, runtime));\n");
+        sb.append("        }\n");
 
         if (!preBuiltModules.isEmpty()) {
             sb.append("\n        // Bootstrap modules (already built in bootstrap phase)\n");
-            for (ModuleInfo module : preBuiltModules) {
-                String className = sanitizeClassName(module.getArtifactId());
-                sb.append("        { ModuleBuild m = new Build_").append(className).append("(runtime); m.markPreBuilt(); modules.add(m); }\n");
-            }
+            sb.append("        for (String id : ids(").append(idChunks(preBuiltModules)).append(")) {\n");
+            sb.append("            ModuleBuild m = states.create(id, runtime);\n");
+            sb.append("            m.markPreBuilt();\n");
+            sb.append("            modules.add(m);\n");
+            sb.append("        }\n");
         }
 
         sb.append("\n        new BuildOrchestrator(threads).setLogName(").append(quote(buildName)).append(").buildAll(modules, projects, alsoMake, incremental, noKotlin);\n");
+        sb.append("    }\n\n");
+        sb.append("    /** The ids are given in chunks, since a constant can't hold more than 64 KB. */\n");
+        sb.append("    private static List<String> ids(String... chunks) {\n");
+        sb.append("        List<String> ids = new ArrayList<>();\n");
+        sb.append("        for (String chunk : chunks) {\n");
+        sb.append("            for (String id : chunk.split(\"\\n\")) {\n");
+        sb.append("                if (!id.isEmpty()) ids.add(id);\n");
+        sb.append("            }\n");
+        sb.append("        }\n");
+        sb.append("        return ids;\n");
         sb.append("    }\n");
         sb.append("}\n");
         return sb.toString();
+    }
+
+    /** The ids of the modules as string literals, each holding as many ids as fit comfortably in a constant. */
+    private String idChunks(List<ModuleInfo> modules) {
+        List<String> chunks = new ArrayList<>();
+        StringBuilder chunk = new StringBuilder();
+        for (ModuleInfo m : modules) {
+            String id = m.getGroupId() + ":" + m.getArtifactId();
+            if (chunk.length() + id.length() > 20_000) {
+                chunks.add(quote(chunk.toString()));
+                chunk.setLength(0);
+            }
+            chunk.append(id).append('\n');
+        }
+        chunks.add(quote(chunk.toString()));
+        return String.join(",\n                ", chunks);
     }
 
     public void compileAndPackage() throws IOException {
@@ -835,24 +354,16 @@ public class BuildFileGenerator {
                     "Build the runtime module first: mvn install -f runtime/");
         }
 
+        boolean unchanged = reused && !mainChanged && Files.exists(buildJar);
+        if (unchanged) {
+            // nothing changed: the jar is current, just record that it was checked
+            Files.setLastModifiedTime(buildJar, java.nio.file.attribute.FileTime.from(java.time.Instant.now()));
+            return;
+        }
+        deleteClassFiles(classesDir, "Build");
         List<Path> sourceFiles;
-        boolean partial = changedSources != null && Files.exists(buildJar);
-        if (partial) {
-            if (changedSources.isEmpty()) {
-                // nothing changed: the jar is current, just record that it was checked
-                Files.setLastModifiedTime(buildJar, java.nio.file.attribute.FileTime.from(java.time.Instant.now()));
-                return;
-            }
-            sourceFiles = new ArrayList<>(changedSources);
-            for (Path changed : sourceFiles) {
-                deleteClassFiles(classesDir, changed.getFileName().toString().replaceFirst("\\.java$", ""));
-            }
-        } else {
-            try (var stream = Files.walk(srcDir)) {
-                sourceFiles = stream
-                        .filter(p -> p.toString().endsWith(".java"))
-                        .toList();
-            }
+        try (var stream = Files.walk(srcDir)) {
+            sourceFiles = stream.filter(p -> p.toString().endsWith(".java")).toList();
         }
 
         JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
@@ -861,10 +372,6 @@ public class BuildFileGenerator {
         }
 
         String classpath = String.join(File.pathSeparator, runtimeClasspath);
-        if (partial) {
-            // the classes that were not recompiled are what the changed ones (Build.java in particular) refer to
-            classpath += File.pathSeparator + classesDir;
-        }
 
         var diagnostics = new javax.tools.DiagnosticCollector<javax.tools.JavaFileObject>();
         try (var fileManager = compiler.getStandardFileManager(diagnostics, null, null)) {
@@ -1165,32 +672,8 @@ public class BuildFileGenerator {
         });
     }
 
-    private String formatStringList(List<String> items, String indent) {
-        if (items.isEmpty()) {
-            return "";
-        }
-        return items.stream()
-                .map(s -> indent + quote(s))
-                .collect(Collectors.joining(",\n", "", "\n"));
-    }
-
     private String quote(String s) {
         return "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r") + "\"";
-    }
-
-    private String escapeTextBlock(String s) {
-        return s.replace("\\", "\\\\").replace("\n", "\\n").replace("\r", "");
-    }
-
-    private List<String> makePortable(List<String> paths) {
-        String home = System.getProperty("user.home");
-        return paths.stream()
-                .map(p -> p.startsWith(home + "/") ? "$HOME" + p.substring(home.length()) : p)
-                .toList();
-    }
-
-    private String sanitizeClassName(String artifactId) {
-        return artifactId.replace('-', '_').replace('.', '_');
     }
 
     private static void deleteDirectory(Path dir) throws IOException {
