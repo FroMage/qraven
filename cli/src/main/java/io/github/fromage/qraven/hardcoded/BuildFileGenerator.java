@@ -486,7 +486,7 @@ public class BuildFileGenerator {
                     "com.google.protobuf", "protoc", protocVersion, classifier, "exe");
             if (resolved != null) {
                 protocPath = resolved.toString();
-                System.out.println("Resolved protoc " + protocVersion + " via download");
+                Status.line("Resolved protoc " + protocVersion + " via download");
             }
         }
 
@@ -512,18 +512,18 @@ public class BuildFileGenerator {
                         "io.grpc", "protoc-gen-grpc-java", grpcVersion, classifier, "exe");
                 if (resolved != null) {
                     grpcJavaPluginPath = resolved.toString();
-                    System.out.println("Resolved protoc-gen-grpc-java " + grpcVersion + " via download");
+                    Status.line("Resolved protoc-gen-grpc-java " + grpcVersion + " via download");
                 }
             }
         }
 
         if (protocPath != null) {
-            System.out.println("Resolved protoc: " + protocPath);
+            Status.line("Resolved protoc: " + protocPath);
         } else {
-            System.err.println("WARNING: protoc binary not found in ~/.m2/repository");
+            Status.warning("WARNING: protoc binary not found in ~/.m2/repository");
         }
         if (needsGrpc && grpcJavaPluginPath != null) {
-            System.out.println("Resolved protoc-gen-grpc-java: " + grpcJavaPluginPath);
+            Status.line("Resolved protoc-gen-grpc-java: " + grpcJavaPluginPath);
         }
     }
 
@@ -547,7 +547,7 @@ public class BuildFileGenerator {
             if (antlrVersion != null) break;
         }
         if (antlrVersion == null) {
-            System.err.println("WARNING: could not determine ANTLR4 version from classpath");
+            Status.warning("WARNING: could not determine ANTLR4 version from classpath");
             return;
         }
 
@@ -555,9 +555,9 @@ public class BuildFileGenerator {
                 "org.antlr", "antlr4", antlrVersion, null);
         if (!jars.isEmpty()) {
             antlrToolClasspath = String.join(java.io.File.pathSeparator, jars);
-            System.out.println("Resolved ANTLR4 tool classpath (" + antlrVersion + ")");
+            Status.line("Resolved ANTLR4 tool classpath (" + antlrVersion + ")");
         } else {
-            System.err.println("WARNING: could not resolve ANTLR4 tool artifact org.antlr:antlr4:" + antlrVersion);
+            Status.warning("WARNING: could not resolve ANTLR4 tool artifact org.antlr:antlr4:" + antlrVersion);
         }
     }
 
@@ -588,10 +588,10 @@ public class BuildFileGenerator {
                 .toList();
         if (jdtJars.size() >= 4) {
             jdtFormatterClasspath = String.join(java.io.File.pathSeparator, jdtJars);
-            System.out.println("Resolved Eclipse JDT formatter classpath (" + version + ")");
+            Status.line("Resolved Eclipse JDT formatter classpath (" + version + ")");
         } else if (!jdtJars.isEmpty()) {
             jdtFormatterClasspath = String.join(java.io.File.pathSeparator, jdtJars);
-            System.out.println("Resolved Eclipse JDT formatter classpath (" + version + ", " + jdtJars.size() + " jars)");
+            Status.line("Resolved Eclipse JDT formatter classpath (" + version + ", " + jdtJars.size() + " jars)");
         }
     }
 
@@ -633,10 +633,10 @@ public class BuildFileGenerator {
                     "com.facebook", "ktfmt", ktfmtVersion, null);
             if (!jars.isEmpty()) {
                 ktfmtClasspath = String.join(java.io.File.pathSeparator, jars);
-                System.out.println("Resolved ktfmt classpath (" + ktfmtVersion + ")");
+                Status.line("Resolved ktfmt classpath (" + ktfmtVersion + ")");
             }
         } catch (Exception e) {
-            System.err.println("WARNING: could not resolve ktfmt classpath: " + e.getMessage());
+            Status.warning("WARNING: could not resolve ktfmt classpath: " + e.getMessage());
         }
     }
 

@@ -237,7 +237,7 @@ public class DependencyResolver {
         if (warningConsumer != null) {
             warningConsumer.accept(message);
         } else {
-            System.err.println(message);
+            Status.warning(message);
         }
     }
 

@@ -1101,9 +1101,9 @@ public class PomParser {
                     "org.jetbrains.kotlin", artifactId, kotlinVersion, null);
             if (!jars.isEmpty()) {
                 jar = Path.of(jars.get(0));
-                System.out.println("Resolved Kotlin compiler plugin " + pluginName + " (" + kotlinVersion + ")");
+                Status.line("Resolved Kotlin compiler plugin " + pluginName + " (" + kotlinVersion + ")");
             } else {
-                System.err.println("WARNING: could not resolve Kotlin compiler plugin " + pluginName
+                Status.warning("WARNING: could not resolve Kotlin compiler plugin " + pluginName
                         + " (org.jetbrains.kotlin:" + artifactId + ":" + kotlinVersion + ")");
                 return null;
             }

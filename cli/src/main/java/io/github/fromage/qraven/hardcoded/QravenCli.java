@@ -22,7 +22,7 @@ import org.apache.maven.model.io.xpp3.MavenXpp3Reader;
 
 public class QravenCli {
 
-    private static final String ERASE_LINE = "\r[2K";
+    private static final String ERASE_LINE = Status.ERASE_LINE;
     private static final String RUNTIME_GROUP_ID = "io.github.fromage.qraven";
     private static final String RUNTIME_ARTIFACT_ID = "qraven-runtime";
     private static final String RUNTIME_VERSION = loadVersion();
