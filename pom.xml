@@ -34,6 +34,7 @@
     </scm>
 
     <modules>
+        <module>model</module>
         <module>runtime</module>
         <module>cli</module>
         <module>tests</module>

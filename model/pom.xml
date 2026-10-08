@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>io.github.fromage.qraven</groupId>
+        <artifactId>qraven-parent</artifactId>
+        <version>1.9-SNAPSHOT</version>
+    </parent>
+    <artifactId>qraven-model</artifactId>
+    <name>Qraven - Model</name>
+    <description>Qraven Model - what generation learns about each module, and how it is stored for the build</description>
+    <url>https://github.com/FroMage/qraven</url>
+
+    <properties>
+        <maven.version>3.9.6</maven.version>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.apache.maven</groupId>
+            <artifactId>maven-model</artifactId>
+            <version>${maven.version}</version>
+        </dependency>
+    </dependencies>
+</project>
