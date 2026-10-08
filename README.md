@@ -160,8 +160,8 @@ only for those. The steps that combine several modules are cheap and always redo
 reflected in the modules that depend on it. Only the generated build files that actually differ are rewritten and
 recompiled.
 
-On Quarkus (1,443 modules), editing a leaf module's pom takes about 5 s instead of about 25 s, and editing a widely
-used extension such as `quarkus-arc` about 8 s. The result is checked to be identical to a full regeneration: a test
+On Quarkus (1,443 modules), generating after editing a pom takes about 2.5 s instead of about 18 s, whether it is a
+leaf module's or a widely used extension's such as `quarkus-arc`; the modules that need it are then rebuilt (see below). The result is checked to be identical to a full regeneration: a test
 generates a project, edits it, regenerates incrementally and then fully, and compares every generated file and every
 module's stored data.
 
