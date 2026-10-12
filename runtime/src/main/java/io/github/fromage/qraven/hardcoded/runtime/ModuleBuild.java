@@ -116,6 +116,10 @@ public abstract class ModuleBuild {
     public abstract boolean hasExtensionPlugin();
     /** Whether the project declares impsort-maven-plugin; imports are only sorted when it does. */
     public boolean hasImpsortPlugin() { return false; }
+    /** Whether the project declares spotless-maven-plugin; Kotlin sources are only formatted when it does. */
+    public boolean hasSpotlessPlugin() { return false; }
+    /** Whether the project declares maven-enforcer-plugin; banned dependencies are only checked when it does. */
+    public boolean hasEnforcerPlugin() { return false; }
     public abstract String extensionValidationSkipWhen();
     public abstract Map<String, String> extensionDescriptorProperties();
     public abstract String extensionProjectName();
@@ -390,7 +394,7 @@ public abstract class ModuleBuild {
                 if (progress != null) progress.moduleStarted(threadIdx, artifactId(), "resources", 0);
                 long t = System.currentTimeMillis();
 
-                if (!skipFormat) {
+                if (!skipFormat && hasEnforcerPlugin()) {
                     if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "enforcer", 0);
                     t = System.currentTimeMillis();
                     List<String> violations = runtime.getBannedDependencyChecker().check(fullClasspath);
@@ -477,7 +481,7 @@ public abstract class ModuleBuild {
                     recordPhase("antlr", t);
                 }
 
-                if (hasKotlinSources() && !skipFormat) {
+                if (hasKotlinSources() && !skipFormat && hasSpotlessPlugin()) {
                     if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "ktfmt", 0);
                     t = System.currentTimeMillis();
                     runtime.getCodeStyleHelper().formatKotlinFiles(kotlinSourceDir());

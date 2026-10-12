@@ -78,6 +78,8 @@ public class ModuleInfo {
     private String formatterPluginVersion;
     private String spotlessPluginVersion;
     private boolean hasImpsortPlugin;
+    private boolean hasSpotlessPlugin;
+    private boolean hasEnforcerPlugin;
     private Map<String, String> allReactorExtensionDeployments = new LinkedHashMap<>();
     private Map<String, Set<String>> reactorDependencyExclusions = new LinkedHashMap<>();
     private List<String> kotlinCompilerPlugins = new ArrayList<>();
@@ -317,6 +319,12 @@ public class ModuleInfo {
 
     public boolean isHasImpsortPlugin() { return hasImpsortPlugin; }
     public void setHasImpsortPlugin(boolean hasImpsortPlugin) { this.hasImpsortPlugin = hasImpsortPlugin; }
+
+    public boolean isHasSpotlessPlugin() { return hasSpotlessPlugin; }
+    public void setHasSpotlessPlugin(boolean hasSpotlessPlugin) { this.hasSpotlessPlugin = hasSpotlessPlugin; }
+
+    public boolean isHasEnforcerPlugin() { return hasEnforcerPlugin; }
+    public void setHasEnforcerPlugin(boolean hasEnforcerPlugin) { this.hasEnforcerPlugin = hasEnforcerPlugin; }
 
     public String getSpotlessPluginVersion() { return spotlessPluginVersion; }
     public void setSpotlessPluginVersion(String spotlessPluginVersion) { this.spotlessPluginVersion = spotlessPluginVersion; }

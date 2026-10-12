@@ -238,6 +238,7 @@ public class BuildFileGenerator {
         sb.append("                System.out.println(\"  -pl, --projects <list>    Comma-separated list of module artifactIds to build\");\n");
         sb.append("                System.out.println(\"  -am, --also-make          Build dependencies of modules specified by -pl\");\n");
         sb.append("                System.out.println(\"  -i, --incremental         Only rebuild modules with changed sources\");\n");
+        sb.append("                System.out.println(\"      --no-format           Don't format sources, sort imports or check banned dependencies (same as -Dno-format)\");\n");
         sb.append("                System.out.println(\"      --no-kotlin           Skip Kotlin modules and their dependents\");\n");
         sb.append("                System.out.println(\"      --no-fast-kotlin      Disable JIT warmup for Kotlin compiler (enabled by default)\");\n");
         sb.append("                System.out.println(\"  -D<key>=<value>           Set a system property\");\n");
@@ -260,6 +261,8 @@ public class BuildFileGenerator {
         sb.append("                alsoMake = true;\n");
         sb.append("            } else if (\"--incremental\".equals(args[i]) || \"-i\".equals(args[i])) {\n");
         sb.append("                incremental = true;\n");
+        sb.append("            } else if (\"--no-format\".equals(args[i])) {\n");
+        sb.append("                System.setProperty(\"no-format\", \"true\");\n");
         sb.append("            } else if (\"--no-kotlin\".equals(args[i])) {\n");
         sb.append("                noKotlin = true;\n");
         sb.append("            } else if (\"--no-fast-kotlin\".equals(args[i])) {\n");

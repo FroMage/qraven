@@ -103,6 +103,7 @@ Build options:
   -i, --incremental         Only rebuild modules with changed sources; when poms changed, also only
                             regenerate the modules they affect
   --no-kotlin               Skip Kotlin modules and their dependents
+  --no-format               Don't format sources, sort imports or check banned dependencies (same as -Dno-format)
   --no-fast-kotlin          Disable JIT warmup for Kotlin compiler (enabled by default)
   -D<key>=<value>           Set a system property
 
@@ -453,12 +454,12 @@ Qraven replicates the behavior of the following Maven plugins during build:
 - **quarkus-platform-bom-maven-plugin:flatten-platform-bom** -- Replaces the installed BOM POM with its flattened form: only the project metadata and the effective (import-expanded) `dependencyManagement`, minus `<excludeScopes>` and `<excludeArtifactKeys>` (globs), sorted alphabetically with the platform descriptor and properties first. Disabled with `-DskipPlatformBom`.
 
 ### Code style
-- **formatter-maven-plugin** (Eclipse JDT) -- Formats Java source files in-place using the project's `eclipse-format.xml` config. The Eclipse JDT formatter and its dependencies are loaded at runtime from `~/.m2/repository` via a separate classloader. Disabled with `-Dno-format`.
-- **impsort-maven-plugin** -- Sorts Java imports into groups: `java.`, `javax.`, `jakarta.`, `org.`, `com.`, other, then static imports. Normalizes blank lines between groups. Implemented natively (no external dependencies). Only runs when the project declares the plugin. Disabled with `-Dno-format`.
-- **spotless-maven-plugin** (ktfmt) -- Formats Kotlin source files using ktfmt with `KOTLINLANG` style. The ktfmt library and its dependencies are loaded at runtime from `~/.m2/repository`. Disabled with `-Dno-format`.
+- **formatter-maven-plugin** (Eclipse JDT) -- Formats Java source files in-place using the project's `eclipse-format.xml` config. The Eclipse JDT formatter and its dependencies are loaded at runtime from `~/.m2/repository` via a separate classloader. Disabled with `-Dno-format` or `--no-format`.
+- **impsort-maven-plugin** -- Sorts Java imports into groups: `java.`, `javax.`, `jakarta.`, `org.`, `com.`, other, then static imports. Normalizes blank lines between groups. Implemented natively (no external dependencies). Only runs when the project declares the plugin. Disabled with `-Dno-format` or `--no-format`.
+- **spotless-maven-plugin** (ktfmt) -- Formats Kotlin source files using ktfmt with `KOTLINLANG` style. The ktfmt library and its dependencies are loaded at runtime from `~/.m2/repository`. Only runs when the project declares the plugin. Disabled with `-Dno-format` or `--no-format`.
 
 ### Dependency enforcement
-- **maven-enforcer-plugin** (simple) -- Checks compile classpath against Quarkus banned dependency lists (`quarkus-banned-dependencies.xml`, `quarkus-banned-dependencies-okhttp.xml`). Supports exact GA matches (`groupId:artifactId`), group wildcards (`groupId:*`), and prefix patterns (`groupId:prefix-*`). Reports violations as warnings. Disabled with `-Dno-format`.
+- **maven-enforcer-plugin** (simple) -- Checks compile classpath against Quarkus banned dependency lists (`quarkus-banned-dependencies.xml`, `quarkus-banned-dependencies-okhttp.xml`). Supports exact GA matches (`groupId:artifactId`), group wildcards (`groupId:*`), and prefix patterns (`groupId:prefix-*`). Reports violations as warnings. Only runs when the project declares the plugin. Disabled with `-Dno-format` or `--no-format`.
 
 ### Uber-jar / shading
 - **maven-shade-plugin** -- Merges dependency JARs into the module's own JAR after packaging. Supports `<artifactSet>/<includes>` to select which dependencies to merge (empty = all), per-artifact `<filters>/<excludes>` with glob patterns (`**` recursive, `*` single-level), `<shadedArtifactAttached>` to create a classified artifact instead of replacing the main JAR, `<shadedClassifierName>` for the classifier, and `ManifestResourceTransformer` for setting the main class. Classified artifacts are installed to `~/.m2/repository` alongside the main JAR. Used by `quarkus-grpc-protoc-plugin` (two executions: one shading jprotoc into the main artifact, one creating a `-shaded.jar` fat jar for the gRPC code generator) and `quarkus-bootstrap-gradle-resolver` (shading gradle-tooling-api).

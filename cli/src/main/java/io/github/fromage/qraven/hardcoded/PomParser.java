@@ -1399,8 +1399,13 @@ public class PomParser {
                     && "net.revelc.code".equals(plugin.getGroupId())) {
                 info.setHasImpsortPlugin(true);
             }
+            if ("maven-enforcer-plugin".equals(plugin.getArtifactId())
+                    && "org.apache.maven.plugins".equals(plugin.getGroupId())) {
+                info.setHasEnforcerPlugin(true);
+            }
             if ("spotless-maven-plugin".equals(plugin.getArtifactId())
                     && "com.diffplug.spotless".equals(plugin.getGroupId())) {
+                info.setHasSpotlessPlugin(true);
                 if (plugin.getVersion() != null && !plugin.getVersion().isBlank()) {
                     info.setSpotlessPluginVersion(plugin.getVersion());
                 }

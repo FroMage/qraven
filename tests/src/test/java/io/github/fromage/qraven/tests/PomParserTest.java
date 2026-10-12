@@ -352,16 +352,22 @@ class PomParserTest {
     }
 
     @Nested
-    class ImportSorting {
+    class CodeStylePlugins {
 
         @Test
-        void detectsTheImpsortPlugin() {
-            assertThat(parseProject("impsort-project").get(0).isHasImpsortPlugin()).isTrue();
+        void detectsTheCodeStylePluginsTheProjectDeclares() {
+            ModuleInfo m = parseProject("formatting-project").get(0);
+            assertThat(m.isHasImpsortPlugin()).isTrue();
+            assertThat(m.isHasSpotlessPlugin()).isTrue();
+            assertThat(m.isHasEnforcerPlugin()).isTrue();
         }
 
         @Test
-        void doesNotEnableItForAProjectThatDoesNotDeclareIt() {
-            assertThat(parseProject("simple-jar").get(0).isHasImpsortPlugin()).isFalse();
+        void doesNotEnableThemForAProjectThatDeclaresNone() {
+            ModuleInfo m = parseProject("simple-jar").get(0);
+            assertThat(m.isHasImpsortPlugin()).isFalse();
+            assertThat(m.isHasSpotlessPlugin()).isFalse();
+            assertThat(m.isHasEnforcerPlugin()).isFalse();
         }
     }
 

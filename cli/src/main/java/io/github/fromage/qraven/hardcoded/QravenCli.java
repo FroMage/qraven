@@ -201,6 +201,7 @@ public class QravenCli {
                     commonBuildArgs.add("-i");
                     incremental = true;
                 }
+                case "--no-format" -> commonBuildArgs.add("-Dno-format");
                 case "--no-kotlin" -> commonBuildArgs.add("--no-kotlin");
                 case "--no-fast-kotlin" -> commonBuildArgs.add("--no-fast-kotlin");
                 default -> {
@@ -729,6 +730,8 @@ public class QravenCli {
                   -i, --incremental         Only rebuild modules with changed sources, and when poms changed,
                                             only regenerate the modules they affect (falls back to a full
                                             regeneration when that isn't possible; see --force-generate)
+                  --no-format               Don't format sources, sort imports or check banned dependencies
+                                            (same as -Dno-format)
                   --no-kotlin               Skip Kotlin modules and their dependents
                   --no-fast-kotlin          Disable JIT warmup for Kotlin compiler (enabled by default)
                   -D<key>=<value>           Set a system property

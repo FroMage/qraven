@@ -44,6 +44,8 @@ public final class DataModuleBuild extends ModuleBuild {
     private final String flattenedPomFile;
     private final boolean hasExtensionPlugin;
     private final boolean hasImpsortPlugin;
+    private final boolean hasSpotlessPlugin;
+    private final boolean hasEnforcerPlugin;
     private final String extensionValidationSkipWhen;
     private final String[][] resourceDirs;
     private final Map<String, String> filterProperties;
@@ -123,6 +125,8 @@ public final class DataModuleBuild extends ModuleBuild {
                 : flattenedPomsDir.resolve(m.getArtifactId() + "-" + m.getVersion() + ".pom").toString();
         hasExtensionPlugin = m.isHasExtensionPlugin();
         hasImpsortPlugin = m.isHasImpsortPlugin();
+        hasSpotlessPlugin = m.isHasSpotlessPlugin();
+        hasEnforcerPlugin = m.isHasEnforcerPlugin();
         extensionValidationSkipWhen = m.getExtensionValidationSkipWhen();
 
         resourceDirs = new String[m.getResourceDirs().size()][];
@@ -238,6 +242,8 @@ public final class DataModuleBuild extends ModuleBuild {
     @Override public String flattenedPomFile() { return flattenedPomFile; }
     @Override public boolean hasExtensionPlugin() { return hasExtensionPlugin; }
     @Override public boolean hasImpsortPlugin() { return hasImpsortPlugin; }
+    @Override public boolean hasSpotlessPlugin() { return hasSpotlessPlugin; }
+    @Override public boolean hasEnforcerPlugin() { return hasEnforcerPlugin; }
     @Override public String extensionValidationSkipWhen() { return extensionValidationSkipWhen; }
     @Override public String[][] resourceDirs() { return resourceDirs; }
     @Override public Map<String, String> filterProperties() { return filterProperties; }
@@ -312,7 +318,7 @@ public final class DataModuleBuild extends ModuleBuild {
                 hasJavaSources, hasKotlinSources, hasTestJavaSources, hasTestKotlinSources, hasProtobufSources,
                 hasTestProtobufSources, protobufUsesGrpc, protobufUsesMutiny, hasAntlrSources, antlrVisitor,
                 needsJandexIndex, platformPropertiesFileName, flattenedPomFile, hasExtensionPlugin,
-                hasImpsortPlugin,
+                hasImpsortPlugin, hasSpotlessPlugin, hasEnforcerPlugin,
                 extensionValidationSkipWhen, resourceDirs, filterProperties, manifestEntries, compileClasspath,
                 optionalCompileClasspath, testCompileClasspath, annotationProcessorPaths, apCacheable, compilerArgs,
                 moduleDependencyIds, optionalModuleDependencyIds, testModuleDependencyIds, testJarModuleDependencyIds,
