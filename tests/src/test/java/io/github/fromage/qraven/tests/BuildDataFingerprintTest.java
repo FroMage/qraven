@@ -197,7 +197,7 @@ class BuildDataFingerprintTest {
         Path parent = project.resolve("pom.xml");
         Files.writeString(parent, Files.readString(parent).replace(
                 "<maven.compiler.release>17</maven.compiler.release>",
-                "<maven.compiler.release>21</maven.compiler.release>"));
+                "<maven.compiler.release>11</maven.compiler.release>"));
 
         Run run = build(project);
 
