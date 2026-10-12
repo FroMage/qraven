@@ -77,6 +77,7 @@ public class ModuleInfo {
     private String quarkusGrpcVersion;
     private String formatterPluginVersion;
     private String spotlessPluginVersion;
+    private boolean hasImpsortPlugin;
     private Map<String, String> allReactorExtensionDeployments = new LinkedHashMap<>();
     private Map<String, Set<String>> reactorDependencyExclusions = new LinkedHashMap<>();
     private List<String> kotlinCompilerPlugins = new ArrayList<>();
@@ -313,6 +314,9 @@ public class ModuleInfo {
 
     public String getFormatterPluginVersion() { return formatterPluginVersion; }
     public void setFormatterPluginVersion(String formatterPluginVersion) { this.formatterPluginVersion = formatterPluginVersion; }
+
+    public boolean isHasImpsortPlugin() { return hasImpsortPlugin; }
+    public void setHasImpsortPlugin(boolean hasImpsortPlugin) { this.hasImpsortPlugin = hasImpsortPlugin; }
 
     public String getSpotlessPluginVersion() { return spotlessPluginVersion; }
     public void setSpotlessPluginVersion(String spotlessPluginVersion) { this.spotlessPluginVersion = spotlessPluginVersion; }

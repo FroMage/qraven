@@ -114,6 +114,8 @@ public abstract class ModuleBuild {
     public abstract List<String> moduleDependencyIds();
     public abstract List<String> optionalModuleDependencyIds();
     public abstract boolean hasExtensionPlugin();
+    /** Whether the project declares impsort-maven-plugin; imports are only sorted when it does. */
+    public boolean hasImpsortPlugin() { return false; }
     public abstract String extensionValidationSkipWhen();
     public abstract Map<String, String> extensionDescriptorProperties();
     public abstract String extensionProjectName();
@@ -510,7 +512,7 @@ public abstract class ModuleBuild {
                     t = System.currentTimeMillis();
                     CodeStyleHelper codeStyle = runtime.getCodeStyleHelper();
                     codeStyle.formatJavaFiles(sourceDir());
-                    codeStyle.sortImports(sourceDir());
+                    if (hasImpsortPlugin()) codeStyle.sortImports(sourceDir());
                     recordPhase("format", t);
                 }
 
@@ -832,7 +834,7 @@ public abstract class ModuleBuild {
             t = System.currentTimeMillis();
             CodeStyleHelper codeStyle = runtime.getCodeStyleHelper();
             codeStyle.formatJavaFiles(testSourceDir());
-            codeStyle.sortImports(testSourceDir());
+            if (hasImpsortPlugin()) codeStyle.sortImports(testSourceDir());
             recordPhase("test-format", t);
         }
 

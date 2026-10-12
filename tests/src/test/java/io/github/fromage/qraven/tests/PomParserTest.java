@@ -352,6 +352,20 @@ class PomParserTest {
     }
 
     @Nested
+    class ImportSorting {
+
+        @Test
+        void detectsTheImpsortPlugin() {
+            assertThat(parseProject("impsort-project").get(0).isHasImpsortPlugin()).isTrue();
+        }
+
+        @Test
+        void doesNotEnableItForAProjectThatDoesNotDeclareIt() {
+            assertThat(parseProject("simple-jar").get(0).isHasImpsortPlugin()).isFalse();
+        }
+    }
+
+    @Nested
     class ShadeProject {
 
         static List<ModuleInfo> modules;

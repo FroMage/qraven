@@ -1395,6 +1395,10 @@ public class PomParser {
                     info.setFormatterPluginVersion(plugin.getVersion());
                 }
             }
+            if ("impsort-maven-plugin".equals(plugin.getArtifactId())
+                    && "net.revelc.code".equals(plugin.getGroupId())) {
+                info.setHasImpsortPlugin(true);
+            }
             if ("spotless-maven-plugin".equals(plugin.getArtifactId())
                     && "com.diffplug.spotless".equals(plugin.getGroupId())) {
                 if (plugin.getVersion() != null && !plugin.getVersion().isBlank()) {

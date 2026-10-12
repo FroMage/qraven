@@ -43,6 +43,7 @@ public final class DataModuleBuild extends ModuleBuild {
     private final String platformPropertiesFileName;
     private final String flattenedPomFile;
     private final boolean hasExtensionPlugin;
+    private final boolean hasImpsortPlugin;
     private final String extensionValidationSkipWhen;
     private final String[][] resourceDirs;
     private final Map<String, String> filterProperties;
@@ -121,6 +122,7 @@ public final class DataModuleBuild extends ModuleBuild {
         flattenedPomFile = m.getFlattenedBomModel() == null ? null
                 : flattenedPomsDir.resolve(m.getArtifactId() + "-" + m.getVersion() + ".pom").toString();
         hasExtensionPlugin = m.isHasExtensionPlugin();
+        hasImpsortPlugin = m.isHasImpsortPlugin();
         extensionValidationSkipWhen = m.getExtensionValidationSkipWhen();
 
         resourceDirs = new String[m.getResourceDirs().size()][];
@@ -235,6 +237,7 @@ public final class DataModuleBuild extends ModuleBuild {
     @Override public String platformPropertiesFileName() { return platformPropertiesFileName; }
     @Override public String flattenedPomFile() { return flattenedPomFile; }
     @Override public boolean hasExtensionPlugin() { return hasExtensionPlugin; }
+    @Override public boolean hasImpsortPlugin() { return hasImpsortPlugin; }
     @Override public String extensionValidationSkipWhen() { return extensionValidationSkipWhen; }
     @Override public String[][] resourceDirs() { return resourceDirs; }
     @Override public Map<String, String> filterProperties() { return filterProperties; }
@@ -309,6 +312,7 @@ public final class DataModuleBuild extends ModuleBuild {
                 hasJavaSources, hasKotlinSources, hasTestJavaSources, hasTestKotlinSources, hasProtobufSources,
                 hasTestProtobufSources, protobufUsesGrpc, protobufUsesMutiny, hasAntlrSources, antlrVisitor,
                 needsJandexIndex, platformPropertiesFileName, flattenedPomFile, hasExtensionPlugin,
+                hasImpsortPlugin,
                 extensionValidationSkipWhen, resourceDirs, filterProperties, manifestEntries, compileClasspath,
                 optionalCompileClasspath, testCompileClasspath, annotationProcessorPaths, apCacheable, compilerArgs,
                 moduleDependencyIds, optionalModuleDependencyIds, testModuleDependencyIds, testJarModuleDependencyIds,
