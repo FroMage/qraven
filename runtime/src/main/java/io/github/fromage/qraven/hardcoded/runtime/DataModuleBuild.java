@@ -132,7 +132,8 @@ public final class DataModuleBuild extends ModuleBuild {
         resourceDirs = new String[m.getResourceDirs().size()][];
         for (int i = 0; i < resourceDirs.length; i++) {
             ModuleInfo.ResourceDir rd = m.getResourceDirs().get(i);
-            resourceDirs[i] = new String[] { rd.directory(), String.valueOf(rd.filtering()), rd.targetPath() };
+            resourceDirs[i] = new String[] { rd.directory(), String.valueOf(rd.filtering()), rd.targetPath(),
+                    String.join("\n", rd.includes()), String.join("\n", rd.excludes()) };
         }
         filterProperties = copy(m.getFilterProperties());
         manifestEntries = copy(m.getManifestEntries());

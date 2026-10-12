@@ -30,6 +30,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Pattern;
 import java.util.jar.Attributes;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
@@ -245,52 +246,58 @@ public class BuildRuntime {
     }
 
     public void copyResources(Path resourceDir, Path outputDir) {
-        if (!Files.isDirectory(resourceDir)) {
-            return;
-        }
-        try {
-            Files.walkFileTree(resourceDir, new SimpleFileVisitor<>() {
-                @Override
-                public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) throws IOException {
-                    Path target = outputDir.resolve(resourceDir.relativize(dir));
-                    Files.createDirectories(target);
-                    return FileVisitResult.CONTINUE;
-                }
+        copyResources(resourceDir, outputDir, List.of(), List.of());
+    }
 
-                @Override
-                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
-                    Path target = outputDir.resolve(resourceDir.relativize(file));
-                    Files.copy(file, target, StandardCopyOption.REPLACE_EXISTING);
-                    return FileVisitResult.CONTINUE;
-                }
-            });
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to copy resources from " + resourceDir, e);
-        }
+    public void copyResources(Path resourceDir, Path outputDir, List<String> includes, List<String> excludes) {
+        copyTree(resourceDir, outputDir, null, includes, excludes);
     }
 
     public void copyResourcesFiltered(Path resourceDir, Path outputDir, Map<String, String> properties) {
+        copyResourcesFiltered(resourceDir, outputDir, properties, List.of(), List.of());
+    }
+
+    public void copyResourcesFiltered(Path resourceDir, Path outputDir, Map<String, String> properties,
+            List<String> includes, List<String> excludes) {
+        copyTree(resourceDir, outputDir, properties, includes, excludes);
+    }
+
+    /**
+     * Copies a resource directory, substituting {@code ${key}} and {@code @key@} in text files when
+     * {@code properties} is not null, and honoring the Ant-style includes and excludes of the resource.
+     */
+    private void copyTree(Path resourceDir, Path outputDir, Map<String, String> properties,
+            List<String> includes, List<String> excludes) {
         if (!Files.isDirectory(resourceDir)) {
             return;
         }
+        List<Pattern> include = includes.stream().map(BuildRuntime::antPattern).toList();
+        List<Pattern> exclude = excludes.stream().map(BuildRuntime::antPattern).toList();
+        boolean selective = !include.isEmpty() || !exclude.isEmpty();
         try {
             Files.walkFileTree(resourceDir, new SimpleFileVisitor<>() {
                 @Override
                 public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) throws IOException {
-                    Files.createDirectories(outputDir.resolve(resourceDir.relativize(dir)));
+                    if (!selective) {
+                        Files.createDirectories(outputDir.resolve(resourceDir.relativize(dir)));
+                    }
                     return FileVisitResult.CONTINUE;
                 }
 
                 @Override
                 public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
-                    Path target = outputDir.resolve(resourceDir.relativize(file));
-                    if (isBinaryFile(file)) {
+                    Path relative = resourceDir.relativize(file);
+                    if (selective && !selected(relative, include, exclude)) {
+                        return FileVisitResult.CONTINUE;
+                    }
+                    Path target = outputDir.resolve(relative);
+                    Files.createDirectories(target.getParent());
+                    if (properties == null || isBinaryFile(file)) {
                         Files.copy(file, target, StandardCopyOption.REPLACE_EXISTING);
                     } else {
                         try {
                             String content = Files.readString(file);
-                            String filtered = interpolateProperties(content, properties);
-                            Files.writeString(target, filtered);
+                            Files.writeString(target, interpolateProperties(content, properties));
                         } catch (java.nio.charset.MalformedInputException e) {
                             Files.copy(file, target, StandardCopyOption.REPLACE_EXISTING);
                         }
@@ -299,8 +306,63 @@ public class BuildRuntime {
                 }
             });
         } catch (IOException e) {
-            throw new RuntimeException("Failed to copy filtered resources from " + resourceDir, e);
+            throw new RuntimeException("Failed to copy resources from " + resourceDir, e);
         }
+    }
+
+    private static boolean selected(Path relative, List<Pattern> include, List<Pattern> exclude) {
+        String name = relative.toString().replace(File.separatorChar, '/');
+        if (!include.isEmpty() && include.stream().noneMatch(p -> p.matcher(name).matches())) {
+            return false;
+        }
+        return exclude.stream().noneMatch(p -> p.matcher(name).matches());
+    }
+
+    /** An Ant-style pattern: {@code **} spans directories, {@code *} and {@code ?} stay within a name. */
+    static Pattern antPattern(String pattern) {
+        String p = pattern.trim().replace('\\', '/');
+        if (p.startsWith("/")) p = p.substring(1);
+        if (p.endsWith("/")) p += "**";
+        StringBuilder regex = new StringBuilder();
+        for (int i = 0; i < p.length(); i++) {
+            char c = p.charAt(i);
+            if (c == '*') {
+                if (i + 1 < p.length() && p.charAt(i + 1) == '*') {
+                    i++;
+                    if (i + 1 < p.length() && p.charAt(i + 1) == '/') {
+                        i++;
+                        regex.append("(?:.*/)?");
+                    } else {
+                        regex.append(".*");
+                    }
+                } else {
+                    regex.append("[^/]*");
+                }
+            } else if (c == '?') {
+                regex.append("[^/]");
+            } else {
+                regex.append(Pattern.quote(String.valueOf(c)));
+            }
+        }
+        return Pattern.compile(regex.toString());
+    }
+
+    private volatile java.time.Instant buildStart;
+
+    /**
+     * Maven's {@code maven.build.timestamp}: the start of the build, in UTC, formatted with
+     * {@code maven.build.timestamp.format} (default {@code yyyy-MM-dd'T'HH:mm:ss'Z'}). Every module of a
+     * build gets the same value.
+     */
+    public String buildTimestamp(String format) {
+        if (buildStart == null) {
+            synchronized (this) {
+                if (buildStart == null) buildStart = java.time.Instant.now();
+            }
+        }
+        String pattern = format == null || format.isBlank() ? "yyyy-MM-dd'T'HH:mm:ss'Z'" : format;
+        return java.time.format.DateTimeFormatter.ofPattern(pattern)
+                .withZone(java.time.ZoneOffset.UTC).format(buildStart);
     }
 
     private boolean isBinaryFile(Path file) {
@@ -310,12 +372,14 @@ public class BuildRuntime {
         return BINARY_EXTENSIONS.contains(name.substring(dot + 1).toLowerCase());
     }
 
+    /** Substitutes {@code ${key}} and {@code @key@}; Maven's two default delimiters. Unknown keys are left as is. */
     private String interpolateProperties(String content, Map<String, String> properties) {
-        if (content.indexOf("${") < 0) return content;
+        if (content.indexOf("${") < 0 && content.indexOf('@') < 0) return content;
         StringBuilder sb = new StringBuilder(content.length());
         int i = 0;
         while (i < content.length()) {
-            if (i < content.length() - 2 && content.charAt(i) == '$' && content.charAt(i + 1) == '{') {
+            char c = content.charAt(i);
+            if (c == '$' && i < content.length() - 2 && content.charAt(i + 1) == '{') {
                 int end = content.indexOf('}', i + 2);
                 if (end > 0) {
                     String key = content.substring(i + 2, end);
@@ -328,8 +392,19 @@ public class BuildRuntime {
                     i = end + 1;
                     continue;
                 }
+            } else if (c == '@') {
+                int end = content.indexOf('@', i + 1);
+                if (end > i + 1) {
+                    String key = content.substring(i + 1, end);
+                    String value = key.chars().anyMatch(Character::isWhitespace) ? null : properties.get(key);
+                    if (value != null) {
+                        sb.append(value);
+                        i = end + 1;
+                        continue;
+                    }
+                }
             }
-            sb.append(content.charAt(i));
+            sb.append(c);
             i++;
         }
         return sb.toString();

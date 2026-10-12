@@ -372,6 +372,22 @@ class PomParserTest {
     }
 
     @Nested
+    class ResourcePatterns {
+
+        @Test
+        void keepsTheFilteringIncludesAndExcludesOfEachResource() {
+            List<ModuleInfo.ResourceDir> dirs = parseProject("resource-patterns").get(0).getResourceDirs();
+
+            assertThat(dirs).hasSize(2);
+            assertThat(dirs.get(0).filtering()).isFalse();
+            assertThat(dirs.get(0).includes()).isEmpty();
+            assertThat(dirs.get(1).filtering()).isTrue();
+            assertThat(dirs.get(1).includes()).containsExactly("**/*.properties");
+            assertThat(dirs.get(1).excludes()).containsExactly("**/skipped.properties");
+        }
+    }
+
+    @Nested
     class ShadeProject {
 
         static List<ModuleInfo> modules;

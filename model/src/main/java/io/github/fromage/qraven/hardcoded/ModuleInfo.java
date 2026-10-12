@@ -97,7 +97,12 @@ public class ModuleInfo {
     /** The annotation processor paths as declared, before reactor processors' classpaths are added to them. */
     private List<String> declaredAnnotationProcessorPaths = new ArrayList<>();
 
-    public record ResourceDir(String directory, boolean filtering, String targetPath) {}
+    public record ResourceDir(String directory, boolean filtering, String targetPath,
+            List<String> includes, List<String> excludes) {
+        public ResourceDir(String directory, boolean filtering, String targetPath) {
+            this(directory, filtering, targetPath, List.of(), List.of());
+        }
+    }
     /** An exec-maven-plugin:java execution bound to generate-sources. */
     public record SourceGenerator(String mainClass, List<String> arguments, String skipWhen) {}
 

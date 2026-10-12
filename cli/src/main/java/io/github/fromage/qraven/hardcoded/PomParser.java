@@ -861,7 +861,8 @@ public class PomParser {
                 if (Files.isDirectory(baseDir.resolve(dirPath))) {
                     resourceDirs.add(new ModuleInfo.ResourceDir(
                             dirPath.toString(), resource.isFiltering(),
-                            resource.getTargetPath()));
+                            resource.getTargetPath(),
+                            List.copyOf(resource.getIncludes()), List.copyOf(resource.getExcludes())));
                 }
             }
         } else {

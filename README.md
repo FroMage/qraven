@@ -433,7 +433,7 @@ Qraven replicates the behavior of the following Maven plugins during build:
 - **build-helper-maven-plugin:add-source** -- Adds the configured directories as source roots of the compilation (and of the Kotlin compilation, for Kotlin modules).
 
 ### Resource handling
-- **maven-resources-plugin** -- Copies `src/main/resources` to `target/classes` with optional Maven-style property filtering (`${property}` interpolation). Binary file extensions are detected and copied without filtering. Supports `<targetPath>` for placing resources under a specific prefix in the output.
+- **maven-resources-plugin** -- Copies `src/main/resources` to `target/classes` with optional Maven-style property filtering: both default delimiters, `${property}` and `@property@`, are substituted from the pom's `project.*` values and properties, plus `maven.build.timestamp` (UTC, same value for the whole build, format from `maven.build.timestamp.format`). Unknown placeholders are left as they are. Binary file extensions are detected and copied without filtering. Supports `<targetPath>` for placing resources under a specific prefix in the output, and Ant-style `<includes>`/`<excludes>` on each `<resource>`.
 
 ### Indexing
 - **jandex-maven-plugin** (SmallRye Jandex / `org.jboss.jandex:jandex-maven-plugin`) -- Generates `META-INF/jandex.idx` from compiled classes.

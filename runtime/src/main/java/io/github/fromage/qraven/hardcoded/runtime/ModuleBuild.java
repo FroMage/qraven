@@ -995,6 +995,27 @@ public abstract class ModuleBuild {
         }
     }
 
+    /** The include or exclude patterns of a resource directory (newline separated at {@code index}), if any. */
+    private static List<String> patterns(String[] resourceDir, int index) {
+        if (resourceDir.length <= index || resourceDir[index] == null || resourceDir[index].isEmpty()) {
+            return List.of();
+        }
+        return List.of(resourceDir[index].split("\n"));
+    }
+
+    /**
+     * What resource filtering substitutes: the properties of the pom plus maven.build.timestamp, which Maven
+     * defines once per build. It is computed here, not at generation, so it stays out of the stored data.
+     */
+    private Map<String, String> filteringProperties() {
+        Map<String, String> properties = new HashMap<>(filterProperties());
+        if (!properties.containsKey("maven.build.timestamp")) {
+            properties.put("maven.build.timestamp",
+                    runtime.buildTimestamp(properties.get("maven.build.timestamp.format")));
+        }
+        return properties;
+    }
+
     private void copyResources() {
         for (String[] rd : resourceDirs()) {
             Path dir = runtime.getProjectRoot().resolve(baseDir()).resolve(rd[0]);
@@ -1003,10 +1024,12 @@ public abstract class ModuleBuild {
             if (rd.length > 2 && rd[2] != null) {
                 outputDir = classesDir().resolve(rd[2]);
             }
+            List<String> includes = patterns(rd, 3);
+            List<String> excludes = patterns(rd, 4);
             if (filtering) {
-                runtime.copyResourcesFiltered(dir, outputDir, filterProperties());
+                runtime.copyResourcesFiltered(dir, outputDir, filteringProperties(), includes, excludes);
             } else {
-                runtime.copyResources(dir, outputDir);
+                runtime.copyResources(dir, outputDir, includes, excludes);
             }
         }
     }

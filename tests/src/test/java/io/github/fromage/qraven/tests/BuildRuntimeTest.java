@@ -110,6 +110,45 @@ class BuildRuntimeTest {
     }
 
     @Test
+    void copyResourcesFiltered_interpolatesAtDelimitedPlaceholders(@TempDir Path workDir) throws IOException {
+        Path resourceDir = Files.createDirectories(workDir.resolve("in/META-INF"));
+        Files.writeString(resourceDir.resolve("config.properties"),
+                "id=@build.id@\nmixed=${build.id}-@build.id@\nmail=a@b.com and c@d.org\nunknown=@nope@\n");
+        Path outputDir = workDir.resolve("out");
+
+        runtime.copyResourcesFiltered(workDir.resolve("in"), outputDir, Map.of("build.id", "42"));
+
+        assertThat(Files.readString(outputDir.resolve("META-INF/config.properties")))
+                .isEqualTo("id=42\nmixed=42-42\nmail=a@b.com and c@d.org\nunknown=@nope@\n");
+    }
+
+    @Test
+    void copyResourcesFiltered_honorsIncludesAndExcludes(@TempDir Path workDir) throws IOException {
+        Path in = Files.createDirectories(workDir.resolve("in/sub"));
+        Files.writeString(in.resolve("a.xml"), "a");
+        Files.writeString(in.resolve("b.txt"), "b");
+        Files.writeString(in.resolve("c.xml"), "c");
+        Files.writeString(workDir.resolve("in/top.xml"), "top");
+        Path outputDir = workDir.resolve("out");
+
+        runtime.copyResources(workDir.resolve("in"), outputDir, List.of("**/*.xml"), List.of("**/c.xml"));
+
+        assertThat(Files.exists(outputDir.resolve("sub/a.xml"))).isTrue();
+        assertThat(Files.exists(outputDir.resolve("top.xml"))).isTrue();
+        assertThat(Files.exists(outputDir.resolve("sub/b.txt"))).isFalse();
+        assertThat(Files.exists(outputDir.resolve("sub/c.xml"))).isFalse();
+    }
+
+    @Test
+    void buildTimestamp_isUtcAndStableForTheWholeBuild() {
+        String first = runtime.buildTimestamp(null);
+
+        assertThat(first).matches("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z");
+        assertThat(runtime.buildTimestamp(null)).isEqualTo(first);
+        assertThat(runtime.buildTimestamp("yyyy")).isEqualTo(first.substring(0, 4));
+    }
+
+    @Test
     void createJar_createsValidJar(@TempDir Path workDir) throws IOException {
         Path classesDir = workDir.resolve("classes");
         Path sourceDir = TEST_PROJECTS.resolve("simple-jar/src/main/java");

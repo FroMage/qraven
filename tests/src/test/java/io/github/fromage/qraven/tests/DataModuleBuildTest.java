@@ -114,7 +114,8 @@ class DataModuleBuildTest {
         m.getResourceDirs().add(new ModuleInfo.ResourceDir("src/other", false, "META-INF"));
 
         assertThat(of(m).resourceDirs()).isDeepEqualTo(new String[][] {
-                { "src/main/resources", "true", null }, { "src/other", "false", "META-INF" } });
+                { "src/main/resources", "true", null, "", "" },
+                { "src/other", "false", "META-INF", "", "" } });
     }
 
     @Test
