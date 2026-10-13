@@ -133,6 +133,12 @@ public abstract class ModuleBuild {
     public abstract List<String> extensionRunnerParentFirstArtifacts();
     public abstract List<String> extensionExcludedArtifacts();
     public abstract List<String> extensionLesserPriorityArtifacts();
+    /** The extension-descriptor goal's {@code conditionalDependencies}. */
+    public List<String> extensionConditionalDependencies() { return List.of(); }
+    /** The extension-descriptor goal's {@code conditionalDevDependencies}. */
+    public List<String> extensionConditionalDevDependencies() { return List.of(); }
+    /** The extension-descriptor goal's {@code dependencyCondition}. */
+    public List<String> extensionDependencyCondition() { return List.of(); }
     public abstract List<String> extensionProvidesCapabilities();
     public abstract List<String> extensionRequiresCapabilities();
     public abstract boolean hasQuarkusBuildPlugin();
@@ -424,6 +430,9 @@ public abstract class ModuleBuild {
                             extensionRunnerParentFirstArtifacts(),
                             extensionExcludedArtifacts(),
                             extensionLesserPriorityArtifacts(),
+                            extensionConditionalDependencies(),
+                            extensionConditionalDevDependencies(),
+                            extensionDependencyCondition(),
                             extensionProvidesCapabilities(),
                             extensionRequiresCapabilities(),
                             evaluateSkip(extensionValidationSkipWhen()),

@@ -54,6 +54,9 @@ public class ModuleInfo {
     private List<String> extensionRunnerParentFirstArtifacts = new ArrayList<>();
     private List<String> extensionExcludedArtifacts = new ArrayList<>();
     private List<String> extensionLesserPriorityArtifacts = new ArrayList<>();
+    private List<String> extensionConditionalDependencies = new ArrayList<>();
+    private List<String> extensionConditionalDevDependencies = new ArrayList<>();
+    private List<String> extensionDependencyCondition = new ArrayList<>();
     private List<String> extensionProvidesCapabilities = new ArrayList<>();
     private List<String> extensionRequiresCapabilities = new ArrayList<>();
     private boolean hasQuarkusBuildPlugin;
@@ -250,6 +253,12 @@ public class ModuleInfo {
 
     public List<String> getExtensionLesserPriorityArtifacts() { return extensionLesserPriorityArtifacts; }
     public void setExtensionLesserPriorityArtifacts(List<String> v) { this.extensionLesserPriorityArtifacts = v; }
+    public List<String> getExtensionConditionalDependencies() { return extensionConditionalDependencies; }
+    public void setExtensionConditionalDependencies(List<String> v) { this.extensionConditionalDependencies = v; }
+    public List<String> getExtensionConditionalDevDependencies() { return extensionConditionalDevDependencies; }
+    public void setExtensionConditionalDevDependencies(List<String> v) { this.extensionConditionalDevDependencies = v; }
+    public List<String> getExtensionDependencyCondition() { return extensionDependencyCondition; }
+    public void setExtensionDependencyCondition(List<String> v) { this.extensionDependencyCondition = v; }
 
     public List<String> getExtensionProvidesCapabilities() { return extensionProvidesCapabilities; }
     public void setExtensionProvidesCapabilities(List<String> v) { this.extensionProvidesCapabilities = v; }

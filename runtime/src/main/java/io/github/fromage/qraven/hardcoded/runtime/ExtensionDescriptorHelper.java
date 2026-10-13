@@ -23,6 +23,9 @@ public class ExtensionDescriptorHelper {
                                 List<String> runnerParentFirstArtifacts,
                                 List<String> excludedArtifacts,
                                 List<String> lesserPriorityArtifacts,
+                                List<String> conditionalDependencies,
+                                List<String> conditionalDevDependencies,
+                                List<String> dependencyCondition,
                                 List<String> providesCapabilities,
                                 List<String> requiresCapabilities,
                                 boolean skipExtensionValidation,
@@ -64,6 +67,9 @@ public class ExtensionDescriptorHelper {
                     .runnerParentFirstArtifacts(runnerParentFirstArtifacts)
                     .excludedArtifacts(excludedArtifacts)
                     .lesserPriorityArtifacts(lesserPriorityArtifacts)
+                    .conditionalDependencies(conditionalDependencies)
+                    .conditionalDevDependencies(conditionalDevDependencies)
+                    .dependencyCondition(dependencyCondition)
                     .skipExtensionValidation(skipExtensionValidation)
                     .ignoreNotDetectedQuarkusCoreVersion(true)
                     .skipCodestartValidation(true)

@@ -24,6 +24,21 @@
                         </goals>
                         <configuration>
                             <deployment>com.test.ext:fake-extension-deployment:${project.version}</deployment>
+                            <conditionalDependencies>
+                                <artifact>com.test.ext:fake-extra:1.0.0</artifact>
+                            </conditionalDependencies>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>with-condition</id>
+                        <goals>
+                            <goal>extension-descriptor</goal>
+                        </goals>
+                        <configuration>
+                            <dependencyCondition>
+                                <artifact>com.test.ext:fake-trigger</artifact>
+                                <artifact>com.test.ext:fake-other-trigger</artifact>
+                            </dependencyCondition>
                         </configuration>
                     </execution>
                 </executions>
@@ -31,6 +46,9 @@
                     <parentFirstArtifacts>
                         <parentFirstArtifact>com.test.ext:fake-extension</parentFirstArtifact>
                     </parentFirstArtifacts>
+                    <conditionalDevDependencies>
+                        <artifact>com.test.ext:fake-dev-extra:1.0.0</artifact>
+                    </conditionalDevDependencies>
                     <capabilities>
                         <provides>com.test.ext.fake</provides>
                     </capabilities>

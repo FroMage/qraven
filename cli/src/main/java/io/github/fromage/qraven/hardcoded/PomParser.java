@@ -665,6 +665,7 @@ public class PomParser {
             for (Plugin plugin : model.getBuild().getPlugins()) {
                 if (!"quarkus-extension-maven-plugin".equals(plugin.getArtifactId())) continue;
                 Xpp3Dom config = (Xpp3Dom) plugin.getConfiguration();
+                extractConditionalConfig(plugin, config, info);
                 if (config == null) continue;
                 info.setExtensionParentFirstArtifacts(extractPluginListConfig(config, "parentFirstArtifacts", "parentFirstArtifact"));
                 info.setExtensionRunnerParentFirstArtifacts(extractPluginListConfig(config, "runnerParentFirstArtifacts", "runnerParentFirstArtifact"));
@@ -674,6 +675,34 @@ public class PomParser {
                 break;
             }
         }
+    }
+
+    /**
+     * Reads {@code conditionalDependencies}, {@code conditionalDevDependencies} and {@code dependencyCondition},
+     * which the extension plugin's descriptor goal takes. Each can be set on the plugin or on an execution, and a
+     * module can have several descriptor executions (a parent's, which sets the deployment artifact, plus the
+     * module's own). Maven's executions each configure their own run, so the last one that sets a list wins and
+     * the plugin-level setting is the fallback.
+     */
+    private void extractConditionalConfig(Plugin plugin, Xpp3Dom pluginConfig, ModuleInfo info) {
+        List<Xpp3Dom> execConfigs = new ArrayList<>();
+        for (PluginExecution exec : plugin.getExecutions()) {
+            if (exec.getGoals().contains("extension-descriptor") && exec.getConfiguration() != null) {
+                execConfigs.add((Xpp3Dom) exec.getConfiguration());
+            }
+        }
+        info.setExtensionConditionalDependencies(conditionalList("conditionalDependencies", execConfigs, pluginConfig));
+        info.setExtensionConditionalDevDependencies(conditionalList("conditionalDevDependencies", execConfigs, pluginConfig));
+        info.setExtensionDependencyCondition(conditionalList("dependencyCondition", execConfigs, pluginConfig));
+    }
+
+    private List<String> conditionalList(String name, List<Xpp3Dom> execConfigs, Xpp3Dom pluginConfig) {
+        for (int i = execConfigs.size() - 1; i >= 0; i--) {
+            if (execConfigs.get(i).getChild(name) != null) {
+                return extractPluginListConfig(execConfigs.get(i), name, null);
+            }
+        }
+        return pluginConfig != null ? extractPluginListConfig(pluginConfig, name, null) : List.of();
     }
 
     private void extractCapabilities(Xpp3Dom config, ModuleInfo info) {
@@ -1179,8 +1208,6 @@ public class PomParser {
         extractStringListProperty(config, "parentFirstArtifacts", "parent-first-artifacts", props);
         extractStringListProperty(config, "runnerParentFirstArtifacts", "runner-parent-first-artifacts", props);
         extractStringListProperty(config, "lesserPriorityArtifacts", "lesser-priority-artifacts", props);
-        extractStringListProperty(config, "conditionalDependencies", "conditional-dependencies", props);
-        extractStringListProperty(config, "dependencyCondition", "dependency-condition", props);
     }
 
     private void extractStringListProperty(Xpp3Dom config, String xmlName, String propKey,

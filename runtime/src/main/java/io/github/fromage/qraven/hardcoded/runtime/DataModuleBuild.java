@@ -71,6 +71,9 @@ public final class DataModuleBuild extends ModuleBuild {
     private final List<String> extensionRunnerParentFirstArtifacts;
     private final List<String> extensionExcludedArtifacts;
     private final List<String> extensionLesserPriorityArtifacts;
+    private final List<String> extensionConditionalDependencies;
+    private final List<String> extensionConditionalDevDependencies;
+    private final List<String> extensionDependencyCondition;
     private final List<String> extensionProvidesCapabilities;
     private final List<String> extensionRequiresCapabilities;
     private final boolean hasQuarkusBuildPlugin;
@@ -163,6 +166,9 @@ public final class DataModuleBuild extends ModuleBuild {
         extensionRunnerParentFirstArtifacts = List.copyOf(m.getExtensionRunnerParentFirstArtifacts());
         extensionExcludedArtifacts = List.copyOf(m.getExtensionExcludedArtifacts());
         extensionLesserPriorityArtifacts = List.copyOf(m.getExtensionLesserPriorityArtifacts());
+        extensionConditionalDependencies = List.copyOf(m.getExtensionConditionalDependencies());
+        extensionConditionalDevDependencies = List.copyOf(m.getExtensionConditionalDevDependencies());
+        extensionDependencyCondition = List.copyOf(m.getExtensionDependencyCondition());
         extensionProvidesCapabilities = List.copyOf(m.getExtensionProvidesCapabilities());
         extensionRequiresCapabilities = List.copyOf(m.getExtensionRequiresCapabilities());
 
@@ -270,6 +276,9 @@ public final class DataModuleBuild extends ModuleBuild {
     @Override public List<String> extensionRunnerParentFirstArtifacts() { return extensionRunnerParentFirstArtifacts; }
     @Override public List<String> extensionExcludedArtifacts() { return extensionExcludedArtifacts; }
     @Override public List<String> extensionLesserPriorityArtifacts() { return extensionLesserPriorityArtifacts; }
+    @Override public List<String> extensionConditionalDependencies() { return extensionConditionalDependencies; }
+    @Override public List<String> extensionConditionalDevDependencies() { return extensionConditionalDevDependencies; }
+    @Override public List<String> extensionDependencyCondition() { return extensionDependencyCondition; }
     @Override public List<String> extensionProvidesCapabilities() { return extensionProvidesCapabilities; }
     @Override public List<String> extensionRequiresCapabilities() { return extensionRequiresCapabilities; }
     @Override public boolean hasQuarkusBuildPlugin() { return hasQuarkusBuildPlugin; }
@@ -326,6 +335,7 @@ public final class DataModuleBuild extends ModuleBuild {
                 extensionDescriptorProperties, extensionProjectName, extensionProjectDescription, extensionScmUrl,
                 extensionMinimumJavaVersion, extensionModelDeps, extensionReactorGAs, extensionParentFirstArtifacts,
                 extensionRunnerParentFirstArtifacts, extensionExcludedArtifacts, extensionLesserPriorityArtifacts,
+                extensionConditionalDependencies, extensionConditionalDevDependencies, extensionDependencyCondition,
                 extensionProvidesCapabilities, extensionRequiresCapabilities, hasQuarkusBuildPlugin,
                 quarkusBuildSkipWhen, hasGenerateCodeGoal, hasGenerateCodeTestsGoal, hasCodeGenProviders,
                 hasSisuPlugin, generateCodeSkipWhen, quarkusBuildProperties, deploymentClasspath,

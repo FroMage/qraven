@@ -614,6 +614,27 @@ class PomParserTest {
         }
 
         @Test
+        void runtimeHasConditionalDependenciesFromTheExecution() {
+            ModuleInfo runtime = findModule(modules, "fake-extension");
+            assertThat(runtime.getExtensionConditionalDependencies())
+                    .containsExactly("com.test.ext:fake-extra:1.0.0");
+        }
+
+        @Test
+        void runtimeHasDependencyConditionFromASecondExecution() {
+            ModuleInfo runtime = findModule(modules, "fake-extension");
+            assertThat(runtime.getExtensionDependencyCondition())
+                    .containsExactly("com.test.ext:fake-trigger", "com.test.ext:fake-other-trigger");
+        }
+
+        @Test
+        void runtimeHasConditionalDevDependenciesFromThePlugin() {
+            ModuleInfo runtime = findModule(modules, "fake-extension");
+            assertThat(runtime.getExtensionConditionalDevDependencies())
+                    .containsExactly("com.test.ext:fake-dev-extra:1.0.0");
+        }
+
+        @Test
         void deploymentNotAnExtension() {
             ModuleInfo deployment = findModule(modules, "fake-extension-deployment");
             assertThat(deployment.isHasExtensionPlugin()).isFalse();
