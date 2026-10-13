@@ -2115,11 +2115,15 @@ public class PomParser {
         }
 
         // For reactor deployment modules, collect their classpaths directly
+        // Reactor modules may be built against other versions of the same artifacts; like Maven, keep
+        // the version already on the runtime or deployment classpath rather than adding a second one.
         Set<String> visited = new LinkedHashSet<>();
         Set<String> deploymentOnlySet = new HashSet<>(deploymentOnly);
+        Set<String> seenKeys = ClasspathKeys.keysOf(runtimePaths);
+        seenKeys.addAll(ClasspathKeys.keysOf(deploymentOnly));
         for (String artifactId : reactorDeploymentArtifactIds) {
             collectReactorModuleClasspath(artifactId, allModules, deploymentOnly, deploymentOnlySet,
-                    runtimePaths, visited, excludedDeploymentArtifactIds);
+                    runtimePaths, seenKeys, visited, excludedDeploymentArtifactIds);
         }
 
         return deploymentOnly;
@@ -2128,22 +2132,22 @@ public class PomParser {
     /** {@code resultSet} mirrors {@code result} for O(1) membership tests. */
     private void collectReactorModuleClasspath(String artifactId, List<ModuleInfo> allModules,
                                                 List<String> result, Set<String> resultSet,
-                                                Set<String> exclude, Set<String> visited,
-                                                Set<String> excludedArtifactIds) {
+                                                Set<String> exclude, Set<String> seenKeys,
+                                                Set<String> visited, Set<String> excludedArtifactIds) {
         if (!visited.add(artifactId)) return;
         if (excludedArtifactIds.contains(artifactId)) return;
         for (ModuleInfo m : moduleIndex(allModules).withArtifactId(artifactId)) {
             if ("pom".equals(m.getPackaging())) continue;
 
             String jarPath = resolver.expectedArtifactPath(m.getGroupId(), m.getArtifactId(), m.getVersion());
-            if (!exclude.contains(jarPath) && resultSet.add(jarPath)) {
+            if (!exclude.contains(jarPath) && seenKeys.add(ClasspathKeys.of(jarPath)) && resultSet.add(jarPath)) {
                 result.add(jarPath);
             }
 
             Set<String> optionalEntries = m.getOptionalClasspathEntries();
             for (String cp : m.getCompileClasspath()) {
                 if (!exclude.contains(cp) && !resultSet.contains(cp)
-                        && !optionalEntries.contains(cp)) {
+                        && !optionalEntries.contains(cp) && seenKeys.add(ClasspathKeys.of(cp))) {
                     resultSet.add(cp);
                     result.add(cp);
                 }
@@ -2158,8 +2162,8 @@ public class PomParser {
                         mergedExclusions = new HashSet<>(excludedArtifactIds);
                         mergedExclusions.addAll(depExclusions);
                     }
-                    collectReactorModuleClasspath(depId, allModules, result, resultSet, exclude, visited,
-                            mergedExclusions);
+                    collectReactorModuleClasspath(depId, allModules, result, resultSet, exclude, seenKeys,
+                            visited, mergedExclusions);
                 }
             }
             break;

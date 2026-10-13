@@ -88,6 +88,28 @@ class ClasspathWiringTest {
     }
 
     @Nested
+    class VersionMediation {
+
+        private static final String M2 = "/home/u/.m2/repository/";
+
+        @Test
+        void dependencyBuiltAgainstAnotherVersionDoesNotAddASecondOne() {
+            StubModuleBuild lib = module("lib")
+                    .withCompileClasspath(M2 + "io/acme/core/3.0/core-3.0.jar", M2 + "io/acme/util/1.0/util-1.0.jar");
+            StubModuleBuild app = module("app")
+                    .withModuleDeps("lib")
+                    .withCompileClasspath(M2 + "io/acme/core/4.0/core-4.0.jar");
+
+            wireDependencies(lib, app);
+            lib.markBuilt();
+
+            assertThat(app.computeCompileClasspath())
+                    .contains(M2 + "io/acme/core/4.0/core-4.0.jar", M2 + "io/acme/util/1.0/util-1.0.jar")
+                    .doesNotContain(M2 + "io/acme/core/3.0/core-3.0.jar");
+        }
+    }
+
+    @Nested
     class TestDependencyFiltering {
 
         @Test

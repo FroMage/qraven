@@ -1,5 +1,6 @@
 package io.github.fromage.qraven.hardcoded.runtime;
 
+import io.github.fromage.qraven.hardcoded.ClasspathKeys;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -874,6 +875,9 @@ public abstract class ModuleBuild {
         if (!includeOwnOptional) {
             allowedDeps.removeAll(module.optionalModuleDependencyIds());
         }
+        // A dependency may be built against another version of an artifact already on the classpath;
+        // keep the first version, like Maven's nearest-wins mediation.
+        Set<String> seenKeys = ClasspathKeys.keysOf(classpath);
         for (ModuleBuild dep : module.getDependencies()) {
             if (visited.contains(dep.artifactId())) {
                 continue;
@@ -896,7 +900,8 @@ public abstract class ModuleBuild {
             if (dep.mainBuildSucceeded) {
                 Set<String> optionalEntries = dep.resolvedOptionalClasspathEntries();
                 for (String cp : dep.resolvedClasspath()) {
-                    if (!classpath.contains(cp) && !optionalEntries.contains(cp)) {
+                    if (!classpath.contains(cp) && !optionalEntries.contains(cp)
+                            && seenKeys.add(ClasspathKeys.of(cp))) {
                         classpath.add(cp);
                     }
                 }
