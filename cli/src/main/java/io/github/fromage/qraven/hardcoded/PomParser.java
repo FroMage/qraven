@@ -2197,6 +2197,9 @@ public class PomParser {
         }
     }
 
+    /** Marks, while the compiler configuration is being read, that an empty {@code <release>} turned --release off. */
+    private static final String RELEASE_DISABLED = "<release-disabled>";
+
     private void extractCompilerConfig(Model model, ModuleInfo info, Set<String> reactorGAs) {
         List<String> compilerArgs = new ArrayList<>();
         List<String> annotationProcessorPaths = new ArrayList<>();
@@ -2221,8 +2224,9 @@ public class PomParser {
 
         Properties props = model.getProperties();
         String releaseProperty = props != null ? props.getProperty("maven.compiler.release") : null;
+        boolean releaseDisabled = compilerArgs.remove(RELEASE_DISABLED);
         boolean hasRelease = compilerArgs.contains("--release")
-                || (releaseProperty != null && !releaseProperty.isBlank());
+                || (!releaseDisabled && releaseProperty != null && !releaseProperty.isBlank());
         if (hasRelease) {
             for (int i = compilerArgs.size() - 2; i >= 0; i--) {
                 if (compilerArgs.get(i).equals("-source") || compilerArgs.get(i).equals("-target")) {
@@ -2324,11 +2328,21 @@ public class PomParser {
                                        List<String> reactorApArtifactIds) {
         Xpp3Dom releaseNode = config.getChild("release");
         if (releaseNode != null && releaseNode.getValue() != null && !releaseNode.getValue().isBlank()) {
-            if (!compilerArgs.contains("--release")) {
+            if (!compilerArgs.contains(RELEASE_DISABLED) && !compilerArgs.contains("--release")) {
                 compilerArgs.add("--release");
                 compilerArgs.add(releaseNode.getValue());
             }
         } else {
+            if (releaseNode != null && !compilerArgs.contains(RELEASE_DISABLED)) {
+                // An empty <release> turns --release off, and the maven.compiler.release property no longer
+                // applies (a module needs this to use --add-exports); -source/-target are used instead.
+                int i = compilerArgs.indexOf("--release");
+                if (i >= 0) {
+                    compilerArgs.remove(i + 1);
+                    compilerArgs.remove(i);
+                }
+                compilerArgs.add(RELEASE_DISABLED);
+            }
             Xpp3Dom sourceNode = config.getChild("source");
             Xpp3Dom targetNode = config.getChild("target");
             if (sourceNode != null && sourceNode.getValue() != null && !sourceNode.getValue().isBlank()) {

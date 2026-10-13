@@ -352,6 +352,32 @@ class PomParserTest {
     }
 
     @Nested
+    class EmptyReleaseOverride {
+
+        static ModuleInfo module;
+
+        @BeforeAll
+        static void parse() {
+            module = parseProject("release-override").get(0);
+        }
+
+        @Test
+        void doesNotPassReleaseWhenTheExecutionEmptiesIt() {
+            assertThat(module.getCompilerArgs()).doesNotContain("--release");
+        }
+
+        @Test
+        void usesSourceAndTargetInstead() {
+            assertThat(module.getCompilerArgs()).containsSubsequence("-source", "17").containsSubsequence("-target", "17");
+        }
+
+        @Test
+        void keepsTheAddExports() {
+            assertThat(module.getCompilerArgs()).contains("--add-exports=java.base/jdk.internal.module=ALL-UNNAMED");
+        }
+    }
+
+    @Nested
     class CodeStylePlugins {
 
         @Test
