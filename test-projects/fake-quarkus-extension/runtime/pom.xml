@@ -35,6 +35,9 @@
                             <goal>extension-descriptor</goal>
                         </goals>
                         <configuration>
+                            <excludedArtifacts>
+                                <excludedArtifact>com.test.ext:fake-excluded</excludedArtifact>
+                            </excludedArtifacts>
                             <dependencyCondition>
                                 <artifact>com.test.ext:fake-trigger</artifact>
                                 <artifact>com.test.ext:fake-other-trigger</artifact>

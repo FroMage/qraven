@@ -664,45 +664,18 @@ public class PomParser {
         if (model.getBuild() != null) {
             for (Plugin plugin : model.getBuild().getPlugins()) {
                 if (!"quarkus-extension-maven-plugin".equals(plugin.getArtifactId())) continue;
-                Xpp3Dom config = (Xpp3Dom) plugin.getConfiguration();
-                extractConditionalConfig(plugin, config, info);
-                if (config == null) continue;
+                Xpp3Dom config = descriptorConfig(plugin);
                 info.setExtensionParentFirstArtifacts(extractPluginListConfig(config, "parentFirstArtifacts", "parentFirstArtifact"));
                 info.setExtensionRunnerParentFirstArtifacts(extractPluginListConfig(config, "runnerParentFirstArtifacts", "runnerParentFirstArtifact"));
                 info.setExtensionExcludedArtifacts(extractPluginListConfig(config, "excludedArtifacts", "excludedArtifact"));
                 info.setExtensionLesserPriorityArtifacts(extractPluginListConfig(config, "lesserPriorityArtifacts", "lesserPriorityArtifact"));
+                info.setExtensionConditionalDependencies(extractPluginListConfig(config, "conditionalDependencies", "conditionalDependency"));
+                info.setExtensionConditionalDevDependencies(extractPluginListConfig(config, "conditionalDevDependencies", "conditionalDevDependency"));
+                info.setExtensionDependencyCondition(extractPluginListConfig(config, "dependencyCondition", "artifact"));
                 extractCapabilities(config, info);
                 break;
             }
         }
-    }
-
-    /**
-     * Reads {@code conditionalDependencies}, {@code conditionalDevDependencies} and {@code dependencyCondition},
-     * which the extension plugin's descriptor goal takes. Each can be set on the plugin or on an execution, and a
-     * module can have several descriptor executions (a parent's, which sets the deployment artifact, plus the
-     * module's own). Maven's executions each configure their own run, so the last one that sets a list wins and
-     * the plugin-level setting is the fallback.
-     */
-    private void extractConditionalConfig(Plugin plugin, Xpp3Dom pluginConfig, ModuleInfo info) {
-        List<Xpp3Dom> execConfigs = new ArrayList<>();
-        for (PluginExecution exec : plugin.getExecutions()) {
-            if (exec.getGoals().contains("extension-descriptor") && exec.getConfiguration() != null) {
-                execConfigs.add((Xpp3Dom) exec.getConfiguration());
-            }
-        }
-        info.setExtensionConditionalDependencies(conditionalList("conditionalDependencies", execConfigs, pluginConfig));
-        info.setExtensionConditionalDevDependencies(conditionalList("conditionalDevDependencies", execConfigs, pluginConfig));
-        info.setExtensionDependencyCondition(conditionalList("dependencyCondition", execConfigs, pluginConfig));
-    }
-
-    private List<String> conditionalList(String name, List<Xpp3Dom> execConfigs, Xpp3Dom pluginConfig) {
-        for (int i = execConfigs.size() - 1; i >= 0; i--) {
-            if (execConfigs.get(i).getChild(name) != null) {
-                return extractPluginListConfig(execConfigs.get(i), name, null);
-            }
-        }
-        return pluginConfig != null ? extractPluginListConfig(pluginConfig, name, null) : List.of();
     }
 
     private void extractCapabilities(Xpp3Dom config, ModuleInfo info) {
@@ -1161,67 +1134,58 @@ public class PomParser {
         if (model.getBuild() == null) return;
         for (Plugin plugin : model.getBuild().getPlugins()) {
             if (!"quarkus-extension-maven-plugin".equals(plugin.getArtifactId())) continue;
-
-            Xpp3Dom pluginConfig = (Xpp3Dom) plugin.getConfiguration();
-            boolean hasDescriptorGoal = false;
-            for (PluginExecution exec : plugin.getExecutions()) {
-                if (exec.getGoals().contains("extension-descriptor")) {
-                    hasDescriptorGoal = true;
-
-                    Xpp3Dom execConfig = (Xpp3Dom) exec.getConfiguration();
-                    if (execConfig != null) {
-                        extractExtensionConfig(execConfig, info);
-                    }
-
-                    String skip = extractConfigValue("skipExtensionValidation", execConfig, pluginConfig);
-                    info.setExtensionValidationSkipWhen(skip != null ? skip : "${skipExtensionValidation}");
-                    break;
-                }
-            }
-            if (!hasDescriptorGoal) continue;
+            if (!hasDescriptorGoal(plugin)) continue;
 
             info.setHasExtensionPlugin(true);
 
-            if (info.getExtensionDescriptorProperties().isEmpty()) {
-                if (pluginConfig != null) {
-                    extractExtensionConfig(pluginConfig, info);
-                }
-            }
+            Xpp3Dom config = descriptorConfig(plugin);
+            String skip = extractConfigValue("skipExtensionValidation", config, null);
+            info.setExtensionValidationSkipWhen(skip != null ? skip : "${skipExtensionValidation}");
 
-            if (!info.getExtensionDescriptorProperties().containsKey("deployment-artifact")) {
-                String deployment = info.getGroupId() + ":" + info.getArtifactId() + "-deployment:" + info.getVersion();
-                info.getExtensionDescriptorProperties().put("deployment-artifact", deployment);
+            Map<String, String> props = info.getExtensionDescriptorProperties();
+            Xpp3Dom depNode = config.getChild("deployment");
+            if (depNode != null && depNode.getValue() != null && !depNode.getValue().isBlank()) {
+                props.put("deployment-artifact", depNode.getValue());
+            }
+            if (!props.containsKey("deployment-artifact")) {
+                props.put("deployment-artifact",
+                        info.getGroupId() + ":" + info.getArtifactId() + "-deployment:" + info.getVersion());
             }
             return;
         }
     }
 
-    private void extractExtensionConfig(Xpp3Dom config, ModuleInfo info) {
-        Map<String, String> props = info.getExtensionDescriptorProperties();
-
-        Xpp3Dom depNode = config.getChild("deployment");
-        if (depNode != null && depNode.getValue() != null && !depNode.getValue().isBlank()) {
-            props.put("deployment-artifact", depNode.getValue());
+    private static boolean hasDescriptorGoal(Plugin plugin) {
+        for (PluginExecution exec : plugin.getExecutions()) {
+            if (exec.getGoals().contains("extension-descriptor")) return true;
         }
-
-        extractStringListProperty(config, "excludedArtifacts", "excluded-artifacts", props);
-        extractStringListProperty(config, "parentFirstArtifacts", "parent-first-artifacts", props);
-        extractStringListProperty(config, "runnerParentFirstArtifacts", "runner-parent-first-artifacts", props);
-        extractStringListProperty(config, "lesserPriorityArtifacts", "lesser-priority-artifacts", props);
+        return false;
     }
 
-    private void extractStringListProperty(Xpp3Dom config, String xmlName, String propKey,
-                                            Map<String, String> props) {
-        Xpp3Dom node = config.getChild(xmlName);
-        if (node == null) return;
-        List<String> values = new ArrayList<>();
-        for (Xpp3Dom child : node.getChildren()) {
-            if (child.getValue() != null && !child.getValue().isBlank()) {
-                values.add(child.getValue());
+    /**
+     * The configuration the extension plugin's descriptor goal runs with: the plugin's, with each
+     * {@code extension-descriptor} execution's settings on top, in order. A module can have several such
+     * executions (a parent's that sets the deployment artifact, plus its own that sets a dependency
+     * condition), and settings can be on the plugin or on an execution. A setting an execution gives
+     * replaces the plugin's, and a later execution's replaces an earlier one's.
+     */
+    private static Xpp3Dom descriptorConfig(Plugin plugin) {
+        Map<String, Xpp3Dom> settings = new LinkedHashMap<>();
+        overlay(settings, (Xpp3Dom) plugin.getConfiguration());
+        for (PluginExecution exec : plugin.getExecutions()) {
+            if (exec.getGoals().contains("extension-descriptor")) {
+                overlay(settings, (Xpp3Dom) exec.getConfiguration());
             }
         }
-        if (!values.isEmpty()) {
-            props.put(propKey, String.join(",", values));
+        Xpp3Dom merged = new Xpp3Dom("configuration");
+        settings.values().forEach(merged::addChild);
+        return merged;
+    }
+
+    private static void overlay(Map<String, Xpp3Dom> settings, Xpp3Dom config) {
+        if (config == null) return;
+        for (Xpp3Dom child : config.getChildren()) {
+            settings.put(child.getName(), child);
         }
     }
 

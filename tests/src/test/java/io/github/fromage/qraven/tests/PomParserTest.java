@@ -607,6 +607,12 @@ class PomParserTest {
         }
 
         @Test
+        void runtimeHasExcludedArtifactsFromASecondExecution() {
+            ModuleInfo runtime = findModule(modules, "fake-extension");
+            assertThat(runtime.getExtensionExcludedArtifacts()).containsExactly("com.test.ext:fake-excluded");
+        }
+
+        @Test
         void runtimeHasProvidesCapability() {
             ModuleInfo runtime = findModule(modules, "fake-extension");
             assertThat(runtime.getExtensionProvidesCapabilities())
