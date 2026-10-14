@@ -918,6 +918,15 @@ public class PomParser {
         }
     }
 
+    /** The version of a {@code group:artifact:version[:type[:classifier]]} setting, or null if it isn't a resolved one. */
+    private static String artifactVersion(String coordinates) {
+        if (coordinates == null) return null;
+        String[] parts = coordinates.trim().split(":");
+        if (parts.length < 3) return null;
+        String version = parts[2].trim();
+        return version.isEmpty() || version.contains("${") ? null : version;
+    }
+
     private void detectProtobufPlugin(Model model, Path baseDir, ModuleInfo info) {
         if (model.getBuild() == null) return;
         for (Plugin plugin : model.getBuild().getPlugins()) {
@@ -963,6 +972,10 @@ public class PomParser {
             }
 
             if (!info.isHasProtobufSources() && !info.isHasTestProtobufSources()) return;
+
+            // the tools this module's own protobuf plugin is configured to run, which can differ from other modules'
+            info.setProtobufProtocVersion(artifactVersion(pluginSetting(plugin, "protocArtifact")));
+            info.setProtobufGrpcPluginVersion(artifactVersion(pluginSetting(plugin, "pluginArtifact")));
 
             Xpp3Dom config = (Xpp3Dom) plugin.getConfiguration();
             if (config != null) {
@@ -1045,8 +1058,8 @@ public class PomParser {
             }
 
             info.setKotlinVersion(kotlinVersion);
-            info.setKotlinLanguageVersion(kotlinPluginSetting(plugin, "languageVersion"));
-            info.setKotlinApiVersion(kotlinPluginSetting(plugin, "apiVersion"));
+            info.setKotlinLanguageVersion(pluginSetting(plugin, "languageVersion"));
+            info.setKotlinApiVersion(pluginSetting(plugin, "apiVersion"));
 
             Xpp3Dom config = (Xpp3Dom) plugin.getConfiguration();
             if (config == null) return;
@@ -1087,8 +1100,8 @@ public class PomParser {
         }
     }
 
-    /** A setting of the Kotlin plugin: an execution's if one sets it, else the plugin's. */
-    private String kotlinPluginSetting(Plugin plugin, String name) {
+    /** A setting of a plugin: an execution's if one sets it, else the plugin's. */
+    private String pluginSetting(Plugin plugin, String name) {
         String value = null;
         for (PluginExecution exec : plugin.getExecutions()) {
             String v = extractConfigValue(name, (Xpp3Dom) exec.getConfiguration(), null);

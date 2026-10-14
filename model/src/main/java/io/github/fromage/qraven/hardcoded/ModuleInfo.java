@@ -88,6 +88,8 @@ public class ModuleInfo {
     private Map<String, Set<String>> reactorDependencyExclusions = new LinkedHashMap<>();
     private List<String> kotlinCompilerPlugins = new ArrayList<>();
     private List<String> kotlinPluginOptions = new ArrayList<>();
+    private String protobufProtocVersion;
+    private String protobufGrpcPluginVersion;
     private String kotlinVersion;
     private String kotlinLanguageVersion;
     private String kotlinApiVersion;
@@ -353,6 +355,10 @@ public class ModuleInfo {
     public void setAllReactorExtensionDeployments(Map<String, String> m) { this.allReactorExtensionDeployments = m; }
 
     public List<String> getKotlinCompilerPlugins() { return kotlinCompilerPlugins; }
+    public String getProtobufProtocVersion() { return protobufProtocVersion; }
+    public void setProtobufProtocVersion(String v) { this.protobufProtocVersion = v; }
+    public String getProtobufGrpcPluginVersion() { return protobufGrpcPluginVersion; }
+    public void setProtobufGrpcPluginVersion(String v) { this.protobufGrpcPluginVersion = v; }
     public String getKotlinVersion() { return kotlinVersion; }
     public void setKotlinVersion(String v) { this.kotlinVersion = v; }
     public String getKotlinLanguageVersion() { return kotlinLanguageVersion; }

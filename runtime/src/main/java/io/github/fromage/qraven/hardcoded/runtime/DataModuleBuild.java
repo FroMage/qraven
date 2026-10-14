@@ -91,6 +91,8 @@ public final class DataModuleBuild extends ModuleBuild {
     private final String protocVersion;
     private final String grpcVersion;
     private final String quarkusGrpcVersion;
+    private final String protobufProtocVersion;
+    private final String protobufGrpcPluginVersion;
     private final Map<String, String> allReactorExtensionDeployments;
     private final String pluginName;
     private final String pluginDescription;
@@ -195,6 +197,8 @@ public final class DataModuleBuild extends ModuleBuild {
         protocVersion = m.getProtocVersion();
         grpcVersion = m.getGrpcVersion();
         quarkusGrpcVersion = m.getQuarkusGrpcVersion();
+        protobufProtocVersion = m.getProtobufProtocVersion();
+        protobufGrpcPluginVersion = m.getProtobufGrpcPluginVersion();
         allReactorExtensionDeployments = copy(m.getAllReactorExtensionDeployments());
         pluginName = m.getProjectName();
         pluginDescription = m.getProjectDescription();
@@ -305,6 +309,8 @@ public final class DataModuleBuild extends ModuleBuild {
     @Override public String protocVersion() { return protocVersion; }
     @Override public String grpcVersion() { return grpcVersion; }
     @Override public String quarkusGrpcVersion() { return quarkusGrpcVersion; }
+    @Override public String protobufProtocVersion() { return protobufProtocVersion; }
+    @Override public String protobufGrpcPluginVersion() { return protobufGrpcPluginVersion; }
     @Override public Map<String, String> allReactorExtensionDeployments() { return allReactorExtensionDeployments; }
     @Override public String pluginName() { return pluginName; }
     @Override public String pluginDescription() { return pluginDescription; }
@@ -352,7 +358,7 @@ public final class DataModuleBuild extends ModuleBuild {
                 extensionProvidesCapabilities, extensionRequiresCapabilities, hasQuarkusBuildPlugin,
                 quarkusBuildSkipWhen, hasGenerateCodeGoal, hasGenerateCodeTestsGoal, hasCodeGenProviders,
                 hasSisuPlugin, generateCodeSkipWhen, quarkusBuildProperties, deploymentClasspath,
-                runtimeExtensionArtifacts, extensionDevProperties, protocVersion, grpcVersion, quarkusGrpcVersion,
+                runtimeExtensionArtifacts, extensionDevProperties, protocVersion, grpcVersion, quarkusGrpcVersion, protobufProtocVersion, protobufGrpcPluginVersion,
                 allReactorExtensionDeployments, pluginName, pluginDescription, kotlinCompilerPlugins,
                 kotlinPluginOptions, kotlinVersion, kotlinLanguageVersion, kotlinApiVersion, shadeExecutions, sourceGenerators, generatorClasspath, addedSourceDirs
             };

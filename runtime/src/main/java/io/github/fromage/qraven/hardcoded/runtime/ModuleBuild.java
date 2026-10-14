@@ -160,6 +160,10 @@ public abstract class ModuleBuild {
     public abstract List<String> runtimeExtensionArtifacts();
     public abstract Map<String, String> extensionDevProperties();
     public abstract String protocVersion();
+    /** The protoc version this module's protobuf plugin is configured with, or null. */
+    public String protobufProtocVersion() { return null; }
+    /** The protoc-gen-grpc-java version this module's protobuf plugin is configured with, or null. */
+    public String protobufGrpcPluginVersion() { return null; }
     public abstract String grpcVersion();
     public abstract String quarkusGrpcVersion();
     public abstract Map<String, String> allReactorExtensionDeployments();
@@ -486,7 +490,8 @@ public abstract class ModuleBuild {
                     t = System.currentTimeMillis();
                     generatedProtoDir = generatedProtobufDir();
                     runtime.compileProtobuf(protoSourceDir(), generatedProtoDir,
-                            protobufUsesGrpc(), protobufUsesMutiny(), fullClasspath);
+                            protobufUsesGrpc(), protobufUsesMutiny(), fullClasspath,
+                            protobufProtocVersion(), protobufGrpcPluginVersion());
                     recordPhase("protobuf", t);
                 }
 
@@ -818,7 +823,8 @@ public abstract class ModuleBuild {
             t = System.currentTimeMillis();
             generatedTestProtoDir = generatedTestProtobufDir();
             runtime.compileProtobuf(testProtoSourceDir(), generatedTestProtoDir,
-                    protobufUsesGrpc(), protobufUsesMutiny(), testCp);
+                    protobufUsesGrpc(), protobufUsesMutiny(), testCp,
+                    protobufProtocVersion(), protobufGrpcPluginVersion());
             Path javaDir = generatedTestProtoDir.resolve("java");
             if (Files.isDirectory(javaDir)) testExtraDirs.add(javaDir);
             Path grpcDir = generatedTestProtoDir.resolve("grpc-java");

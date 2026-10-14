@@ -793,12 +793,36 @@ public class BuildRuntime {
     private String antlrToolClasspath;
     private volatile Path mutinyPluginScript;
 
+    private final Map<String, String> protocPaths = new ConcurrentHashMap<>();
+    private final Map<String, String> grpcJavaPluginPaths = new ConcurrentHashMap<>();
+
+    /** The protoc used by modules that don't ask for a version. */
     public void setProtocPath(String path) { this.protocPath = path; }
+    /** The protoc for modules whose protobuf plugin is configured with this version. */
+    public void setProtocPath(String version, String path) { protocPaths.put(version, path); }
+    /** The protoc-gen-grpc-java used by modules that don't ask for a version. */
     public void setGrpcJavaPluginPath(String path) { this.grpcJavaPluginPath = path; }
+    /** The protoc-gen-grpc-java for modules whose protobuf plugin is configured with this version. */
+    public void setGrpcJavaPluginPath(String version, String path) { grpcJavaPluginPaths.put(version, path); }
     public void setAntlrToolClasspath(String classpath) { this.antlrToolClasspath = classpath; }
 
     public void compileProtobuf(Path protoSourceDir, Path outputDir,
                                 boolean useGrpc, boolean useMutiny, List<String> classpath) {
+        compileProtobuf(protoSourceDir, outputDir, useGrpc, useMutiny, classpath, null, null);
+    }
+
+    /**
+     * Compiles the .proto files with the protoc and protoc-gen-grpc-java of the given versions, which are the
+     * ones the module's protobuf plugin is configured with (the generated code only works with a matching
+     * protobuf runtime); the default ones are used for a version that is null or wasn't resolved.
+     */
+    public void compileProtobuf(Path protoSourceDir, Path outputDir,
+                                boolean useGrpc, boolean useMutiny, List<String> classpath,
+                                String protocVersion, String grpcPluginVersion) {
+        String protocPath = protocVersion != null && protocPaths.containsKey(protocVersion)
+                ? protocPaths.get(protocVersion) : this.protocPath;
+        String grpcJavaPluginPath = grpcPluginVersion != null && grpcJavaPluginPaths.containsKey(grpcPluginVersion)
+                ? grpcJavaPluginPaths.get(grpcPluginVersion) : this.grpcJavaPluginPath;
         if (protocPath == null) {
             throw new RuntimeException("protoc binary path not set — cannot compile .proto files");
         }

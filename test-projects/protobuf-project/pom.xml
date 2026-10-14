@@ -32,6 +32,8 @@
                     </execution>
                 </executions>
                 <configuration>
+                    <protocArtifact>com.google.protobuf:protoc:${protobuf.version}:exe:${os.detected.classifier}
+                    </protocArtifact>
                     <pluginArtifact>io.grpc:protoc-gen-grpc-java:${grpc.version}</pluginArtifact>
                     <protocPlugins>
                         <protocPlugin>

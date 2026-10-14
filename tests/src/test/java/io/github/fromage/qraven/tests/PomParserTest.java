@@ -812,6 +812,17 @@ class PomParserTest {
         }
 
         @Test
+        void recordsTheProtocVersionTheModulesPluginIsConfiguredWith() {
+            // from the protocArtifact, whose classifier is an expression that isn't resolved
+            assertThat(modules.get(0).getProtobufProtocVersion()).isEqualTo("3.25.1");
+        }
+
+        @Test
+        void recordsTheGrpcPluginVersionTheModulesPluginIsConfiguredWith() {
+            assertThat(modules.get(0).getProtobufGrpcPluginVersion()).isEqualTo("1.60.1");
+        }
+
+        @Test
         void detectsMutiny() {
             assertThat(modules.get(0).isProtobufUsesMutiny()).isTrue();
         }

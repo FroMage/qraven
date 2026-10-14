@@ -15,6 +15,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -42,6 +43,9 @@ public class BuildFileGenerator {
     private boolean hasProtobufModules;
     private boolean hasAntlrModules;
     private String protocPath;
+    /** The protoc and protoc-gen-grpc-java for each version a module's protobuf plugin is configured with. */
+    private final Map<String, String> protocPathsByVersion = new LinkedHashMap<>();
+    private final Map<String, String> grpcJavaPluginPathsByVersion = new LinkedHashMap<>();
     private String grpcJavaPluginPath;
     private String antlrToolClasspath;
     private String jdtFormatterClasspath;
@@ -282,6 +286,10 @@ public class BuildFileGenerator {
         if (grpcJavaPluginPath != null) {
             sb.append("        runtime.setGrpcJavaPluginPath(").append(quote(grpcJavaPluginPath)).append(");\n");
         }
+        protocPathsByVersion.forEach((version, path) -> sb.append("        runtime.setProtocPath(")
+                .append(quote(version)).append(", ").append(quote(path)).append(");\n"));
+        grpcJavaPluginPathsByVersion.forEach((version, path) -> sb.append("        runtime.setGrpcJavaPluginPath(")
+                .append(quote(version)).append(", ").append(quote(path)).append(");\n"));
         if (antlrToolClasspath != null) {
             sb.append("        runtime.setAntlrToolClasspath(").append(quote(antlrToolClasspath)).append(");\n");
         }
@@ -446,6 +454,14 @@ public class BuildFileGenerator {
         return result;
     }
 
+    /** An executable artifact from the local repository, downloaded when it isn't there; null if it can't be found. */
+    private Path resolveToolExecutable(Path m2, String groupId, String artifactId, String version, String classifier) {
+        Path exe = m2.resolve(groupId.replace('.', '/')).resolve(artifactId).resolve(version)
+                .resolve(artifactId + "-" + version + "-" + classifier + ".exe");
+        if (Files.exists(exe)) return exe;
+        return resolver.resolveClassifiedArtifact(groupId, artifactId, version, classifier, "exe");
+    }
+
     private void resolveProtocPaths(List<ModuleInfo> modules) {
         String osName = System.getProperty("os.name", "").toLowerCase();
         String osArch = System.getProperty("os.arch", "");
@@ -469,10 +485,37 @@ public class BuildFileGenerator {
 
         Path m2 = Path.of(System.getProperty("user.home"), ".m2", "repository");
 
+        // Each module's protobuf plugin is configured with a protoc (and grpc plugin) version, and the code it
+        // generates only works with the matching protobuf runtime, so resolve the versions the modules ask for.
+        for (ModuleInfo m : modules) {
+            String v = m.getProtobufProtocVersion();
+            if (v != null && !protocPathsByVersion.containsKey(v)) {
+                Path exe = resolveToolExecutable(m2, "com.google.protobuf", "protoc", v, classifier);
+                if (exe != null) {
+                    protocPathsByVersion.put(v, exe.toString());
+                    Status.line("Resolved protoc " + v + ": " + exe);
+                }
+            }
+            String g = m.getProtobufGrpcPluginVersion();
+            if (g != null && m.isProtobufUsesGrpc() && !grpcJavaPluginPathsByVersion.containsKey(g)) {
+                Path exe = resolveToolExecutable(m2, "io.grpc", "protoc-gen-grpc-java", g, classifier);
+                if (exe != null) {
+                    grpcJavaPluginPathsByVersion.put(g, exe.toString());
+                    Status.line("Resolved protoc-gen-grpc-java " + g + ": " + exe);
+                }
+            }
+        }
+
+        // The default, for modules that don't say: the version the project's dependencies use if there is one, else
+        // one that is installed (the newest, so that it doesn't depend on the order of the directory listing).
+        if (protocVersion != null && protocPathsByVersion.containsKey(protocVersion)) {
+            protocPath = protocPathsByVersion.get(protocVersion);
+        }
         Path protocBase = m2.resolve("com/google/protobuf/protoc");
-        if (Files.isDirectory(protocBase)) {
+        if (protocPath == null && Files.isDirectory(protocBase)) {
             try (var versions = Files.list(protocBase)) {
                 protocPath = versions.filter(Files::isDirectory)
+                        .sorted(java.util.Comparator.comparing((Path v) -> v.getFileName().toString()).reversed())
                         .map(v -> {
                             String ver = v.getFileName().toString();
                             Path exe = v.resolve("protoc-" + ver + "-" + classifier + ".exe");
@@ -495,10 +538,14 @@ public class BuildFileGenerator {
 
         boolean needsGrpc = modules.stream().anyMatch(ModuleInfo::isProtobufUsesGrpc);
         if (needsGrpc) {
+            if (grpcVersion != null && grpcJavaPluginPathsByVersion.containsKey(grpcVersion)) {
+                grpcJavaPluginPath = grpcJavaPluginPathsByVersion.get(grpcVersion);
+            }
             Path grpcBase = m2.resolve("io/grpc/protoc-gen-grpc-java");
-            if (Files.isDirectory(grpcBase)) {
+            if (grpcJavaPluginPath == null && Files.isDirectory(grpcBase)) {
                 try (var versions = Files.list(grpcBase)) {
                     grpcJavaPluginPath = versions.filter(Files::isDirectory)
+                            .sorted(java.util.Comparator.comparing((Path v) -> v.getFileName().toString()).reversed())
                             .map(v -> {
                                 String ver = v.getFileName().toString();
                                 Path exe = v.resolve("protoc-gen-grpc-java-" + ver + "-" + classifier + ".exe");
