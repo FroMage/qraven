@@ -76,6 +76,26 @@ class DataModuleBuildTest {
     }
 
     @Test
+    void testCompilerArgumentsAreTheModulesOwn() {
+        ModuleInfo m = module();
+        m.setCompilerArgs(new ArrayList<>(List.of("-source", "17")));
+        m.setTestCompilerArgs(new ArrayList<>(List.of("--release", "17")));
+
+        ModuleBuild build = of(m);
+
+        assertThat(build.compilerArgs()).containsExactly("-source", "17");
+        assertThat(build.testCompilerArgs()).containsExactly("--release", "17");
+    }
+
+    @Test
+    void testCompilerArgumentsDefaultToTheMainOnesForStateWrittenWithoutThem() {
+        ModuleInfo m = module();
+        m.setCompilerArgs(new ArrayList<>(List.of("--release", "17")));
+
+        assertThat(of(m).testCompilerArgs()).containsExactly("--release", "17");
+    }
+
+    @Test
     void optionalClasspathEntriesAreKeptApartFromTheOthers() {
         ModuleInfo m = module();
         m.setCompileClasspath(new ArrayList<>(List.of("/a.jar", "/optional.jar", "/b.jar")));

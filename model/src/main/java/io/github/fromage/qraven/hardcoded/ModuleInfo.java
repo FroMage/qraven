@@ -19,6 +19,7 @@ public class ModuleInfo {
     private List<String> compileClasspath = new ArrayList<>();
     private List<String> annotationProcessorPaths = new ArrayList<>();
     private List<String> compilerArgs = new ArrayList<>();
+    private List<String> testCompilerArgs = new ArrayList<>();
     private List<String> reactorDependencies = new ArrayList<>();
     private boolean hasJavaSources;
     private boolean hasKotlinSources;
@@ -145,6 +146,8 @@ public class ModuleInfo {
 
     public List<String> getCompilerArgs() { return compilerArgs; }
     public void setCompilerArgs(List<String> compilerArgs) { this.compilerArgs = compilerArgs; }
+    public List<String> getTestCompilerArgs() { return testCompilerArgs; }
+    public void setTestCompilerArgs(List<String> testCompilerArgs) { this.testCompilerArgs = testCompilerArgs; }
 
     public List<String> getReactorDependencies() { return reactorDependencies; }
     public void setReactorDependencies(List<String> reactorDependencies) { this.reactorDependencies = reactorDependencies; }

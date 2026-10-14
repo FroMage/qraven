@@ -112,6 +112,8 @@ public abstract class ModuleBuild {
     public abstract List<String> annotationProcessorPaths();
     public abstract boolean isApCacheable();
     public abstract List<String> compilerArgs();
+    /** The compiler arguments for the test sources, which can differ from the main ones (see the compiler plugin's executions). */
+    public List<String> testCompilerArgs() { return compilerArgs(); }
     public abstract List<String> moduleDependencyIds();
     public abstract List<String> optionalModuleDependencyIds();
     public abstract boolean hasExtensionPlugin();
@@ -858,7 +860,7 @@ public abstract class ModuleBuild {
             if (progress != null) progress.phaseChanged(threadIdx, artifactId(), testCompilePhase, 0);
             t = System.currentTimeMillis();
             runtime.compile(testSourceDir(), testClassesDir(), testCp,
-                    testApPaths, isApCacheable(), compilerArgs(),
+                    testApPaths, isApCacheable(), testCompilerArgs(),
                     testExtraDirs.toArray(new Path[0]));
             recordPhase(testCompilePhase, t);
         }

@@ -375,6 +375,12 @@ class PomParserTest {
         void keepsTheAddExports() {
             assertThat(module.getCompilerArgs()).contains("--add-exports=java.base/jdk.internal.module=ALL-UNNAMED");
         }
+
+        @Test
+        void theTestCompilationKeepsReleaseAndLeavesTheMainExecutionsArgumentsOut() {
+            assertThat(module.getTestCompilerArgs()).containsSubsequence("--release", "17")
+                    .doesNotContain("--add-exports=java.base/jdk.internal.module=ALL-UNNAMED", "-source", "-target");
+        }
     }
 
     @Nested

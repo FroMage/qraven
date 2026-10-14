@@ -2202,6 +2202,7 @@ public class PomParser {
 
     private void extractCompilerConfig(Model model, ModuleInfo info, Set<String> reactorGAs) {
         List<String> compilerArgs = new ArrayList<>();
+        List<String> testCompilerArgs = new ArrayList<>();
         List<String> annotationProcessorPaths = new ArrayList<>();
         List<String> reactorApArtifactIds = new ArrayList<>();
 
@@ -2212,17 +2213,34 @@ public class PomParser {
         if (model.getBuild() != null && model.getBuild().getPluginManagement() != null) {
             extractCompilerConfigFromPlugins(
                     model.getBuild().getPluginManagement().getPlugins(),
-                    compilerArgs, annotationProcessorPaths, managedDeps,
+                    compilerArgs, testCompilerArgs, annotationProcessorPaths, managedDeps,
                     reactorGAs, projectVersion, reactorApArtifactIds);
         }
 
         if (model.getBuild() != null) {
             extractCompilerConfigFromPlugins(model.getBuild().getPlugins(),
-                    compilerArgs, annotationProcessorPaths, managedDeps,
+                    compilerArgs, testCompilerArgs, annotationProcessorPaths, managedDeps,
                     reactorGAs, projectVersion, reactorApArtifactIds);
         }
 
         Properties props = model.getProperties();
+        finishCompilerArgs(compilerArgs, props);
+        finishCompilerArgs(testCompilerArgs, props);
+
+        info.setCompilerArgs(compilerArgs);
+        info.setTestCompilerArgs(testCompilerArgs);
+        info.setAnnotationProcessorPaths(annotationProcessorPaths);
+        info.setDeclaredAnnotationProcessorPaths(new ArrayList<>(annotationProcessorPaths));
+        info.setApCacheable(checkApCacheable(annotationProcessorPaths));
+        for (String apArtifactId : reactorApArtifactIds) {
+            if (!info.getReactorDependencies().contains(apArtifactId)) {
+                info.getReactorDependencies().add(apArtifactId);
+            }
+        }
+    }
+
+    /** Applies the release/source/target properties and the default arguments to what the plugin config gave. */
+    private static void finishCompilerArgs(List<String> compilerArgs, Properties props) {
         String releaseProperty = props != null ? props.getProperty("maven.compiler.release") : null;
         boolean releaseDisabled = compilerArgs.remove(RELEASE_DISABLED);
         boolean hasRelease = compilerArgs.contains("--release")
@@ -2258,16 +2276,6 @@ public class PomParser {
         if (compilerArgs.isEmpty()) {
             compilerArgs.add("-parameters");
         }
-
-        info.setCompilerArgs(compilerArgs);
-        info.setAnnotationProcessorPaths(annotationProcessorPaths);
-        info.setDeclaredAnnotationProcessorPaths(new ArrayList<>(annotationProcessorPaths));
-        info.setApCacheable(checkApCacheable(annotationProcessorPaths));
-        for (String apArtifactId : reactorApArtifactIds) {
-            if (!info.getReactorDependencies().contains(apArtifactId)) {
-                info.getReactorDependencies().add(apArtifactId);
-            }
-        }
     }
 
     private static boolean checkApCacheable(List<String> apPaths) {
@@ -2290,8 +2298,15 @@ public class PomParser {
         return foundQuarkusProcessor;
     }
 
+    /**
+     * Reads the compiler plugin's configuration. The plugin-level configuration applies to both compilations,
+     * an execution's only to its own: {@code compilerArgs} gets what the main compile uses, {@code
+     * testCompilerArgs} what the test compile uses. An execution that is neither (no compile goal and not a
+     * default-compile one) counts for both.
+     */
     private void extractCompilerConfigFromPlugins(List<Plugin> plugins,
                                                    List<String> compilerArgs,
+                                                   List<String> testCompilerArgs,
                                                    List<String> annotationProcessorPaths,
                                                    List<Dependency> managedDeps,
                                                    Set<String> reactorGAs,
@@ -2303,29 +2318,37 @@ public class PomParser {
             }
             Xpp3Dom config = (Xpp3Dom) plugin.getConfiguration();
             if (config != null) {
-                extractCompilerConfig(config, compilerArgs, annotationProcessorPaths, managedDeps,
+                extractCompilerArgs(config, compilerArgs);
+                extractCompilerArgs(config, testCompilerArgs);
+                extractAnnotationProcessorPaths(config, annotationProcessorPaths, managedDeps,
                         reactorGAs, projectVersion, reactorApArtifactIds);
             }
 
             if (plugin.getExecutions() != null) {
                 for (PluginExecution exec : plugin.getExecutions()) {
                     Xpp3Dom execConfig = (Xpp3Dom) exec.getConfiguration();
-                    if (execConfig != null) {
-                        extractCompilerConfig(execConfig, compilerArgs, annotationProcessorPaths, managedDeps,
-                                reactorGAs, projectVersion, reactorApArtifactIds);
-                    }
+                    if (execConfig == null) continue;
+                    boolean test = isTestCompileExecution(exec);
+                    boolean main = isMainCompileExecution(exec);
+                    if (main || !test) extractCompilerArgs(execConfig, compilerArgs);
+                    if (test || !main) extractCompilerArgs(execConfig, testCompilerArgs);
+                    extractAnnotationProcessorPaths(execConfig, annotationProcessorPaths, managedDeps,
+                            reactorGAs, projectVersion, reactorApArtifactIds);
                 }
             }
         }
     }
 
-    private void extractCompilerConfig(Xpp3Dom config,
-                                       List<String> compilerArgs,
-                                       List<String> annotationProcessorPaths,
-                                       List<Dependency> managedDeps,
-                                       Set<String> reactorGAs,
-                                       String projectVersion,
-                                       List<String> reactorApArtifactIds) {
+    private static boolean isMainCompileExecution(PluginExecution exec) {
+        return exec.getGoals().contains("compile") || (exec.getId() != null && exec.getId().equals("default-compile"));
+    }
+
+    private static boolean isTestCompileExecution(PluginExecution exec) {
+        return exec.getGoals().contains("testCompile")
+                || (exec.getId() != null && exec.getId().equals("default-testCompile"));
+    }
+
+    private void extractCompilerArgs(Xpp3Dom config, List<String> compilerArgs) {
         Xpp3Dom releaseNode = config.getChild("release");
         if (releaseNode != null && releaseNode.getValue() != null && !releaseNode.getValue().isBlank()) {
             if (!compilerArgs.contains(RELEASE_DISABLED) && !compilerArgs.contains("--release")) {
@@ -2376,7 +2399,14 @@ public class PomParser {
                 }
             }
         }
+    }
 
+    private void extractAnnotationProcessorPaths(Xpp3Dom config,
+                                                 List<String> annotationProcessorPaths,
+                                                 List<Dependency> managedDeps,
+                                                 Set<String> reactorGAs,
+                                                 String projectVersion,
+                                                 List<String> reactorApArtifactIds) {
         Xpp3Dom appNode = config.getChild("annotationProcessorPaths");
         if (appNode != null) {
             for (Xpp3Dom pathEntry : appNode.getChildren()) {
