@@ -1044,6 +1044,10 @@ public class PomParser {
                 }
             }
 
+            info.setKotlinVersion(kotlinVersion);
+            info.setKotlinLanguageVersion(kotlinPluginSetting(plugin, "languageVersion"));
+            info.setKotlinApiVersion(kotlinPluginSetting(plugin, "apiVersion"));
+
             Xpp3Dom config = (Xpp3Dom) plugin.getConfiguration();
             if (config == null) return;
 
@@ -1081,6 +1085,16 @@ public class PomParser {
             }
             return;
         }
+    }
+
+    /** A setting of the Kotlin plugin: an execution's if one sets it, else the plugin's. */
+    private String kotlinPluginSetting(Plugin plugin, String name) {
+        String value = null;
+        for (PluginExecution exec : plugin.getExecutions()) {
+            String v = extractConfigValue(name, (Xpp3Dom) exec.getConfiguration(), null);
+            if (v != null) value = v;
+        }
+        return value != null ? value : extractConfigValue(name, (Xpp3Dom) plugin.getConfiguration(), null);
     }
 
     private String resolveKotlinCompilerPluginJar(String pluginName, String kotlinVersion) {

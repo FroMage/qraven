@@ -707,6 +707,11 @@ class PomParserTest {
         }
 
         @Test
+        void recordsTheKotlinVersionTheProjectBuildsWith() {
+            assertThat(findModule(modules, "kotlin-lib").getKotlinVersion()).isEqualTo("1.9.22");
+        }
+
+        @Test
         void libHasKotlinSources() {
             ModuleInfo lib = findModule(modules, "kotlin-lib");
             assertThat(lib.isHasKotlinSources()).isTrue();

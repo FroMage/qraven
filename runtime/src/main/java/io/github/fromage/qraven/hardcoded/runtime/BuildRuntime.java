@@ -643,12 +643,12 @@ public class BuildRuntime {
     public void compileKotlin(Path kotlinSourceDir, Path javaSourceDir, Path outputDir,
             List<String> classpath, Path... extraJavaSourceRoots) {
         compileKotlin(kotlinSourceDir, javaSourceDir, outputDir, classpath,
-                List.of(), List.of(), extraJavaSourceRoots);
+                List.of(), List.of(), List.of(), extraJavaSourceRoots);
     }
 
     public void compileKotlin(Path kotlinSourceDir, Path javaSourceDir, Path outputDir,
             List<String> classpath, List<String> compilerPlugins, List<String> pluginOptions,
-            Path... extraJavaSourceRoots) {
+            List<String> languageArgs, Path... extraJavaSourceRoots) {
         if (!Files.isDirectory(kotlinSourceDir)) return;
 
         List<Path> kotlinFiles;
@@ -666,7 +666,7 @@ public class BuildRuntime {
         }
 
         List<String> args = buildKotlinArgs(kotlinFiles, javaSourceDir, outputDir, classpath,
-                kotlinSourceDir, compilerPlugins, pluginOptions, extraJavaSourceRoots);
+                kotlinSourceDir, compilerPlugins, pluginOptions, languageArgs, extraJavaSourceRoots);
 
         compileKotlinClassic(args);
     }
@@ -693,14 +693,42 @@ public class BuildRuntime {
                 + " NoSuchMethodError in the plugin. Qraven needs to be updated to Kotlin " + m.group(2) + ".";
     }
 
+    /**
+     * The language and API version to compile Kotlin with. The embedded compiler defaults to its own newest
+     * language version, which can reject code the project's Kotlin accepts (a newer compiler is stricter about,
+     * for instance, missing annotation classes), so compile with the version the project builds with: the
+     * kotlin-maven-plugin's {@code languageVersion} and {@code apiVersion} if set, else the major and minor of its
+     * version. Nothing is passed when that version isn't one this compiler supports.
+     */
+    public static List<String> kotlinLanguageArgs(String projectVersion, String languageVersion, String apiVersion) {
+        org.jetbrains.kotlin.config.LanguageVersion language = null;
+        if (languageVersion != null && !languageVersion.isBlank()) {
+            language = org.jetbrains.kotlin.config.LanguageVersion.fromVersionString(languageVersion.trim());
+        } else if (projectVersion != null && !projectVersion.isBlank()) {
+            language = org.jetbrains.kotlin.config.LanguageVersion.Companion.fromFullVersionString(projectVersion.trim());
+        }
+        if (language == null || language.isUnsupported()) return List.of();
+        org.jetbrains.kotlin.config.LanguageVersion api = language;
+        if (apiVersion != null && !apiVersion.isBlank()) {
+            api = org.jetbrains.kotlin.config.LanguageVersion.fromVersionString(apiVersion.trim());
+        }
+        List<String> args = new ArrayList<>(List.of("-language-version", language.getVersionString()));
+        if (api != null && !api.isUnsupported()) {
+            args.add("-api-version");
+            args.add(api.getVersionString());
+        }
+        return args;
+    }
+
     private List<String> buildKotlinArgs(List<Path> kotlinFiles, Path javaSourceDir, Path outputDir,
             List<String> classpath, Path kotlinSourceDir,
-            List<String> compilerPlugins, List<String> pluginOptions,
+            List<String> compilerPlugins, List<String> pluginOptions, List<String> languageArgs,
             Path[] extraJavaSourceRoots) {
         List<String> args = new ArrayList<>();
         args.add("-d");
         args.add(outputDir.toString());
         args.add("-no-stdlib");
+        args.addAll(languageArgs);
         args.add("-jvm-target");
         args.add("21");
 

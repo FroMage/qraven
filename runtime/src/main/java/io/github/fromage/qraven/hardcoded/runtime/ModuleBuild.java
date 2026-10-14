@@ -103,6 +103,12 @@ public abstract class ModuleBuild {
     public boolean antlrVisitor() { return false; }
     public List<String> kotlinCompilerPlugins() { return List.of(); }
     public List<String> kotlinPluginOptions() { return List.of(); }
+    /** The Kotlin version the project builds with (the kotlin-maven-plugin's), or null. */
+    public String kotlinVersion() { return null; }
+    /** The kotlin-maven-plugin's explicit {@code languageVersion}, or null. */
+    public String kotlinLanguageVersion() { return null; }
+    /** The kotlin-maven-plugin's explicit {@code apiVersion}, or null. */
+    public String kotlinApiVersion() { return null; }
     public abstract String[][] resourceDirs();
     public abstract Map<String, String> filterProperties();
     public abstract boolean needsJandexIndex();
@@ -517,7 +523,7 @@ public abstract class ModuleBuild {
                         if (Files.isDirectory(quarkusDir)) kotlinExtraRoots.add(quarkusDir);
                     }
                     runtime.compileKotlin(kotlinSourceDir(), sourceDir(), classesDir(), fullClasspath,
-                            kotlinCompilerPlugins(), kotlinPluginOptions(),
+                            kotlinCompilerPlugins(), kotlinPluginOptions(), kotlinLanguageArgs(),
                             kotlinExtraRoots.toArray(new Path[0]));
                     fullClasspath.add(0, classesDir().toString());
                     recordPhase("kotlin", t);
@@ -839,7 +845,7 @@ public abstract class ModuleBuild {
             if (progress != null) progress.phaseChanged(threadIdx, artifactId(), "test-kotlin", 0);
             t = System.currentTimeMillis();
             runtime.compileKotlin(testKotlinSourceDir(), testSourceDir(), testClassesDir(), testCp,
-                    kotlinCompilerPlugins(), kotlinPluginOptions(),
+                    kotlinCompilerPlugins(), kotlinPluginOptions(), kotlinLanguageArgs(),
                     testExtraDirs.toArray(new Path[0]));
             testCp.add(0, testClassesDir().toString());
             recordPhase("test-kotlin", t);
@@ -864,6 +870,10 @@ public abstract class ModuleBuild {
                     testExtraDirs.toArray(new Path[0]));
             recordPhase(testCompilePhase, t);
         }
+    }
+
+    private List<String> kotlinLanguageArgs() {
+        return BuildRuntime.kotlinLanguageArgs(kotlinVersion(), kotlinLanguageVersion(), kotlinApiVersion());
     }
 
     private void recordPhase(String phase, long startTime) {

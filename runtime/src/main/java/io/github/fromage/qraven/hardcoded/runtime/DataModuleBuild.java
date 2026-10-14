@@ -95,6 +95,9 @@ public final class DataModuleBuild extends ModuleBuild {
     private final String pluginName;
     private final String pluginDescription;
     private final List<String> kotlinCompilerPlugins;
+    private final String kotlinVersion;
+    private final String kotlinLanguageVersion;
+    private final String kotlinApiVersion;
     private final List<String> kotlinPluginOptions;
     private final List<ShadeExecution> shadeExecutions;
     private final List<SourceGenerator> sourceGenerators;
@@ -196,6 +199,9 @@ public final class DataModuleBuild extends ModuleBuild {
         pluginName = m.getProjectName();
         pluginDescription = m.getProjectDescription();
         kotlinCompilerPlugins = List.copyOf(m.getKotlinCompilerPlugins());
+        kotlinVersion = m.getKotlinVersion();
+        kotlinLanguageVersion = m.getKotlinLanguageVersion();
+        kotlinApiVersion = m.getKotlinApiVersion();
         kotlinPluginOptions = List.copyOf(m.getKotlinPluginOptions());
 
         List<ShadeExecution> shades = new ArrayList<>();
@@ -304,6 +310,9 @@ public final class DataModuleBuild extends ModuleBuild {
     @Override public String pluginDescription() { return pluginDescription; }
     @Override public List<String> kotlinCompilerPlugins() { return kotlinCompilerPlugins; }
     @Override public List<String> kotlinPluginOptions() { return kotlinPluginOptions; }
+    @Override public String kotlinVersion() { return kotlinVersion; }
+    @Override public String kotlinLanguageVersion() { return kotlinLanguageVersion; }
+    @Override public String kotlinApiVersion() { return kotlinApiVersion; }
     @Override public List<ShadeExecution> shadeExecutions() { return shadeExecutions; }
     @Override public List<SourceGenerator> sourceGenerators() { return sourceGenerators; }
     @Override public List<String> generatorClasspath() { return generatorClasspath; }
@@ -345,7 +354,7 @@ public final class DataModuleBuild extends ModuleBuild {
                 hasSisuPlugin, generateCodeSkipWhen, quarkusBuildProperties, deploymentClasspath,
                 runtimeExtensionArtifacts, extensionDevProperties, protocVersion, grpcVersion, quarkusGrpcVersion,
                 allReactorExtensionDeployments, pluginName, pluginDescription, kotlinCompilerPlugins,
-                kotlinPluginOptions, shadeExecutions, sourceGenerators, generatorClasspath, addedSourceDirs
+                kotlinPluginOptions, kotlinVersion, kotlinLanguageVersion, kotlinApiVersion, shadeExecutions, sourceGenerators, generatorClasspath, addedSourceDirs
             };
             for (Object value : values) {
                 hash(digest, value);
