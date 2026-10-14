@@ -14,6 +14,7 @@ import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -84,6 +85,60 @@ class ClasspathWiringTest {
             assertThat(app.getDependencies())
                     .extracting(ModuleBuild::artifactId)
                     .containsExactly("ext-runtime");
+        }
+    }
+
+    @Nested
+    class ModulesNeedingKotlin {
+
+        private Set<String> skipped(StubModuleBuild... modules) {
+            Map<String, String> installPaths = new LinkedHashMap<>();
+            for (StubModuleBuild m : modules) {
+                installPaths.put(installPath(m), m.artifactId());
+            }
+            return BuildOrchestrator.modulesNeedingKotlin(List.of(modules), installPaths);
+        }
+
+        @Test
+        void kotlinModulesAndTheModulesThatDependOnThemAreSkipped() {
+            StubModuleBuild runtime = module("ext-kotlin").withKotlinSources();
+            StubModuleBuild deployment = module("ext-kotlin-deployment").withModuleDeps("ext-kotlin");
+            StubModuleBuild consumer = module("consumer").withModuleDeps("ext-kotlin-deployment");
+            StubModuleBuild unrelated = module("unrelated");
+
+            assertThat(skipped(runtime, deployment, consumer, unrelated))
+                    .containsExactlyInAnyOrder("ext-kotlin", "ext-kotlin-deployment", "consumer");
+        }
+
+        @Test
+        void aTestDependencyOnAKotlinModuleCountsSinceTheTestsAreCompiled() {
+            StubModuleBuild kotlin = module("kotlin-lib").withKotlinSources();
+            StubModuleBuild tested = module("tested").withTestModuleDeps("kotlin-lib");
+
+            assertThat(skipped(kotlin, tested)).containsExactlyInAnyOrder("kotlin-lib", "tested");
+        }
+
+        @Test
+        void anOptionalDependencyOnAKotlinModuleDoesNotSkipTheModule() {
+            StubModuleBuild kotlin = module("ext-kotlin").withKotlinSources();
+            StubModuleBuild ext = module("ext").withOptionalModuleDeps("ext-kotlin");
+            StubModuleBuild consumer = module("consumer").withModuleDeps("ext");
+
+            assertThat(skipped(kotlin, ext, consumer)).containsExactly("ext-kotlin");
+        }
+
+        @Test
+        void anApplicationBuiltWithAKotlinModulesDeploymentJarIsSkipped() {
+            StubModuleBuild kotlinDeployment = module("ext-kotlin-deployment").withKotlinSources();
+            StubModuleBuild app = module("app").withQuarkusBuildPlugin()
+                    .withDeploymentClasspath(installPath(kotlinDeployment));
+
+            assertThat(skipped(kotlinDeployment, app)).containsExactlyInAnyOrder("ext-kotlin-deployment", "app");
+        }
+
+        @Test
+        void nothingIsSkippedWithoutKotlinModules() {
+            assertThat(skipped(module("a"), module("b").withModuleDeps("a"))).isEmpty();
         }
     }
 

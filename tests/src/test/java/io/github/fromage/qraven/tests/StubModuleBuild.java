@@ -50,6 +50,11 @@ class StubModuleBuild extends ModuleBuild {
         return this;
     }
 
+    StubModuleBuild withKotlinSources() {
+        this.hasKotlinSources = true;
+        return this;
+    }
+
     StubModuleBuild withTestModuleDeps(String... ids) {
         this.testModuleDependencyIds = List.of(ids);
         return this;
@@ -59,6 +64,8 @@ class StubModuleBuild extends ModuleBuild {
         this.deploymentClasspath = List.of(paths);
         return this;
     }
+
+    private boolean hasKotlinSources;
 
     StubModuleBuild withQuarkusBuildPlugin() {
         this.hasQuarkusBuildPlugin = true;
@@ -97,7 +104,7 @@ class StubModuleBuild extends ModuleBuild {
     @Override public String packaging() { return "jar"; }
     @Override public Path baseDir() { return Path.of(artifactId); }
     @Override public boolean hasJavaSources() { return false; }
-    @Override public boolean hasKotlinSources() { return false; }
+    @Override public boolean hasKotlinSources() { return hasKotlinSources; }
     @Override public boolean hasProtobufSources() { return false; }
     @Override public boolean protobufUsesGrpc() { return false; }
     @Override public boolean protobufUsesMutiny() { return false; }

@@ -7,6 +7,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -108,19 +109,25 @@ public class BuildOrchestrator {
         }
 
         if (noKotlin) {
+            Set<String> skipped = modulesNeedingKotlin(byId.values(), installPathToArtifactId);
             List<String> kotlinNames = new ArrayList<>();
+            List<String> dependentNames = new ArrayList<>();
             for (ModuleBuild m : byId.values()) {
-                if (m.hasKotlinSources()) {
+                if (skipped.contains(m.artifactId())) {
                     m.markPreBuilt();
-                    kotlinNames.add(m.artifactId());
+                    (m.hasKotlinSources() ? kotlinNames : dependentNames).add(m.artifactId());
                 }
             }
-            if (!kotlinNames.isEmpty()) {
+            if (!skipped.isEmpty()) {
                 modules = new ArrayList<>(modules.stream()
-                        .filter(m -> !m.hasKotlinSources())
+                        .filter(m -> !skipped.contains(m.artifactId()))
                         .toList());
                 System.out.println("Skipping " + kotlinNames.size() + " Kotlin module(s): "
                         + String.join(", ", kotlinNames));
+                if (!dependentNames.isEmpty()) {
+                    System.out.println("Skipping " + dependentNames.size() + " module(s) that depend on them: "
+                            + String.join(", ", dependentNames));
+                }
             }
         }
 
@@ -673,6 +680,56 @@ public class BuildOrchestrator {
             }
         }
         return willRebuild;
+    }
+
+    /**
+     * The modules to leave out with {@code --no-kotlin}: those with Kotlin sources, and the modules that can't be
+     * built without them, i.e. that have one of them as a compile or test dependency, directly or through another
+     * such module, or that builds the application or generates code with the Quarkus deployment classpath when it has one (the
+     * jar won't exist). An optional dependency doesn't count: a module doesn't need it to build, and its jar is simply
+     * left off the classpath when it wasn't built.
+     *
+     * @param installPathToArtifactId the module each reactor jar, as a deployment classpath entry, belongs to
+     */
+    public static Set<String> modulesNeedingKotlin(Collection<ModuleBuild> modules,
+                                                   Map<String, String> installPathToArtifactId) {
+        Set<String> skipped = new LinkedHashSet<>();
+        for (ModuleBuild m : modules) {
+            if (m.hasKotlinSources()) skipped.add(m.artifactId());
+        }
+        boolean changed = !skipped.isEmpty();
+        while (changed) {
+            changed = false;
+            for (ModuleBuild m : modules) {
+                if (skipped.contains(m.artifactId())) continue;
+                if (hardDependencyIds(m).stream().anyMatch(skipped::contains)
+                        || deploymentModuleIds(m, installPathToArtifactId).stream().anyMatch(skipped::contains)) {
+                    skipped.add(m.artifactId());
+                    changed = true;
+                }
+            }
+        }
+        return skipped;
+    }
+
+    private static Set<String> deploymentModuleIds(ModuleBuild m, Map<String, String> installPathToArtifactId) {
+        Set<String> ids = new HashSet<>();
+        // an extension's descriptor tolerates a deployment jar that wasn't built; building or generating code doesn't
+        if (m.hasGenerateCodeGoal() || m.hasGenerateCodeTestsGoal() || m.hasQuarkusBuildPlugin()) {
+            for (String path : m.deploymentClasspath()) {
+                String id = installPathToArtifactId.get(path);
+                if (id != null) ids.add(id);
+            }
+        }
+        return ids;
+    }
+
+    private static Set<String> hardDependencyIds(ModuleBuild m) {
+        Set<String> ids = new HashSet<>(m.moduleDependencyIds());
+        ids.removeAll(m.optionalModuleDependencyIds());
+        ids.addAll(m.testModuleDependencyIds());
+        ids.addAll(m.testJarModuleDependencyIds());
+        return ids;
     }
 
     public static void wireDependencies(List<ModuleBuild> modules, Map<String, ModuleBuild> byId) {
