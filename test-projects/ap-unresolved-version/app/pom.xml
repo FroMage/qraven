@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>com.test</groupId>
+        <artifactId>ap-unresolved-version-parent</artifactId>
+        <version>1.0.0</version>
+    </parent>
+    <artifactId>ap-app</artifactId>
+    <name>AP App</name>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.test</groupId>
+            <artifactId>test-processor</artifactId>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <parameters>true</parameters>
+                    <annotationProcessorPaths>
+                        <path>
+                            <groupId>com.test</groupId>
+                            <artifactId>test-processor</artifactId>
+                            <!-- not defined in this project (it could be the imported BOM's): resolved like Maven does,
+                                 from the managed version -->
+                            <version>${processor.version}</version>
+                        </path>
+                    </annotationProcessorPaths>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

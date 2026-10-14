@@ -352,6 +352,19 @@ class PomParserTest {
     }
 
     @Nested
+    class UnresolvedProcessorVersion {
+
+        @Test
+        void usesTheManagedVersionWhenTheProcessorsVersionIsAnUndefinedProperty() {
+            ModuleInfo app = findModule(parseProject("ap-unresolved-version"), "ap-app");
+
+            assertThat(app.getAnnotationProcessorPaths())
+                    .hasSize(1)
+                    .allSatisfy(p -> assertThat(p).contains("test-processor/1.0.0/").doesNotContain("${"));
+        }
+    }
+
+    @Nested
     class EmptyReleaseOverride {
 
         static ModuleInfo module;

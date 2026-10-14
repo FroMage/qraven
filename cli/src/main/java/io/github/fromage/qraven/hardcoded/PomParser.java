@@ -2429,6 +2429,11 @@ public class PomParser {
                 Xpp3Dom verNode = pathEntry.getChild("version");
                 if (gidNode != null && aidNode != null) {
                     String ver = verNode != null ? verNode.getValue() : null;
+                    if (ver != null && ver.contains("${")) {
+                        // A property the project doesn't define (it may be the imported BOM's, which isn't
+                        // inherited): Maven's compiler plugin evaluates it to nothing and takes the managed version.
+                        ver = null;
+                    }
                     if (ver == null || ver.isBlank()) {
                         for (Dependency md : managedDeps) {
                             if (gidNode.getValue().equals(md.getGroupId())
