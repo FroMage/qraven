@@ -348,7 +348,7 @@ public abstract class ModuleBuild {
             failureMessage = "[" + artifactId() + "] SKIPPED: dependency failed: " + String.join(", ", failedDeps);
             if (progress != null) {
                 progress.moduleStarted(threadIdx, artifactId(), "skipped", 0);
-                progress.moduleCompleted(threadIdx, false);
+                progress.moduleCompleted(threadIdx, artifactId(), false);
             }
             mainBuildDone.complete(null);
             return;
@@ -363,7 +363,7 @@ public abstract class ModuleBuild {
                     mainBuildDone.complete(null);
                     if (progress != null) {
                         progress.moduleStarted(threadIdx, artifactId(), "up-to-date", 0);
-                        progress.moduleCompleted(threadIdx, true);
+                        progress.moduleCompleted(threadIdx, artifactId(), true);
                     }
                     return;
                 }
@@ -395,7 +395,7 @@ public abstract class ModuleBuild {
                     }
                     if (progress != null) {
                         progress.moduleStarted(threadIdx, artifactId(), "up-to-date", 0);
-                        progress.moduleCompleted(threadIdx, true);
+                        progress.moduleCompleted(threadIdx, artifactId(), true);
                     }
                     return;
                 }
@@ -674,7 +674,7 @@ public abstract class ModuleBuild {
                 System.err.println("[timing] [" + artifactId() + "] doBuild total: " + totalElapsed + "ms");
             }
             if (testDependencies.isEmpty() && testJarDependencies.isEmpty() && progress != null) {
-                progress.moduleCompleted(threadIdx, true);
+                progress.moduleCompleted(threadIdx, artifactId(), true);
             }
         } catch (Throwable e) {
             mainBuildSucceeded = false;
@@ -697,7 +697,7 @@ public abstract class ModuleBuild {
             }
             failureMessage = msg.toString();
             if (progress != null) {
-                progress.moduleCompleted(threadIdx, false);
+                progress.moduleCompleted(threadIdx, artifactId(), false);
             }
             throw new RuntimeException("Build failed for " + artifactId(), e);
         }
@@ -732,7 +732,7 @@ public abstract class ModuleBuild {
             if (!testDep.mainBuildSucceeded) {
                 failureMessage = "[" + artifactId() + "] FAILED: test dependency " + testDep.artifactId() + " failed";
                 if (progress != null) {
-                    progress.moduleCompleted(getThreadIndex(), false);
+                    progress.moduleCompleted(getThreadIndex(), artifactId(), false);
                 }
                 return;
             }
@@ -741,7 +741,7 @@ public abstract class ModuleBuild {
             if (!testJarDep.buildSucceeded) {
                 failureMessage = "[" + artifactId() + "] FAILED: test-jar dependency " + testJarDep.artifactId() + " failed";
                 if (progress != null) {
-                    progress.moduleCompleted(getThreadIndex(), false);
+                    progress.moduleCompleted(getThreadIndex(), artifactId(), false);
                 }
                 return;
             }
@@ -793,7 +793,7 @@ public abstract class ModuleBuild {
             buildSucceeded = true;
             if (progress != null) {
                 int threadIdx = getThreadIndex();
-                progress.moduleCompleted(threadIdx, true);
+                progress.moduleCompleted(threadIdx, artifactId(), true);
             }
         } catch (Throwable e) {
             buildSucceeded = false;
@@ -814,7 +814,7 @@ public abstract class ModuleBuild {
             }
             failureMessage = msg.toString();
             if (progress != null) {
-                progress.moduleCompleted(getThreadIndex(), false);
+                progress.moduleCompleted(getThreadIndex(), artifactId(), false);
             }
             throw new RuntimeException("Test compilation failed for " + artifactId(), e);
         }

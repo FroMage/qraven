@@ -2,7 +2,6 @@ package io.github.fromage.qraven.hardcoded.runtime;
 
 import java.io.PrintStream;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicInteger;
 
 public class ProgressDisplay {
 
@@ -15,11 +14,10 @@ public class ProgressDisplay {
     private static final String CURSOR_UP = ESC + "A";
     private static final String ERASE_LINE = ESC + "2K";
 
-    private final int totalModules;
     private final int rebuildCount;
     private final int threadCount;
-    private final AtomicInteger completed = new AtomicInteger();
-    private final AtomicInteger failed = new AtomicInteger();
+    /** How each module that has finished ended, so that one that reports twice (main build, then its tests) counts once. */
+    private final ConcurrentHashMap<String, Boolean> results = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Integer, String> threadStatus = new ConcurrentHashMap<>();
     private final long startTime;
     private final PrintStream out;
@@ -27,8 +25,11 @@ public class ProgressDisplay {
     private int lastLineCount;
     private final int termWidth;
 
-    public ProgressDisplay(int totalModules, int rebuildCount, int threadCount) {
-        this.totalModules = totalModules;
+    /**
+     * @param rebuildCount how many modules will be built; the bar goes from 0 to that, not to the number of modules
+     *                     in the project, most of which an incremental build leaves alone
+     */
+    public ProgressDisplay(int rebuildCount, int threadCount) {
         this.rebuildCount = rebuildCount;
         this.threadCount = threadCount;
         this.startTime = System.currentTimeMillis();
@@ -80,12 +81,9 @@ public class ProgressDisplay {
         moduleStarted(threadIndex, artifactId, phase, detail);
     }
 
-    public void moduleCompleted(int threadIndex, boolean success) {
-        if (success) {
-            completed.incrementAndGet();
-        } else {
-            failed.incrementAndGet();
-        }
+    public void moduleCompleted(int threadIndex, String artifactId, boolean success) {
+        // a module that failed stays failed, whatever it reported before
+        results.merge(artifactId, success, (before, now) -> before && now);
         threadStatus.remove(threadIndex);
         safeRender();
     }
@@ -111,10 +109,9 @@ public class ProgressDisplay {
 
         clearLines();
 
-        int done = completed.get();
-        int fail = failed.get();
-        int total = totalModules;
-        int processed = done + fail;
+        int fail = (int) results.values().stream().filter(ok -> !ok).count();
+        int processed = results.size();
+        int total = Math.max(rebuildCount, processed);
         long elapsed = System.currentTimeMillis() - startTime;
 
         String elapsedStr = formatTime(elapsed);
@@ -134,9 +131,6 @@ public class ProgressDisplay {
         }
         bar.append("] ");
         bar.append(processed).append('/').append(total);
-        if (rebuildCount < total) {
-            bar.append(" (").append(rebuildCount).append(" rebuilding)");
-        }
         if (fail > 0) bar.append(" (").append(RED).append(fail).append(" failed").append(RESET).append(BOLD).append(')');
         bar.append(' ').append(elapsedStr).append(eta);
         bar.append(RESET);

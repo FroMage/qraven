@@ -196,7 +196,7 @@ public class BuildOrchestrator {
 
         boolean noProgress = simpleMode || "true".equals(System.getProperty("no-progress"))
                 || System.getProperties().containsKey("no-progress");
-        ProgressDisplay progress = noProgress ? null : new ProgressDisplay(modules.size(), rebuildCount, effectiveThreads);
+        ProgressDisplay progress = noProgress ? null : new ProgressDisplay(rebuildCount, effectiveThreads);
 
         AtomicInteger threadIndexCounter = new AtomicInteger();
         ConcurrentHashMap<Long, Integer> threadIndices = new ConcurrentHashMap<>();
