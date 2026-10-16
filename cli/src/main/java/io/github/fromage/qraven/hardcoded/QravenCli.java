@@ -51,7 +51,9 @@ public class QravenCli {
         parser.setProgressListener((phase, detail, current, total) -> {
             String msg = switch (phase) {
                 case "scan" -> "Scanning modules... " + current + " found (" + detail + ")";
+                case "models" -> "Recomputing " + current + "/" + total + " (" + detail + ")";
                 case "resolve" -> "Resolving " + current + "/" + total + " (" + detail + ")";
+                case "metadata" -> "Collecting extension and build metadata...";
                 default -> phase + ": " + detail;
             };
             System.err.print(ERASE_LINE + "  " + msg);
@@ -289,6 +291,7 @@ public class QravenCli {
                         || !Files.isDirectory(outputDir.resolve("build-classes"))) {
                     why = "the previous generated build files are missing";
                 } else {
+                    long incrementalStart = System.currentTimeMillis();
                     var result = parser.parseIncremental(state.get());
                     if (result.usable()) {
                         modules = result.modules();
@@ -298,7 +301,11 @@ public class QravenCli {
                                 + modules.size() + " modules recomputed"
                                 + (result.recomputed().isEmpty() ? "" : " ("
                                 + result.recomputed().stream().limit(8).collect(Collectors.joining(", "))
-                                + (result.recomputed().size() > 8 ? ", ..." : "") + ")"));
+                                + (result.recomputed().size() > 8 ? ", ..." : "") + ")")
+                                + " in " + (System.currentTimeMillis() - incrementalStart) + "ms");
+                        if (!result.recomputed().isEmpty()) {
+                            System.out.println("Resolved dependencies in " + parser.getResolveTimeMs() + "ms");
+                        }
                     }
                     why = result.fallbackReason();
                 }

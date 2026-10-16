@@ -335,6 +335,7 @@ public class PomParser {
      */
     public IncrementalResult parseIncremental(StateStore.State state) {
         timings.reset();
+        long scanStart = System.currentTimeMillis();
         List<PomEntry> pomEntries = new ArrayList<>();
         Map<String, Path> reactorPoms = new LinkedHashMap<>();
         quickDiscoverPoms(projectRoot.resolve("pom.xml"), projectRoot, pomEntries, reactorPoms);
@@ -370,6 +371,7 @@ public class PomParser {
 
         ModuleInfo[] fresh = new ModuleInfo[dirty.size()];
         Model[] models = new Model[dirty.size()];
+        AtomicInteger modelCounter = new AtomicInteger();
         ExecutorService executor = Executors.newFixedThreadPool(threads);
         try {
             List<Future<?>> futures = new ArrayList<>();
@@ -386,6 +388,8 @@ public class PomParser {
                         fresh[slot] = info;
                         models[slot] = model;
                     }
+                    progress("models", fresh[slot] != null ? fresh[slot].getArtifactId() : old.getArtifactId(),
+                            modelCounter.incrementAndGet(), dirty.size());
                 }));
             }
             for (Future<?> f : futures) {
@@ -398,6 +402,7 @@ public class PomParser {
         } finally {
             executor.shutdown();
         }
+        scanTimeMs = System.currentTimeMillis() - scanStart;
         timings.lap("effective models (changed modules)");
 
         List<ModuleInfo> modules = new ArrayList<>(stored);
@@ -427,13 +432,16 @@ public class PomParser {
         }
         List<String> resolveTimings = Collections.synchronizedList(new ArrayList<>());
         long resolveStart = System.currentTimeMillis();
+        AtomicInteger resolveCounter = new AtomicInteger();
         executor = Executors.newFixedThreadPool(threads);
         try {
             List<Future<?>> futures = new ArrayList<>();
             for (ModuleInfo info : changed) {
-                futures.add(executor.submit(() -> resolveOwn(
-                        effectiveModels.get(info.getGroupId() + ":" + info.getArtifactId()), info, reactorGAs,
-                        resolveTimings)));
+                futures.add(executor.submit(() -> {
+                    resolveOwn(effectiveModels.get(info.getGroupId() + ":" + info.getArtifactId()), info,
+                            reactorGAs, resolveTimings);
+                    progress("resolve", info.getArtifactId(), resolveCounter.incrementAndGet(), changed.size());
+                }));
             }
             for (Future<?> f : futures) {
                 try {
@@ -453,6 +461,7 @@ public class PomParser {
         failOnUnresolvedDependencies();
         timings.lap("write generate.log");
 
+        progress("metadata", "", 0, 0);
         collectExtensionAndBuildMetadata(changed, modules, reactorGAs, effectiveModels);
         crossModulePhases(modules, reactorGAs);
         failOnUnresolvedDependencies();

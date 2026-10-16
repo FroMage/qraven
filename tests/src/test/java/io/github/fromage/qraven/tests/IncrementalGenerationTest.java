@@ -168,6 +168,17 @@ class IncrementalGenerationTest {
     }
 
     @Test
+    void anIncrementalGenerationReportsItsProgressAndHowLongItTook(@TempDir Path tmp) throws Exception {
+        String output = check("multi-module", tmp, p -> addDependency(p.resolve("util/pom.xml"), OPENTEST4J));
+
+        assertThat(output)
+                .contains("Recomputing 1/1 (util)")
+                .contains("Resolving 1/1 (util)")
+                .containsPattern("modules recomputed \\(com\\.test:util\\) in \\d+ms")
+                .containsPattern("Resolved dependencies in \\d+ms");
+    }
+
+    @Test
     void changingAParentProperty_recomputesTheModulesThatInheritIt(@TempDir Path tmp) throws Exception {
         String output = check("multi-module", tmp, p -> edit(p.resolve("pom.xml"),
                 "<maven.compiler.release>17</maven.compiler.release>",
