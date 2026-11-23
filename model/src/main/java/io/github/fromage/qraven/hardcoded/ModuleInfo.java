@@ -105,6 +105,10 @@ public class ModuleInfo {
     private Map<String, String> inputPomHashes = new LinkedHashMap<>();
     /** The annotation processor paths as declared, before reactor processors' classpaths are added to them. */
     private List<String> declaredAnnotationProcessorPaths = new ArrayList<>();
+    /** The annotation processor paths for the test compilation, which can differ from the main ones. */
+    private List<String> testAnnotationProcessorPaths = new ArrayList<>();
+    private List<String> declaredTestAnnotationProcessorPaths = new ArrayList<>();
+    private boolean testApCacheable;
 
     public record ResourceDir(String directory, boolean filtering, String targetPath,
             List<String> includes, List<String> excludes) {
@@ -121,6 +125,14 @@ public class ModuleInfo {
 
     public Map<String, String> getInputPomHashes() { return inputPomHashes; }
     public void setInputPomHashes(Map<String, String> v) { this.inputPomHashes = v; }
+
+    public List<String> getDeclaredTestAnnotationProcessorPaths() { return declaredTestAnnotationProcessorPaths; }
+    public void setDeclaredTestAnnotationProcessorPaths(List<String> v) { this.declaredTestAnnotationProcessorPaths = v; }
+
+    public List<String> getTestAnnotationProcessorPaths() { return testAnnotationProcessorPaths; }
+    public void setTestAnnotationProcessorPaths(List<String> v) { this.testAnnotationProcessorPaths = v; }
+    public boolean isTestApCacheable() { return testApCacheable; }
+    public void setTestApCacheable(boolean v) { this.testApCacheable = v; }
 
     public List<String> getDeclaredAnnotationProcessorPaths() { return declaredAnnotationProcessorPaths; }
     public void setDeclaredAnnotationProcessorPaths(List<String> v) { this.declaredAnnotationProcessorPaths = v; }

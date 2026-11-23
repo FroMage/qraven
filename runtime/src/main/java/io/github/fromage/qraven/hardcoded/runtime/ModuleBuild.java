@@ -40,6 +40,7 @@ public abstract class ModuleBuild {
     private List<String> resolvedClasspath;
     private Set<String> resolvedOptionalClasspath;
     private List<String> resolvedAnnotationProcessorPaths;
+    private List<String> resolvedTestAnnotationProcessorPaths;
     private volatile List<String> mainBuildClasspath;
     private volatile Set<String> mainBuildAdded;
     private volatile boolean mainBuildSkipFormat;
@@ -73,6 +74,13 @@ public abstract class ModuleBuild {
             resolvedOptionalClasspath = new HashSet<>(resolvePaths(optionalCompileClasspath()));
         }
         return resolvedOptionalClasspath;
+    }
+
+    public List<String> resolvedTestAnnotationProcessorPaths() {
+        if (resolvedTestAnnotationProcessorPaths == null) {
+            resolvedTestAnnotationProcessorPaths = resolvePaths(testAnnotationProcessorPaths());
+        }
+        return resolvedTestAnnotationProcessorPaths;
     }
 
     public List<String> resolvedAnnotationProcessorPaths() {
@@ -117,6 +125,8 @@ public abstract class ModuleBuild {
     public abstract List<String> optionalCompileClasspath();
     public abstract List<String> annotationProcessorPaths();
     public abstract boolean isApCacheable();
+    public abstract List<String> testAnnotationProcessorPaths();
+    public abstract boolean isTestApCacheable();
     public abstract List<String> compilerArgs();
     /** The compiler arguments for the test sources, which can differ from the main ones (see the compiler plugin's executions). */
     public List<String> testCompilerArgs() { return compilerArgs(); }
@@ -867,12 +877,12 @@ public abstract class ModuleBuild {
         }
 
         if (hasTestJavaSources() || !testExtraDirs.isEmpty()) {
-            List<String> testApPaths = resolvedAnnotationProcessorPaths();
+            List<String> testApPaths = resolvedTestAnnotationProcessorPaths();
             String testCompilePhase = testApPaths.isEmpty() ? "test-compile" : "test-compile+apt";
             if (progress != null) progress.phaseChanged(threadIdx, artifactId(), testCompilePhase, 0);
             t = System.currentTimeMillis();
             runtime.compile(testSourceDir(), testClassesDir(), testCp,
-                    testApPaths, isApCacheable(), testCompilerArgs(),
+                    testApPaths, isTestApCacheable(), testCompilerArgs(),
                     testExtraDirs.toArray(new Path[0]));
             recordPhase(testCompilePhase, t);
         }

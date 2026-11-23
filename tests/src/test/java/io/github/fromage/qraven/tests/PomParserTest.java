@@ -568,6 +568,32 @@ class PomParserTest {
     }
 
     @Nested
+    class PerCompilationProcessors {
+
+        static List<ModuleInfo> modules;
+
+        @BeforeAll
+        static void parse() {
+            modules = parseProject("per-compilation-processors");
+        }
+
+        @Test
+        void processorOfTheCompileExecutionIsNotUsedForTests() {
+            ModuleInfo m = findModule(modules, "main-only");
+            assertThat(m.getAnnotationProcessorPaths()).anyMatch(p -> p.contains("test-processor"));
+            assertThat(m.getTestAnnotationProcessorPaths()).isEmpty();
+            assertThat(m.isTestApCacheable()).isFalse();
+        }
+
+        @Test
+        void processorOfTheTestCompileExecutionIsNotUsedForMain() {
+            ModuleInfo m = findModule(modules, "test-only");
+            assertThat(m.getAnnotationProcessorPaths()).isEmpty();
+            assertThat(m.getTestAnnotationProcessorPaths()).anyMatch(p -> p.contains("test-processor"));
+        }
+    }
+
+    @Nested
     class AnnotationProcessor {
 
         static List<ModuleInfo> modules;
@@ -592,6 +618,13 @@ class PomParserTest {
         void appApPathContainsProcessor() {
             ModuleInfo app = findModule(modules, "ap-app");
             assertThat(app.getAnnotationProcessorPaths())
+                    .anyMatch(p -> p.contains("test-processor"));
+        }
+
+        @Test
+        void pluginLevelProcessorAppliesToTestsToo() {
+            ModuleInfo app = findModule(modules, "ap-app");
+            assertThat(app.getTestAnnotationProcessorPaths())
                     .anyMatch(p -> p.contains("test-processor"));
         }
 

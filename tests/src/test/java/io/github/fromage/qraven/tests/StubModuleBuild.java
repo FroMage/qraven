@@ -116,6 +116,8 @@ class StubModuleBuild extends ModuleBuild {
     @Override public List<String> optionalCompileClasspath() { return optionalCompileClasspath; }
     @Override public List<String> annotationProcessorPaths() { return List.of(); }
     @Override public boolean isApCacheable() { return false; }
+    @Override public List<String> testAnnotationProcessorPaths() { return List.of(); }
+    @Override public boolean isTestApCacheable() { return false; }
     @Override public List<String> compilerArgs() { return List.of(); }
     @Override public List<String> moduleDependencyIds() { return moduleDependencyIds; }
     @Override public List<String> optionalModuleDependencyIds() { return optionalModuleDependencyIds; }

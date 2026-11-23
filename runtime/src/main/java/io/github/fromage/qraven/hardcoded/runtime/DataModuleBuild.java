@@ -55,6 +55,8 @@ public final class DataModuleBuild extends ModuleBuild {
     private final List<String> testCompileClasspath;
     private final List<String> annotationProcessorPaths;
     private final boolean apCacheable;
+    private final List<String> testAnnotationProcessorPaths;
+    private final boolean testApCacheable;
     private final List<String> compilerArgs;
     private final List<String> testCompilerArgs;
     private final List<String> moduleDependencyIds;
@@ -154,6 +156,8 @@ public final class DataModuleBuild extends ModuleBuild {
         testCompileClasspath = portable(m.getTestCompileClasspath());
         annotationProcessorPaths = portable(m.getAnnotationProcessorPaths());
         apCacheable = m.isApCacheable();
+        testAnnotationProcessorPaths = portable(m.getTestAnnotationProcessorPaths());
+        testApCacheable = m.isTestApCacheable();
         compilerArgs = List.copyOf(m.getCompilerArgs());
         // generation state written before the test arguments were recorded has none; it never is empty otherwise
         testCompilerArgs = m.getTestCompilerArgs().isEmpty() ? compilerArgs : List.copyOf(m.getTestCompilerArgs());
@@ -273,6 +277,8 @@ public final class DataModuleBuild extends ModuleBuild {
     @Override public List<String> testCompileClasspath() { return testCompileClasspath; }
     @Override public List<String> annotationProcessorPaths() { return annotationProcessorPaths; }
     @Override public boolean isApCacheable() { return apCacheable; }
+    @Override public List<String> testAnnotationProcessorPaths() { return testAnnotationProcessorPaths; }
+    @Override public boolean isTestApCacheable() { return testApCacheable; }
     @Override public List<String> compilerArgs() { return compilerArgs; }
     @Override public List<String> testCompilerArgs() { return testCompilerArgs; }
     @Override public List<String> moduleDependencyIds() { return moduleDependencyIds; }
@@ -349,7 +355,8 @@ public final class DataModuleBuild extends ModuleBuild {
                 needsJandexIndex, platformPropertiesFileName, flattenedPomFile, hasExtensionPlugin,
                 hasImpsortPlugin, hasSpotlessPlugin, hasEnforcerPlugin,
                 extensionValidationSkipWhen, resourceDirs, filterProperties, manifestEntries, compileClasspath,
-                optionalCompileClasspath, testCompileClasspath, annotationProcessorPaths, apCacheable, compilerArgs, testCompilerArgs,
+                optionalCompileClasspath, testCompileClasspath, annotationProcessorPaths, apCacheable,
+                testAnnotationProcessorPaths, testApCacheable, compilerArgs, testCompilerArgs,
                 moduleDependencyIds, optionalModuleDependencyIds, testModuleDependencyIds, testJarModuleDependencyIds,
                 extensionDescriptorProperties, extensionProjectName, extensionProjectDescription, extensionScmUrl,
                 extensionMinimumJavaVersion, extensionModelDeps, extensionReactorGAs, extensionParentFirstArtifacts,

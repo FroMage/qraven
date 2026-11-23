@@ -150,6 +150,7 @@ public class BuildOrchestrator {
         for (ModuleBuild m : modules) {
             allJars.addAll(m.resolvedClasspath());
             allJars.addAll(m.resolvedAnnotationProcessorPaths());
+            allJars.addAll(m.resolvedTestAnnotationProcessorPaths());
         }
 
         List<String> missing = allJars.stream()

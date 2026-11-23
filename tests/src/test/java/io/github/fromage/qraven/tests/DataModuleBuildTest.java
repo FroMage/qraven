@@ -194,7 +194,7 @@ class DataModuleBuildTest {
 
     /** Generation bookkeeping that the build never reads, so changing it must not rebuild the module. */
     private static final Set<String> NOT_READ_BY_THE_BUILD = Set.of(
-            "inputPomHashes", "declaredAnnotationProcessorPaths", "parentGroupId", "parentArtifactId", "pomFile",
+            "inputPomHashes", "declaredAnnotationProcessorPaths", "declaredTestAnnotationProcessorPaths", "parentGroupId", "parentArtifactId", "pomFile",
             "reactorDependencyExclusions", "generatorPluginDependencies", "formatterPluginVersion",
             "spotlessPluginVersion", "flattenedBomModel");
 

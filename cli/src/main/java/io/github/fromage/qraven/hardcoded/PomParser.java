@@ -2231,6 +2231,7 @@ public class PomParser {
         List<String> compilerArgs = new ArrayList<>();
         List<String> testCompilerArgs = new ArrayList<>();
         List<String> annotationProcessorPaths = new ArrayList<>();
+        List<String> testAnnotationProcessorPaths = new ArrayList<>();
         List<String> reactorApArtifactIds = new ArrayList<>();
 
         List<Dependency> managedDeps = model.getDependencyManagement() != null
@@ -2240,13 +2241,13 @@ public class PomParser {
         if (model.getBuild() != null && model.getBuild().getPluginManagement() != null) {
             extractCompilerConfigFromPlugins(
                     model.getBuild().getPluginManagement().getPlugins(),
-                    compilerArgs, testCompilerArgs, annotationProcessorPaths, managedDeps,
+                    compilerArgs, testCompilerArgs, annotationProcessorPaths, testAnnotationProcessorPaths, managedDeps,
                     reactorGAs, projectVersion, reactorApArtifactIds);
         }
 
         if (model.getBuild() != null) {
             extractCompilerConfigFromPlugins(model.getBuild().getPlugins(),
-                    compilerArgs, testCompilerArgs, annotationProcessorPaths, managedDeps,
+                    compilerArgs, testCompilerArgs, annotationProcessorPaths, testAnnotationProcessorPaths, managedDeps,
                     reactorGAs, projectVersion, reactorApArtifactIds);
         }
 
@@ -2259,6 +2260,9 @@ public class PomParser {
         info.setAnnotationProcessorPaths(annotationProcessorPaths);
         info.setDeclaredAnnotationProcessorPaths(new ArrayList<>(annotationProcessorPaths));
         info.setApCacheable(checkApCacheable(annotationProcessorPaths));
+        info.setTestAnnotationProcessorPaths(testAnnotationProcessorPaths);
+        info.setDeclaredTestAnnotationProcessorPaths(new ArrayList<>(testAnnotationProcessorPaths));
+        info.setTestApCacheable(checkApCacheable(testAnnotationProcessorPaths));
         for (String apArtifactId : reactorApArtifactIds) {
             if (!info.getReactorDependencies().contains(apArtifactId)) {
                 info.getReactorDependencies().add(apArtifactId);
@@ -2334,7 +2338,8 @@ public class PomParser {
     private void extractCompilerConfigFromPlugins(List<Plugin> plugins,
                                                    List<String> compilerArgs,
                                                    List<String> testCompilerArgs,
-                                                   List<String> annotationProcessorPaths,
+                                                   List<String> mainApPaths,
+                                                   List<String> testApPaths,
                                                    List<Dependency> managedDeps,
                                                    Set<String> reactorGAs,
                                                    String projectVersion,
@@ -2347,8 +2352,13 @@ public class PomParser {
             if (config != null) {
                 extractCompilerArgs(config, compilerArgs);
                 extractCompilerArgs(config, testCompilerArgs);
-                extractAnnotationProcessorPaths(config, annotationProcessorPaths, managedDeps,
+                // plugin-level processors apply to both the main and the test compilation
+                List<String> declared = extractAnnotationProcessorPaths(config, managedDeps,
                         reactorGAs, projectVersion, reactorApArtifactIds);
+                if (declared != null) {
+                    mainApPaths.addAll(declared);
+                    testApPaths.addAll(declared);
+                }
             }
 
             if (plugin.getExecutions() != null) {
@@ -2359,8 +2369,18 @@ public class PomParser {
                     boolean main = isMainCompileExecution(exec);
                     if (main || !test) extractCompilerArgs(execConfig, compilerArgs);
                     if (test || !main) extractCompilerArgs(execConfig, testCompilerArgs);
-                    extractAnnotationProcessorPaths(execConfig, annotationProcessorPaths, managedDeps,
+                    List<String> declared = extractAnnotationProcessorPaths(execConfig, managedDeps,
                             reactorGAs, projectVersion, reactorApArtifactIds);
+                    if (declared == null) continue;
+                    // An execution's own configuration replaces the plugin-level one, as in Maven.
+                    if (main || !test) {
+                        mainApPaths.clear();
+                        mainApPaths.addAll(declared);
+                    }
+                    if (test || !main) {
+                        testApPaths.clear();
+                        testApPaths.addAll(declared);
+                    }
                 }
             }
         }
@@ -2428,53 +2448,57 @@ public class PomParser {
         }
     }
 
-    private void extractAnnotationProcessorPaths(Xpp3Dom config,
-                                                 List<String> annotationProcessorPaths,
-                                                 List<Dependency> managedDeps,
-                                                 Set<String> reactorGAs,
-                                                 String projectVersion,
-                                                 List<String> reactorApArtifactIds) {
+    /** The processors declared by this configuration, or null if it has no annotationProcessorPaths. */
+    private List<String> extractAnnotationProcessorPaths(Xpp3Dom config,
+                                                         List<Dependency> managedDeps,
+                                                         Set<String> reactorGAs,
+                                                         String projectVersion,
+                                                         List<String> reactorApArtifactIds) {
         Xpp3Dom appNode = config.getChild("annotationProcessorPaths");
-        if (appNode != null) {
-            for (Xpp3Dom pathEntry : appNode.getChildren()) {
-                Xpp3Dom gidNode = pathEntry.getChild("groupId");
-                Xpp3Dom aidNode = pathEntry.getChild("artifactId");
-                Xpp3Dom verNode = pathEntry.getChild("version");
-                if (gidNode != null && aidNode != null) {
-                    String ver = verNode != null ? verNode.getValue() : null;
-                    if (ver != null && ver.contains("${")) {
-                        // A property the project doesn't define (it may be the imported BOM's, which isn't
-                        // inherited): Maven's compiler plugin evaluates it to nothing and takes the managed version.
-                        ver = null;
-                    }
-                    if (ver == null || ver.isBlank()) {
-                        for (Dependency md : managedDeps) {
-                            if (gidNode.getValue().equals(md.getGroupId())
-                                    && aidNode.getValue().equals(md.getArtifactId())) {
-                                ver = md.getVersion();
-                                break;
-                            }
+        if (appNode == null) {
+            return null;
+        }
+        List<String> annotationProcessorPaths = new ArrayList<>();
+        for (Xpp3Dom pathEntry : appNode.getChildren()) {
+            Xpp3Dom gidNode = pathEntry.getChild("groupId");
+            Xpp3Dom aidNode = pathEntry.getChild("artifactId");
+            Xpp3Dom verNode = pathEntry.getChild("version");
+            if (gidNode != null && aidNode != null) {
+                String ver = verNode != null ? verNode.getValue() : null;
+                if (ver != null && ver.contains("${")) {
+                    // A property the project doesn't define (it may be the imported BOM's, which isn't
+                    // inherited): Maven's compiler plugin evaluates it to nothing and takes the managed version.
+                    ver = null;
+                }
+                if (ver == null || ver.isBlank()) {
+                    for (Dependency md : managedDeps) {
+                        if (gidNode.getValue().equals(md.getGroupId())
+                                && aidNode.getValue().equals(md.getArtifactId())) {
+                            ver = md.getVersion();
+                            break;
                         }
                     }
-                    if ((ver == null || ver.isBlank())
-                            && reactorGAs.contains(gidNode.getValue() + ":" + aidNode.getValue())) {
-                        ver = projectVersion;
-                    }
-                    if (ver != null && !ver.isBlank()) {
-                        if (reactorGAs.contains(gidNode.getValue() + ":" + aidNode.getValue())) {
-                            annotationProcessorPaths.add(
-                                    resolver.expectedArtifactPath(gidNode.getValue(), aidNode.getValue(), ver));
-                            reactorApArtifactIds.add(aidNode.getValue());
-                        } else {
-                            List<String> resolved = resolver.resolveAnnotationProcessorPath(
-                                    gidNode.getValue(), aidNode.getValue(), ver,
-                                    managedDeps);
-                            annotationProcessorPaths.addAll(resolved);
-                        }
+                }
+                if ((ver == null || ver.isBlank())
+                        && reactorGAs.contains(gidNode.getValue() + ":" + aidNode.getValue())) {
+                    ver = projectVersion;
+                }
+                if (ver != null && !ver.isBlank()) {
+                    if (reactorGAs.contains(gidNode.getValue() + ":" + aidNode.getValue())) {
+                        annotationProcessorPaths.add(
+                                resolver.expectedArtifactPath(gidNode.getValue(), aidNode.getValue(), ver));
+                        reactorApArtifactIds.add(aidNode.getValue());
+                    } else {
+                        List<String> resolved = resolver.resolveAnnotationProcessorPath(
+                                gidNode.getValue(), aidNode.getValue(), ver,
+                                managedDeps);
+                        annotationProcessorPaths.addAll(resolved);
                     }
                 }
             }
         }
+
+        return annotationProcessorPaths;
     }
 
     private void resolveReactorAnnotationProcessorClasspaths(List<ModuleInfo> modules, Set<String> reactorGAs) {
@@ -2486,36 +2510,45 @@ public class PomParser {
             if (!info.getDeclaredAnnotationProcessorPaths().isEmpty()) {
                 info.setAnnotationProcessorPaths(new ArrayList<>(info.getDeclaredAnnotationProcessorPaths()));
             }
-            List<String> apPaths = info.getAnnotationProcessorPaths();
-            if (apPaths.isEmpty()) continue;
-            List<String> expanded = new ArrayList<>();
-            for (String path : apPaths) {
-                expanded.add(path);
-                for (ModuleInfo m : modules) {
-                    String expectedPath = resolver.expectedArtifactPath(m.getGroupId(), m.getArtifactId(), m.getVersion());
-                    if (expectedPath.equals(path)) {
-                        for (String cp : m.getCompileClasspath()) {
-                            if (!expanded.contains(cp) && !apPaths.contains(cp)) {
-                                expanded.add(cp);
-                            }
+            if (!info.getDeclaredTestAnnotationProcessorPaths().isEmpty()) {
+                info.setTestAnnotationProcessorPaths(new ArrayList<>(info.getDeclaredTestAnnotationProcessorPaths()));
+            }
+            List<String> expanded = expandReactorProcessors(info.getAnnotationProcessorPaths(), modules, byArtifactId);
+            if (expanded != null) info.setAnnotationProcessorPaths(expanded);
+            expanded = expandReactorProcessors(info.getTestAnnotationProcessorPaths(), modules, byArtifactId);
+            if (expanded != null) info.setTestAnnotationProcessorPaths(expanded);
+        }
+    }
+
+    /** The paths plus the classpaths of the reactor processors among them, or null if nothing was added. */
+    private List<String> expandReactorProcessors(List<String> apPaths, List<ModuleInfo> modules,
+                                                 Map<String, ModuleInfo> byArtifactId) {
+        if (apPaths.isEmpty()) return null;
+        List<String> expanded = new ArrayList<>();
+        for (String path : apPaths) {
+            expanded.add(path);
+            for (ModuleInfo m : modules) {
+                String expectedPath = resolver.expectedArtifactPath(m.getGroupId(), m.getArtifactId(), m.getVersion());
+                if (expectedPath.equals(path)) {
+                    for (String cp : m.getCompileClasspath()) {
+                        if (!expanded.contains(cp) && !apPaths.contains(cp)) {
+                            expanded.add(cp);
                         }
-                        for (String depId : m.getReactorDependencies()) {
-                            ModuleInfo dep = byArtifactId.get(depId);
-                            if (dep != null) {
-                                String depPath = resolver.expectedArtifactPath(dep.getGroupId(), dep.getArtifactId(), dep.getVersion());
-                                if (!expanded.contains(depPath) && !apPaths.contains(depPath)) {
-                                    expanded.add(depPath);
-                                }
-                            }
-                        }
-                        break;
                     }
+                    for (String depId : m.getReactorDependencies()) {
+                        ModuleInfo dep = byArtifactId.get(depId);
+                        if (dep != null) {
+                            String depPath = resolver.expectedArtifactPath(dep.getGroupId(), dep.getArtifactId(), dep.getVersion());
+                            if (!expanded.contains(depPath) && !apPaths.contains(depPath)) {
+                                expanded.add(depPath);
+                            }
+                        }
+                    }
+                    break;
                 }
             }
-            if (expanded.size() > apPaths.size()) {
-                info.setAnnotationProcessorPaths(expanded);
-            }
         }
+        return expanded.size() > apPaths.size() ? expanded : null;
     }
 
     private void resolveDependencies(Model model, ModuleInfo info, Set<String> reactorGAs,
