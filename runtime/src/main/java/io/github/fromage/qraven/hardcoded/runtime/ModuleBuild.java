@@ -30,6 +30,7 @@ public abstract class ModuleBuild {
     protected volatile boolean mainBuildSucceeded;
     private List<ModuleBuild> dependencies = List.of();
     private List<ModuleBuild> testDependencies = List.of();
+    private List<ModuleBuild> buildOrderDependencies = List.of();
     private List<ModuleBuild> testJarDependencies = List.of();
     private ProgressDisplay progress;
     private BuildStats stats;
@@ -107,6 +108,8 @@ public abstract class ModuleBuild {
     public List<String> testCompileClasspath() { return List.of(); }
     public List<String> testModuleDependencyIds() { return List.of(); }
     public List<String> testJarModuleDependencyIds() { return List.of(); }
+    /** Reactor modules to build first that are not on any classpath (dependencies of type pom). */
+    public List<String> buildOrderModuleDependencyIds() { return List.of(); }
     public boolean hasAntlrSources() { return false; }
     public boolean antlrVisitor() { return false; }
     public List<String> kotlinCompilerPlugins() { return List.of(); }
@@ -205,6 +208,20 @@ public abstract class ModuleBuild {
         this.testDependencies = testDependencies;
     }
 
+    /** Modules to build first that contribute nothing to any classpath (see {@link #buildOrderModuleDependencyIds()}). */
+    public void setBuildOrderDependencies(List<ModuleBuild> buildOrderDependencies) {
+        this.buildOrderDependencies = buildOrderDependencies;
+    }
+
+    /** Whether the test compilation has to wait for other reactor modules, so it can't be part of the main build. */
+    private boolean hasTestOrdering() {
+        return !testDependencies.isEmpty() || !testJarDependencies.isEmpty() || !buildOrderDependencies.isEmpty();
+    }
+
+    public List<ModuleBuild> getBuildOrderDependencies() {
+        return buildOrderDependencies;
+    }
+
     public List<ModuleBuild> getTestDependencies() {
         return testDependencies;
     }
@@ -258,7 +275,7 @@ public abstract class ModuleBuild {
         buildScheduledAt = System.currentTimeMillis();
         try {
             doBuild();
-            if (!testDependencies.isEmpty() || !testJarDependencies.isEmpty()) {
+            if (hasTestOrdering()) {
                 doTestCompilation();
             }
         } catch (RuntimeException e) {
@@ -286,12 +303,16 @@ public abstract class ModuleBuild {
         buildScheduledAt = System.currentTimeMillis();
         CompletableFuture<Void> mainBuild = CompletableFuture.allOf(depFutures)
                 .handleAsync((v, ex) -> { doBuild(); return null; }, executor);
-        if (!testDependencies.isEmpty() || !testJarDependencies.isEmpty()) {
+        if (hasTestOrdering()) {
             List<CompletableFuture<?>> testWaits = new ArrayList<>();
             testWaits.add(mainBuild);
             for (ModuleBuild td : testDependencies) {
                 testWaits.add(td.mainBuildDone);
                 td.buildAsync(executor);
+            }
+            for (ModuleBuild bd : buildOrderDependencies) {
+                testWaits.add(bd.mainBuildDone);
+                bd.buildAsync(executor);
             }
             for (ModuleBuild tjd : testJarDependencies) {
                 CompletableFuture<Void> tjdFuture = tjd.buildAsync(executor);
@@ -383,7 +404,7 @@ public abstract class ModuleBuild {
                     skippedIncremental = true;
                     mainBuildSucceeded = true;
                     mainBuildDone.complete(null);
-                    if (!testDependencies.isEmpty() || !testJarDependencies.isEmpty()) {
+                    if (hasTestOrdering()) {
                         List<String> fullClasspath = new ArrayList<>(resolvedClasspath());
                         Set<String> added = new HashSet<>();
                         addReactorJars(this, fullClasspath, added);
@@ -645,7 +666,7 @@ public abstract class ModuleBuild {
                 mainBuildSucceeded = true;
                 mainBuildDone.complete(null);
 
-                if (!testDependencies.isEmpty() || !testJarDependencies.isEmpty()) {
+                if (hasTestOrdering()) {
                     mainBuildClasspath = fullClasspath;
                     mainBuildAdded = added;
                     mainBuildSkipFormat = skipFormat;
@@ -666,14 +687,14 @@ public abstract class ModuleBuild {
                 recordBuildData();
             }
 
-            if (testDependencies.isEmpty() && testJarDependencies.isEmpty()) {
+            if (!hasTestOrdering()) {
                 buildSucceeded = true;
             }
             long totalElapsed = System.currentTimeMillis() - start;
             if (totalElapsed > 500) {
                 System.err.println("[timing] [" + artifactId() + "] doBuild total: " + totalElapsed + "ms");
             }
-            if (testDependencies.isEmpty() && testJarDependencies.isEmpty() && progress != null) {
+            if (!hasTestOrdering() && progress != null) {
                 progress.moduleCompleted(threadIdx, artifactId(), true);
             }
         } catch (Throwable e) {

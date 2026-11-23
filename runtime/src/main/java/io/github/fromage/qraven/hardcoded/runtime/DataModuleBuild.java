@@ -63,6 +63,7 @@ public final class DataModuleBuild extends ModuleBuild {
     private final List<String> optionalModuleDependencyIds;
     private final List<String> testModuleDependencyIds;
     private final List<String> testJarModuleDependencyIds;
+    private final List<String> buildOrderModuleDependencyIds;
     private final Map<String, String> extensionDescriptorProperties;
     private final String extensionProjectName;
     private final String extensionProjectDescription;
@@ -166,6 +167,7 @@ public final class DataModuleBuild extends ModuleBuild {
         optionalModuleDependencyIds = List.copyOf(m.getOptionalReactorDependencies());
         testModuleDependencyIds = List.copyOf(m.getTestReactorDependencies());
         testJarModuleDependencyIds = List.copyOf(m.getTestJarReactorDependencies());
+        buildOrderModuleDependencyIds = List.copyOf(m.getBuildOrderReactorDependencies());
 
         extensionDescriptorProperties = copy(m.getExtensionDescriptorProperties());
         extensionProjectName = m.getExtensionProjectName();
@@ -285,6 +287,7 @@ public final class DataModuleBuild extends ModuleBuild {
     @Override public List<String> optionalModuleDependencyIds() { return optionalModuleDependencyIds; }
     @Override public List<String> testModuleDependencyIds() { return testModuleDependencyIds; }
     @Override public List<String> testJarModuleDependencyIds() { return testJarModuleDependencyIds; }
+    @Override public List<String> buildOrderModuleDependencyIds() { return buildOrderModuleDependencyIds; }
     @Override public Map<String, String> extensionDescriptorProperties() { return extensionDescriptorProperties; }
     @Override public String extensionProjectName() { return extensionProjectName; }
     @Override public String extensionProjectDescription() { return extensionProjectDescription; }
@@ -357,7 +360,7 @@ public final class DataModuleBuild extends ModuleBuild {
                 extensionValidationSkipWhen, resourceDirs, filterProperties, manifestEntries, compileClasspath,
                 optionalCompileClasspath, testCompileClasspath, annotationProcessorPaths, apCacheable,
                 testAnnotationProcessorPaths, testApCacheable, compilerArgs, testCompilerArgs,
-                moduleDependencyIds, optionalModuleDependencyIds, testModuleDependencyIds, testJarModuleDependencyIds,
+                moduleDependencyIds, optionalModuleDependencyIds, testModuleDependencyIds, testJarModuleDependencyIds, buildOrderModuleDependencyIds,
                 extensionDescriptorProperties, extensionProjectName, extensionProjectDescription, extensionScmUrl,
                 extensionMinimumJavaVersion, extensionModelDeps, extensionReactorGAs, extensionParentFirstArtifacts,
                 extensionRunnerParentFirstArtifacts, extensionExcludedArtifacts, extensionLesserPriorityArtifacts,

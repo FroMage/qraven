@@ -2601,7 +2601,9 @@ public class PomParser {
             if (reactorGAs.contains(ga)) {
                 if (hasTestSources && "test".equals(scope)) {
                     String type = dep.getType() != null ? dep.getType() : "jar";
-                    if ("test-jar".equals(type)) {
+                    if ("pom".equals(type)) {
+                        info.getBuildOrderReactorDependencies().add(dep.getArtifactId());
+                    } else if ("test-jar".equals(type)) {
                         info.getTestJarReactorDependencies().add(dep.getArtifactId());
                     } else {
                         info.getTestReactorDependencies().add(dep.getArtifactId());

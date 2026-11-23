@@ -336,7 +336,8 @@ public class BuildOrchestrator {
                 }
             } else {
                 boolean hasFailed = m.getDependencies().stream().anyMatch(d -> !d.didSucceed())
-                        || m.getTestDependencies().stream().anyMatch(d -> !d.didSucceed());
+                        || m.getTestDependencies().stream().anyMatch(d -> !d.didSucceed())
+                        || m.getBuildOrderDependencies().stream().anyMatch(d -> !d.didSucceed());
                 if (hasFailed) {
                     cascadeFailures.add(m.artifactId());
                 } else {
@@ -567,6 +568,9 @@ public class BuildOrchestrator {
             for (ModuleBuild dep : m.getTestDependencies()) {
                 dependents.computeIfAbsent(dep.artifactId(), k -> new ArrayList<>()).add(m.artifactId());
             }
+            for (ModuleBuild dep : m.getBuildOrderDependencies()) {
+                dependents.computeIfAbsent(dep.artifactId(), k -> new ArrayList<>()).add(m.artifactId());
+            }
         }
         Map<String, Integer> result = new HashMap<>();
         for (ModuleBuild m : modules) {
@@ -629,6 +633,11 @@ public class BuildOrchestrator {
                             changed = true;
                         }
                     }
+                    for (ModuleBuild dep : m.getBuildOrderDependencies()) {
+                        if (needed.add(dep.artifactId())) {
+                            changed = true;
+                        }
+                    }
                 }
             }
         }
@@ -656,6 +665,9 @@ public class BuildOrchestrator {
                 dependents.computeIfAbsent(dep.artifactId(), k -> new ArrayList<>()).add(m);
             }
             for (ModuleBuild dep : m.getTestDependencies()) {
+                dependents.computeIfAbsent(dep.artifactId(), k -> new ArrayList<>()).add(m);
+            }
+            for (ModuleBuild dep : m.getBuildOrderDependencies()) {
                 dependents.computeIfAbsent(dep.artifactId(), k -> new ArrayList<>()).add(m);
             }
         }
@@ -730,6 +742,7 @@ public class BuildOrchestrator {
         ids.removeAll(m.optionalModuleDependencyIds());
         ids.addAll(m.testModuleDependencyIds());
         ids.addAll(m.testJarModuleDependencyIds());
+        ids.addAll(m.buildOrderModuleDependencyIds());
         return ids;
     }
 
@@ -793,6 +806,11 @@ public class BuildOrchestrator {
                     .filter(d -> !compileDepIds.contains(d.artifactId()))
                     .toList();
             m.setTestDependencies(testDeps);
+
+            m.setBuildOrderDependencies(m.buildOrderModuleDependencyIds().stream()
+                    .map(byId::get)
+                    .filter(Objects::nonNull)
+                    .toList());
 
             List<ModuleBuild> testJarDeps = m.testJarModuleDependencyIds().stream()
                     .map(byId::get)

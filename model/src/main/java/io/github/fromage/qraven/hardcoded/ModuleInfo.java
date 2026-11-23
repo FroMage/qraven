@@ -73,6 +73,11 @@ public class ModuleInfo {
     private Set<String> optionalReactorDependencies = new LinkedHashSet<>();
     private List<String> testReactorDependencies = new ArrayList<>();
     private List<String> testJarReactorDependencies = new ArrayList<>();
+    /**
+     * Reactor modules declared with {@code <type>pom</type>}: Maven resolves only their pom, so they are not on the
+     * classpath (a project uses this to make the reactor build a module first) but they must be built before this one.
+     */
+    private List<String> buildOrderReactorDependencies = new ArrayList<>();
     private boolean apCacheable;
     private boolean hasCodeGenProviders;
     private boolean hasSisuPlugin;
@@ -320,6 +325,8 @@ public class ModuleInfo {
     public void setOptionalReactorDependencies(Set<String> optionalReactorDependencies) { this.optionalReactorDependencies = optionalReactorDependencies; }
     public List<String> getTestReactorDependencies() { return testReactorDependencies; }
     public void setTestReactorDependencies(List<String> testReactorDependencies) { this.testReactorDependencies = testReactorDependencies; }
+    public List<String> getBuildOrderReactorDependencies() { return buildOrderReactorDependencies; }
+    public void setBuildOrderReactorDependencies(List<String> v) { this.buildOrderReactorDependencies = v; }
     public List<String> getTestJarReactorDependencies() { return testJarReactorDependencies; }
     public void setTestJarReactorDependencies(List<String> testJarReactorDependencies) { this.testJarReactorDependencies = testJarReactorDependencies; }
 

@@ -534,6 +534,30 @@ class PomParserTest {
     }
 
     @Nested
+    class PomTypeDependency {
+
+        static List<ModuleInfo> modules;
+
+        @BeforeAll
+        static void parse() {
+            modules = parseProject("pom-type-dependency");
+        }
+
+        @Test
+        void isOnlyBuiltBefore() {
+            ModuleInfo app = findModule(modules, "app");
+            assertThat(app.getBuildOrderReactorDependencies()).containsExactly("lib");
+        }
+
+        @Test
+        void isNotOnTheTestClasspath() {
+            ModuleInfo app = findModule(modules, "app");
+            assertThat(app.getTestReactorDependencies()).isEmpty();
+            assertThat(app.getReactorDependencies()).isEmpty();
+        }
+    }
+
+    @Nested
     class TestJarDependency {
 
         static List<ModuleInfo> modules;
