@@ -6,7 +6,7 @@
     <parent>
         <groupId>io.github.fromage.qraven</groupId>
         <artifactId>qraven-parent</artifactId>
-        <version>1.11-SNAPSHOT</version>
+        <version>1.12-SNAPSHOT</version>
     </parent>
     <artifactId>qraven-runtime</artifactId>
     <name>Qraven - Runtime</name>
